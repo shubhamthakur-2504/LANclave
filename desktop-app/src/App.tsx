@@ -1,51 +1,57 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
+import type { PageType } from "./mockdata";
+import {
+  mockPeers,
+  mockFiles,
+  mockTransfers,
+  mockConnectionRequest,
+} from "./mockdata";
+import Header from "./components/layout/Header";
+import Sidebar from "./components/layout/Sidebar";
+import PeersPage from "./components/peers/PeersPage";
+import FilesPage from "./components/files/FilesPage";
+import TransfersPage from "./components/transfers/TransfersPage";
+import ConnectionModal from "./components/connection/ConnectionModal";
 import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+export default function App() {
+  const [activePage, setActivePage] = useState<PageType>("peers");
+  const [connectionOpen, setConnectionOpen] = useState(false);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  const pageContent = (() => {
+    switch (activePage) {
+      case "peers":
+        return (
+          <PeersPage
+            peers={mockPeers}
+            onOpenConnection={() => setConnectionOpen(true)}
+          />
+        );
+      case "files":
+        return <FilesPage files={mockFiles} />;
+      case "transfers":
+        return <TransfersPage transfers={mockTransfers} />;
+    }
+  })();
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
+    <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
+      <Header />
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar
+          activePage={activePage}
+          onNavigate={setActivePage}
+          onOpenConnection={() => setConnectionOpen(true)}
         />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+        <main className="flex-1 overflow-hidden">{pageContent}</main>
+      </div>
+      <ConnectionModal
+        isOpen={connectionOpen}
+        peerName={mockConnectionRequest.peerName}
+        deviceName={mockConnectionRequest.deviceName}
+        ipAddress={mockConnectionRequest.ipAddress}
+        onClose={() => setConnectionOpen(false)}
+      />
+    </div>
   );
 }
-
-export default App;
