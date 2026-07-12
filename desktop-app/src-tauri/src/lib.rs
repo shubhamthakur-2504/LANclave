@@ -1,5 +1,6 @@
 mod discovery;
 mod file_ops;
+mod sandbox;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
