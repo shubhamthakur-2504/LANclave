@@ -1,6 +1,10 @@
+mod client;
 mod discovery;
 mod file_ops;
+mod files;
+mod fs_util;
 mod sandbox;
+mod server;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
