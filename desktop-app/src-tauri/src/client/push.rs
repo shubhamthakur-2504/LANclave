@@ -1,4 +1,5 @@
 use super::{transport, ClientError};
+use ed25519_dalek::SigningKey;
 use std::path::Path;
 use tokio::io::BufReader;
 use tokio_util::io::ReaderStream;
@@ -21,6 +22,8 @@ pub async fn push_file_to_peer(
     peer_addr: &str,
     local_path: &Path,
     remote_path: &str,
+    device_id: &str,
+    signing_key: &SigningKey,
 ) -> Result<(), ClientError> {
     // ---- 1. Open the local file for streaming ----------------------------
     let file = tokio::fs::File::open(local_path)
@@ -33,7 +36,7 @@ pub async fn push_file_to_peer(
     let body = reqwest::Body::wrap_stream(stream);
 
     // ---- 3. Send the request ---------------------------------------------
-    let status = transport::put_stream(peer_addr, remote_path, body).await?;
+    let status = transport::put_stream(peer_addr, remote_path, body, device_id, signing_key).await?;
 
     // ---- 4. Map the response ---------------------------------------------
     if status.is_success() {

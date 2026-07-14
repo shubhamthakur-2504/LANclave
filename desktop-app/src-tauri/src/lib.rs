@@ -3,6 +3,7 @@ mod discovery;
 mod file_ops;
 mod files;
 mod fs_util;
+mod pairing;
 mod sandbox;
 mod server;
 

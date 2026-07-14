@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::Response,
 };
 use std::sync::Arc;
@@ -49,8 +49,13 @@ use crate::fs_util::WriteGuard;
 /// if multi‑user access control is ever added.
 pub async fn download_file(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(requested_path): Path<String>,
 ) -> Result<Response, StatusCode> {
+    // ---- 0. Authorize (pairing check) ------------------------------------
+    crate::pairing::check_request(&state.auth, &headers)
+        .map_err(|s| StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
+
     let path = crate::sandbox::verify_sandboxed_path(&state.sandbox_root, &requested_path)
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
@@ -110,9 +115,14 @@ pub async fn download_file(
 /// simultaneously creates the file and checks that it didn't already exist.
 pub async fn upload_file(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(requested_path): Path<String>,
     body: axum::body::Body,
 ) -> Result<(StatusCode, &'static str), StatusCode> {
+    // ---- 0. Authorize (pairing check) ------------------------------------
+    crate::pairing::check_request(&state.auth, &headers)
+        .map_err(|s| StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
+
     // ---- 1. Lexical validation only (no I/O) ----------------------------
     let joined =
         crate::sandbox::validate_sandboxed_path(&state.sandbox_root, &requested_path)
@@ -188,11 +198,18 @@ mod tests {
     use tempfile::TempDir;
     use tower::ServiceExt;
 
-    use crate::server::build_router;
+    use crate::server::build_raw_router;
 
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
+
+    fn make_state(dir: &TempDir) -> Arc<AppState> {
+        Arc::new(AppState {
+            sandbox_root: dir.path().to_path_buf(),
+            auth: Arc::new(crate::pairing::AuthState::disabled()),
+        })
+    }
 
     fn setup_with_file(file_name: &str, contents: &[u8]) -> (TempDir, axum::Router) {
         let dir = TempDir::new().expect("create temp dir");
@@ -202,19 +219,13 @@ mod tests {
         }
         std::fs::write(&file_path, contents).expect("write test file");
 
-        let state = Arc::new(AppState {
-            sandbox_root: dir.path().to_path_buf(),
-        });
-        let app = build_router(state);
+        let app = build_raw_router(make_state(&dir));
         (dir, app)
     }
 
     fn empty_router() -> (TempDir, axum::Router) {
         let dir = TempDir::new().expect("create temp dir");
-        let state = Arc::new(AppState {
-            sandbox_root: dir.path().to_path_buf(),
-        });
-        let app = build_router(state);
+        let app = build_raw_router(make_state(&dir));
         (dir, app)
     }
 

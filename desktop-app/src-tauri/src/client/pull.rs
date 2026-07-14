@@ -1,4 +1,5 @@
 use super::{transport, ClientError};
+use ed25519_dalek::SigningKey;
 use std::path::Path;
 use tokio::{
     fs as tokio_fs,
@@ -28,9 +29,11 @@ pub async fn pull_file_from_peer(
     peer_addr: &str,
     remote_path: &str,
     local_save_path: &Path,
+    device_id: &str,
+    signing_key: &SigningKey,
 ) -> Result<(), ClientError> {
     // ---- 1. Request the stream from the peer -----------------------------
-    let response = transport::get_stream(peer_addr, remote_path).await?;
+    let response = transport::get_stream(peer_addr, remote_path, device_id, signing_key).await?;
 
     // ---- 2. Check the response status before creating a local file -------
     let status = response.status();

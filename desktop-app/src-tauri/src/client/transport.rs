@@ -1,14 +1,11 @@
 use super::ClientError;
+use crate::pairing::{sign_request, HEADER_DEVICE_ID, HEADER_SIGNATURE, HEADER_TIMESTAMP};
+use base64::Engine;
+use ed25519_dalek::SigningKey;
 use std::sync::LazyLock;
 use std::time::Duration;
 
 /// Reusable HTTP client shared across all transport calls.
-///
-/// Using [`LazyLock`] (from `std`, not `once_cell`) means the client is
-/// built exactly once — on first use — and lives for the lifetime of the
-/// process.  This reuses the underlying connection pool, DNS cache, and
-/// TLS session cache, which matters when the UI triggers many transfers
-/// in quick succession.
 static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
@@ -16,9 +13,6 @@ static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .expect("valid reqwest client config")
 });
 
-/// Percent-encode each path segment of `path` while preserving `/` as a
-/// separator, so that filenames containing spaces, Unicode, or other
-/// URL‑special characters produce a valid HTTP request.
 fn encode_path(path: &str) -> String {
     path.split('/')
         .map(|segment| urlencoding::encode(segment))
@@ -26,21 +20,24 @@ fn encode_path(path: &str) -> String {
         .join("/")
 }
 
-/// Issue a GET to `http://{peer_addr}/files/{remote_path}` and return the
-/// raw streaming response.
-///
-/// The caller is responsible for consuming the body (see [`pull`](super::pull)).
-/// This function only sets up the connection and validates the initial
-/// response — it does **not** buffer the body in memory.
+/// Issue a signed GET to `http://{peer_addr}/files/{remote_path}`.
 pub async fn get_stream(
     peer_addr: &str,
     remote_path: &str,
+    device_id: &str,
+    signing_key: &SigningKey,
 ) -> Result<reqwest::Response, ClientError> {
     let encoded = encode_path(remote_path);
     let url = format!("http://{}/files/{}", peer_addr, encoded);
 
+    let (ts, sig) = sign_request(signing_key, device_id);
+    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
+
     let response = CLIENT
         .get(&url)
+        .header(HEADER_DEVICE_ID, device_id)
+        .header(HEADER_TIMESTAMP, ts.to_string())
+        .header(HEADER_SIGNATURE, &sig_b64)
         .send()
         .await
         .map_err(|e| ClientError::ConnectionFailed(e.to_string()))?;
@@ -48,21 +45,25 @@ pub async fn get_stream(
     Ok(response)
 }
 
-/// Issue a PUT to `http://{peer_addr}/files/{remote_path}` with a streaming
-/// body, and return the peer's response status code.
-///
-/// `body` can be any [`reqwest::Body`]; the caller constructs it
-/// (see [`push`](super::push)).
+/// Issue a signed PUT to `http://{peer_addr}/files/{remote_path}`.
 pub async fn put_stream(
     peer_addr: &str,
     remote_path: &str,
     body: reqwest::Body,
+    device_id: &str,
+    signing_key: &SigningKey,
 ) -> Result<reqwest::StatusCode, ClientError> {
     let encoded = encode_path(remote_path);
     let url = format!("http://{}/files/{}", peer_addr, encoded);
 
+    let (ts, sig) = sign_request(signing_key, device_id);
+    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
+
     let response = CLIENT
         .put(&url)
+        .header(HEADER_DEVICE_ID, device_id)
+        .header(HEADER_TIMESTAMP, ts.to_string())
+        .header(HEADER_SIGNATURE, &sig_b64)
         .body(body)
         .send()
         .await
