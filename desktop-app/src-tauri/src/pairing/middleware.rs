@@ -1,7 +1,7 @@
 use super::store::DeviceStore;
-use ed25519_dalek::{Signature, Signer, VerifyingKey};
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, SystemTime};
+use ed25519_dalek::{Signature, Signer};
+use std::sync::RwLock;
+use std::time::SystemTime;
 
 // ---------------------------------------------------------------------------
 // AuthState

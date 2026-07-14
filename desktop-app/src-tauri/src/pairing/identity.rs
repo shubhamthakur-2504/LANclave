@@ -1,6 +1,6 @@
 use super::PairingError;
 use base64::Engine;
-use ed25519_dalek::{Signature, Verifier};
+use ed25519_dalek::Signature;
 use std::path::Path;
 
 /// Load an existing identity keypair from disk, or generate + persist a new
