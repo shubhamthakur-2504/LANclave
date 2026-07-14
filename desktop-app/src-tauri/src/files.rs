@@ -2,6 +2,7 @@ use axum::{
     extract::{Path, State},
     http::{header, HeaderMap, StatusCode},
     response::Response,
+    Json,
 };
 use std::sync::Arc;
 use tokio::{
@@ -184,6 +185,51 @@ pub async fn upload_file(
 
     guard.disarm();
     Ok((StatusCode::CREATED, ""))
+}
+
+// ---------------------------------------------------------------------------
+// File-list handler (for remote peers)
+// ---------------------------------------------------------------------------
+
+/// List the contents of our sandbox root (public endpoint for remote peers).
+///
+/// This handler is mounted at `GET /api/sandbox/files` and requires the
+/// same pairing‑auth as any other route.
+pub async fn list_files_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ListFileItem>>, StatusCode> {
+    // ---- 0. Authorize ----------------------------------------------------
+    crate::pairing::check_request(&state.auth, &headers)
+        .map_err(|s| StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
+
+    // ---- 1. Scan the sandbox root ----------------------------------------
+    let mut entries = Vec::new();
+    let mut dir = tokio_fs::read_dir(&state.sandbox_root)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    while let Some(entry) = dir.next_entry().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+        let metadata = match entry.metadata().await {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        entries.push(ListFileItem {
+            name: entry.file_name().into_string().unwrap_or_default(),
+            size: metadata.len(),
+            is_directory: metadata.is_dir(),
+        });
+    }
+
+    Ok(Json(entries))
+}
+
+/// Serializable file entry for the JSON list endpoint.
+#[derive(serde::Serialize)]
+pub struct ListFileItem {
+    pub name: String,
+    pub size: u64,
+    pub is_directory: bool,
 }
 
 // ---------------------------------------------------------------------------

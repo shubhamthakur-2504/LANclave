@@ -31,7 +31,7 @@ mime_guess = "2"
 http-body-util = "0.1"
 bytes = "1"
 futures-util = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json"] }
 urlencoding = "2"
 sha2 = "0.10"
 rand = "0.8"
