@@ -76,6 +76,8 @@ pub fn run() {
             commands::push_file,
             // Pairing
             commands::initiate_pairing,
+            commands::confirm_pairing,
+            commands::get_paired_peers,
             // Legacy (migrate to commands eventually)
             file_ops::list_sandbox_files,
         ])

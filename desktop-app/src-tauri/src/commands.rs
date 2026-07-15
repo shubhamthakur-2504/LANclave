@@ -222,8 +222,51 @@ pub async fn push_file(
 
 #[tauri::command]
 pub async fn initiate_pairing(
-    _state: State<'_, CliState>,
-    _peer_addr: String,
+    state: State<'_, CliState>,
+    peer_addr: String,
+    peer_device_id: String,
 ) -> Result<String, String> {
-    Err("pairing handshake not yet implemented".to_string())
+    // Decode the peer's device_id (base64 public key) to get their
+    // ed25519 verifying key.
+    let peer_key = crate::pairing::public_key_from_b64(&peer_device_id)
+        .map_err(|e| format!("invalid peer key: {e}"))?;
+
+    // Compute the 6-digit fingerprint from both public keys.
+    let fingerprint = crate::pairing::compute_pairing_fingerprint(
+        &state.identity_key.verifying_key(),
+        &peer_key,
+    );
+
+    Ok(fingerprint)
+}
+
+#[tauri::command]
+pub async fn confirm_pairing(
+    state: State<'_, CliState>,
+    peer_addr: String,
+    peer_device_id: String,
+) -> Result<(), String> {
+    // Decode the peer's public key.
+    let peer_key = crate::pairing::public_key_from_b64(&peer_device_id)
+        .map_err(|e| format!("invalid peer key: {e}"))?;
+
+    // Build a pairing session and commit it to the store.
+    let session = crate::pairing::PairingSession {
+        peer_device_id: peer_device_id.clone(),
+        peer_public_key: peer_key,
+    };
+
+    let mut store = state.device_store.write().map_err(|e| e.to_string())?;
+    crate::pairing::confirm_pairing(session, &mut store, &state.sandbox_root)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_paired_peers(
+    state: State<'_, CliState>,
+) -> Result<Vec<crate::pairing::PairedDevice>, String> {
+    let store = state.device_store.read().map_err(|e| e.to_string())?;
+    Ok(store.devices.values().cloned().collect())
 }
