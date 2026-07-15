@@ -3,9 +3,9 @@ mod store;
 mod handshake;
 mod middleware;
 
-pub use identity::{load_or_generate_identity, public_key_b64};
-pub use store::DeviceStore;
-pub use handshake::compute_pairing_fingerprint;
+pub use identity::{load_or_generate_identity, public_key_b64, public_key_from_b64};
+pub use store::{DeviceStore, PairedDevice};
+pub use handshake::{compute_pairing_fingerprint, confirm_pairing, PairingSession};
 pub use middleware::{
     check_request, sign_request, AuthState,
     HEADER_DEVICE_ID, HEADER_SIGNATURE, HEADER_TIMESTAMP,

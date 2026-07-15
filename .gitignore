@@ -47,3 +47,6 @@ Thumbs.db
 # Workspace folders
 docs/
 temp/
+.cargo/
+.commandcode/
+identity.key

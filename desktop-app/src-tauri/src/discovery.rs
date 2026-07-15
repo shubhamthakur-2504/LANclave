@@ -1,4 +1,4 @@
-use mdns_sd::{DaemonEvent, ServiceDaemon, ServiceEvent};
+use mdns_sd::{DaemonEvent, ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -126,8 +126,7 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String)>, St
 /// Extract `(socket_addr, device_id)` from a resolved mDNS service.
 fn parse_peer(info: &mdns_sd::ResolvedService) -> Option<(String, String)> {
     // Build the socket address from the first resolved IP + port.
-    let ips: Vec<_> = info.get_addresses().iter().copied().collect();
-    let ip = ips.first()?;
+    let ip = info.get_addresses().iter().next()?;
     let addr = format!("{ip}:{}", info.get_port());
 
     // Device ID is stored in the TXT properties.
