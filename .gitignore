@@ -18,6 +18,25 @@ desktop-app/dist-ssr/
 .expo/
 .expo-shared/
 
+# Mobile app (Expo)
+mobile-app/.expo/
+mobile-app/.expo-shared/
+mobile-app/dist/
+mobile-app/web-build/
+mobile-app/expo-env.d.ts
+mobile-app/.kotlin/
+mobile-app/.metro-health-check*
+mobile-app/*.orig.*
+mobile-app/*.jks
+mobile-app/*.p8
+mobile-app/*.p12
+mobile-app/*.key
+mobile-app/*.mobileprovision
+mobile-app/*.tsbuildinfo
+mobile-app/.env*.local
+mobile-app/ios/
+mobile-app/android/
+
 # Environment files
 .env
 .env.*
@@ -50,3 +69,6 @@ temp/
 .cargo/
 .commandcode/
 identity.key
+.claude
+AGENTS.md
+CLAUDE.md
