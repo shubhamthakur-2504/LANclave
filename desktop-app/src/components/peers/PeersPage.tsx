@@ -1,17 +1,17 @@
 import { useState } from "react";
-import type { Peer } from "../../mockdata";
+import type { PeerInfo } from "../../types";
 import PeersListPanel from "./PeersListPanel";
 import PeerDetailPanel from "./PeerDetailPanel";
 import EmptyState from "../ui/EmptyState";
 
 interface PeersPageProps {
-  peers: Peer[];
-  onOpenConnection: () => void;
+  peers: PeerInfo[];
+  onOpenConnection: (peer: PeerInfo) => void;
 }
 
 export default function PeersPage({ peers, onOpenConnection }: PeersPageProps) {
   const [selectedPeerId, setSelectedPeerId] = useState<string | null>(null);
-  const selectedPeer = peers.find((p) => p.id === selectedPeerId) ?? null;
+  const selectedPeer = peers.find((p) => p.device_id === selectedPeerId) ?? null;
 
   return (
     <div className="flex h-full">
@@ -26,7 +26,7 @@ export default function PeersPage({ peers, onOpenConnection }: PeersPageProps) {
         {selectedPeer ? (
           <PeerDetailPanel
             peer={selectedPeer}
-            onOpenConnection={onOpenConnection}
+            onOpenConnection={() => onOpenConnection(selectedPeer)}
           />
         ) : (
           <EmptyState message="Select a peer to view details" />

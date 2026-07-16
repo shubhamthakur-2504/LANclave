@@ -1,10 +1,14 @@
-import type { Peer } from "../../mockdata";
-import StatusDot from "../ui/StatusDot";
+import type { PeerInfo } from "../../types";
 
 interface PeersListPanelProps {
-  peers: Peer[];
+  peers: PeerInfo[];
   selectedId: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (deviceId: string) => void;
+}
+
+function shortId(full: string): string {
+  if (full.length <= 12) return full;
+  return `${full.slice(0, 8)}…`;
 }
 
 export default function PeersListPanel({
@@ -32,34 +36,37 @@ export default function PeersListPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {peers.length === 0 && (
+          <div className="p-6 text-center text-xs text-slate-500">
+            No peers found on the LAN
+          </div>
+        )}
         {peers.map((peer) => {
-          const isSelected = peer.id === selectedId;
+          const isSelected = peer.device_id === selectedId;
           return (
             <button
-              key={peer.id}
-              onClick={() => onSelect(peer.id)}
+              key={peer.device_id}
+              onClick={() => onSelect(peer.device_id)}
               className={`flex w-full items-center gap-3 border-b border-slate-800/50 px-5 py-3 text-left transition-colors ${
-                isSelected
-                  ? "bg-sky-500/10"
-                  : "hover:bg-slate-800/30"
+                isSelected ? "bg-sky-500/10" : "hover:bg-slate-800/30"
               }`}
             >
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-500/20 text-sm font-semibold text-sky-400">
-                {peer.name[0]}
+                {peer.addr[0].toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-slate-200">
-                    {peer.name}
+                    {shortId(peer.device_id)}
                   </span>
-                  <StatusDot status={peer.status} />
+                  {peer.paired && (
+                    <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+                      Paired
+                    </span>
+                  )}
                 </div>
                 <p className="truncate text-xs text-slate-500">
-                  {peer.status === "online"
-                    ? "Online"
-                    : peer.status === "away"
-                      ? "Away"
-                      : "Offline"}
+                  {peer.addr}
                 </p>
               </div>
             </button>
