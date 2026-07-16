@@ -1,14 +1,14 @@
 import type { ReactNode } from "react";
-import type { SandboxFile } from "../../mockdata";
+import type { FileEntry } from "../../types";
 
 interface FileListPanelProps {
-  files: SandboxFile[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
+  files: FileEntry[];
+  selectedName: string | null;
+  onSelect: (name: string) => void;
 }
 
-function iconForFile(file: SandboxFile): ReactNode {
-  if (file.isDirectory) {
+function iconForFile(file: FileEntry): ReactNode {
+  if (file.is_directory) {
     return (
       <svg className="h-5 w-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
@@ -55,48 +55,30 @@ function formatSize(bytes: number): string {
   return `${bytes} B`;
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
 export default function FileListPanel({
   files,
-  selectedId,
+  selectedName,
   onSelect,
 }: FileListPanelProps) {
   const sorted = [...files].sort((a, b) => {
-    if (a.isDirectory && !b.isDirectory) return -1;
-    if (!a.isDirectory && b.isDirectory) return 1;
+    if (a.is_directory && !b.is_directory) return -1;
+    if (!a.is_directory && b.is_directory) return 1;
     return a.name.localeCompare(b.name);
   });
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
       <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3">
         <h2 className="text-sm font-semibold text-slate-200">Files</h2>
-        <div className="flex items-center gap-2">
-          <button className="rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-sky-400">
-            Upload
-          </button>
-          <button className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800">
-            New Folder
-          </button>
-        </div>
       </div>
 
-      {/* File list */}
       <div className="flex-1 overflow-y-auto">
         {sorted.map((file) => {
-          const isSelected = file.id === selectedId;
+          const isSelected = file.name === selectedName;
           return (
             <button
-              key={file.id}
-              onClick={() => onSelect(file.id)}
+              key={file.name}
+              onClick={() => onSelect(file.name)}
               className={`flex w-full items-center gap-3 border-b border-slate-800/50 px-5 py-3 text-left transition-colors ${
                 isSelected ? "bg-sky-500/10" : "hover:bg-slate-800/30"
               }`}
@@ -107,9 +89,6 @@ export default function FileListPanel({
               </div>
               <span className="shrink-0 text-xs text-slate-500">
                 {formatSize(file.size)}
-              </span>
-              <span className="hidden shrink-0 text-xs text-slate-500 sm:block">
-                {formatDate(file.modifiedAt)}
               </span>
             </button>
           );

@@ -1,24 +1,26 @@
 import { useState } from "react";
-import type { SandboxFile } from "../../mockdata";
+import type { FileEntry } from "../../types";
 import FileListPanel from "./FileListPanel";
 import FileDetailPanel from "./FileDetailPanel";
 import EmptyState from "../ui/EmptyState";
 
 interface FilesPageProps {
-  files: SandboxFile[];
+  files: FileEntry[];
 }
 
 export default function FilesPage({ files }: FilesPageProps) {
-  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
-  const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
+  const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null);
 
   return (
     <div className="flex h-full">
       <div className="w-96 shrink-0 border-r border-slate-800">
         <FileListPanel
           files={files}
-          selectedId={selectedFileId}
-          onSelect={setSelectedFileId}
+          selectedName={selectedFile?.name ?? null}
+          onSelect={(name) => {
+            const f = files.find((x) => x.name === name) ?? null;
+            setSelectedFile(f);
+          }}
         />
       </div>
       <div className="flex-1">
