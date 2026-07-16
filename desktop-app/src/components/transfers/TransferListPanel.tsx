@@ -1,6 +1,6 @@
 import type React from "react";
 import type { ReactNode } from "react";
-import type { Transfer, TransferFilter } from "../../mockdata";
+import type { Transfer, TransferFilter } from "../../types";
 
 interface TransferListPanelProps {
   transfers: Transfer[];

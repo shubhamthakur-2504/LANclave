@@ -1,4 +1,4 @@
-import type { Transfer } from "../../mockdata";
+import type { Transfer } from "../../types";
 
 interface TransferDetailPanelProps {
   transfer: Transfer;

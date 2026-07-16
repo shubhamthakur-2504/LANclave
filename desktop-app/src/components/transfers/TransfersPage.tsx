@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Transfer, TransferFilter } from "../../mockdata";
+import type { Transfer, TransferFilter } from "../../types";
 import TransferListPanel from "./TransferListPanel";
 import TransferDetailPanel from "./TransferDetailPanel";
 import EmptyState from "../ui/EmptyState";
