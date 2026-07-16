@@ -1,9 +1,13 @@
 import type { ReactNode } from "react";
-import type { PageType } from "../../mockdata";
+import type { PageType } from "../../types";
 
 interface SidebarProps {
   activePage: PageType;
   onNavigate: (page: PageType) => void;
+  serverRunning: boolean;
+  onStartServer: () => void;
+  onStopServer: () => void;
+  serverBusy: boolean;
   onOpenConnection: () => void;
 }
 
@@ -37,7 +41,15 @@ const navItems: { id: PageType; label: string; icon: ReactNode }[] = [
   },
 ];
 
-export default function Sidebar({ activePage, onNavigate, onOpenConnection }: SidebarProps) {
+export default function Sidebar({
+  activePage,
+  onNavigate,
+  serverRunning,
+  onStartServer,
+  onStopServer,
+  serverBusy,
+  onOpenConnection,
+}: SidebarProps) {
   return (
     <aside className="flex w-56 flex-col border-r border-slate-800 bg-slate-900/50">
       <nav className="flex-1 space-y-1 px-3 py-4">
@@ -65,6 +77,30 @@ export default function Sidebar({ activePage, onNavigate, onOpenConnection }: Si
         })}
       </nav>
 
+      {/* Server toggle */}
+      <div className="border-t border-slate-800 px-3 py-3">
+        {serverRunning ? (
+          <button
+            onClick={onStopServer}
+            disabled={serverBusy}
+            className="flex w-full items-center gap-3 rounded-lg border border-red-800/30 px-3 py-2.5 text-sm font-medium text-red-400 transition-colors hover:bg-red-950/20 disabled:opacity-40"
+          >
+            <span className="h-2 w-2 rounded-full bg-red-400" />
+            Stop Server
+          </button>
+        ) : (
+          <button
+            onClick={onStartServer}
+            disabled={serverBusy}
+            className="flex w-full items-center gap-3 rounded-lg border border-emerald-700/30 px-3 py-2.5 text-sm font-medium text-emerald-400 transition-colors hover:bg-emerald-950/20 disabled:opacity-40"
+          >
+            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+            Start Server
+          </button>
+        )}
+      </div>
+
+      {/* Connect / Pair */}
       <div className="border-t border-slate-800 px-3 py-3">
         <button
           onClick={onOpenConnection}
