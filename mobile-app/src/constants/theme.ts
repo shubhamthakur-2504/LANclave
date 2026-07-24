@@ -9,18 +9,18 @@ import { Platform } from 'react-native';
 
 export const Colors = {
   light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    text: '#111827',            // near-black — better on white bg
+    background: '#F8F9FB',       // off-white — softer than pure white
+    backgroundElement: '#E8EBF0', // card/element bg
+    backgroundSelected: '#D6DAE4',
+    textSecondary: '#4B5563',   // gray-600 — WCAG AA on white
   },
   dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
+    text: '#E8EDF5',            // near-white — softer than pure white
+    background: '#080C14',       // deep navy-black
+    backgroundElement: '#0F1520', // card surface
+    backgroundSelected: '#1A2540',
+    textSecondary: '#94A3B8',   // slate-400 — WCAG AA on dark bg
   },
 } as const;
 
