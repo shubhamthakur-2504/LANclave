@@ -1,221 +1,252 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   Pressable,
   SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
-import { mockLocalFiles } from "@/constants/mockdata";
+
+import { AddFileButton } from "@/components/AddFileButton";
+import { LocalFileRow } from "@/components/LocalFileRow";
+import { PeerCard } from "@/components/PeerCard";
+import { RemoteFileRow } from "@/components/RemoteFileRow";
+import { C } from "@/constants/colors";
+import { DiscoveredPeer } from "@/hooks/use-peer-discovery";
 import { usePeerDiscovery } from "@/hooks/use-peer-discovery";
-
-// ─── Design tokens ────────────────────────────────────────────────────────────
-const C = {
-  bg:           "#080C14",   // deepest background
-  surface:      "#0F1520",   // card surface
-  border:       "#1E2A3F",   // subtle border – visible against bg
-  borderStrong: "#2A3A58",   // slightly brighter border for emphasis
-
-  // Text – all WCAG AA-compliant on bg
-  textPrimary:  "#E8EDF5",   // headings, file names
-  textSecond:   "#94A3B8",   // secondary labels (slate-400)
-  textMuted:    "#64748B",   // placeholder / section labels (slate-500)
-
-  // Accent
-  accent:       "#38BDF8",   // sky-400 — interactive colour
-  accentBtn:    "#0EA5E9",   // sky-500 — button fill
-
-  // Status
-  online:       "#34D399",   // emerald-400
-  onlineBg:     "#052E16",   // dark green badge bg
-  onlineBorder: "#064E3B",   // green badge border
-} as const;
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function mb(bytes: number): string {
-  if (bytes === 0) return "—";
-  return `${(bytes / 1_000_000).toFixed(1)} MB`;
-}
-
-function short(s: string, max = 16): string {
-  return s.length <= max ? s : `${s.slice(0, max)}…`;
-}
-
-function fileIcon(name: string): string {
-  const ext = name.split(".").pop();
-  if (ext === "jpg" || ext === "png") return "🖼";
-  if (ext === "pdf") return "📄";
-  if (ext === "m4a") return "🎙";
-  if (ext === "txt") return "📝";
-  return "📁";
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function SectionLabel({ children }: { children: string }) {
-  return <Text style={styles.sectionLabel}>{children.toUpperCase()}</Text>;
-}
-
-function PeerCard({ name, ip }: { name: string; ip: string }) {
-  return (
-    <View style={styles.peerCard}>
-      <View style={styles.peerAvatar}>
-        <Text style={styles.peerAvatarLetter}>{name[0]?.toUpperCase() ?? "?"}</Text>
-      </View>
-      <Text style={styles.peerName}>{short(name)}</Text>
-      <Text style={styles.peerIp}>{ip}</Text>
-      <Pressable
-        style={({ pressed }) => [styles.peerBtn, pressed && styles.peerBtnPressed]}
-      >
-        <Text style={styles.peerBtnText}>Pair & Connect</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function FileRow({
-  name,
-  size,
-  is_directory,
-}: {
-  name: string;
-  size: number;
-  is_directory: boolean;
-}) {
-  return (
-    <View style={styles.fileRow}>
-      <View style={styles.fileIconWrap}>
-        <Text style={styles.fileIconText}>{fileIcon(name)}</Text>
-      </View>
-      <View style={styles.fileMeta}>
-        <Text style={styles.fileName} numberOfLines={1}>{name}</Text>
-        <Text style={styles.fileSize}>{is_directory ? "Folder" : mb(size)}</Text>
-      </View>
-      {!is_directory && (
-        <Pressable
-          style={({ pressed }) => [styles.downloadBtn, pressed && styles.downloadBtnPressed]}
-        >
-          <Text style={styles.downloadBtnText}>↓</Text>
-        </Pressable>
-      )}
-    </View>
-  );
-}
-
-// ─── Screen ───────────────────────────────────────────────────────────────────
+import { useRemotePeer } from "@/hooks/use-remote-peer";
+import { useSandboxFiles } from "@/hooks/use-sandbox-files";
 
 export default function HomeScreen() {
   const peers = usePeerDiscovery();
-  const [files] = useState(mockLocalFiles);
+  const { files, isLoading: filesLoading, refreshFiles } = useSandboxFiles();
+  const [selectedPeer, setSelectedPeer] = useState<DiscoveredPeer | null>(null);
+
+  // Manual IP input toggle
+  const [showIpInput, setShowIpInput] = useState(false);
+  const [manualIp, setManualIp] = useState("");
+
+  const {
+    remoteFiles,
+    isFetching,
+    downloadProgress,
+    error: peerError,
+    fetchPeerFiles,
+    downloadFile,
+  } = useRemotePeer(
+    selectedPeer
+      ? { ip: selectedPeer.ip, port: selectedPeer.port, name: selectedPeer.name }
+      : null,
+    refreshFiles,
+  );
+
+  const handleConnect = useCallback((peer: DiscoveredPeer) => {
+    setSelectedPeer(peer);
+  }, []);
+
+  const handleManualConnect = () => {
+    if (!manualIp.trim()) return;
+    const ip = manualIp.trim();
+    const port = 8377;
+    const customPeer: DiscoveredPeer = {
+      id: `manual-${ip}`,
+      name: `LANclave (${ip})`,
+      ip,
+      port,
+    };
+    handleConnect(customPeer);
+    setShowIpInput(false);
+  };
 
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg} />
 
       <SafeAreaView style={styles.safe}>
-        {/* ── Header ─────────────────────────────────────────── */}
+        {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerRow}>
-            <Text style={styles.headerTitle}>LANclave</Text>
-            <View style={styles.statusBadge}>
-              <View style={styles.statusDot} />
-              <Text style={styles.statusText}>Active</Text>
+            <Text style={styles.title}>LANclave</Text>
+            <View style={styles.badge}>
+              <View style={styles.dot} />
+              <Text style={styles.badgeText}>Active</Text>
             </View>
           </View>
-          <Text style={styles.headerSubtitle}>
-            Secure local-network file transfer
-          </Text>
+          <Text style={styles.subtitle}>Secure local-network file transfer</Text>
         </View>
 
         <View style={styles.divider} />
 
-        {/* ── Scrollable content ─────────────────────────────── */}
+        {/* Scrollable body */}
         <FlatList
           data={files}
           showsVerticalScrollIndicator={false}
-          keyExtractor={(f) => f.name}
-          contentContainerStyle={styles.scrollContent}
+          keyExtractor={(f) => f.uri}
+          contentContainerStyle={styles.content}
           ListHeaderComponent={
             <>
-              {/* Peers */}
-              <SectionLabel>Discovered Desktop Peers</SectionLabel>
+              {/* ── Peers section header ─────────────────────── */}
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionLabel}>NEARBY LANCLAVE PEERS</Text>
+                <Pressable
+                  style={styles.connectIpBtn}
+                  onPress={() => setShowIpInput((prev) => !prev)}
+                >
+                  <Text style={styles.connectIpText}>
+                    {showIpInput ? "Cancel" : "+ Add IP"}
+                  </Text>
+                </Pressable>
+              </View>
 
-              {peers.length === 0 ? (
-                <View style={styles.emptyPeers}>
-                  <Text style={styles.emptyPeersIcon}>📡</Text>
-                  <Text style={styles.emptyPeersTitle}>Scanning local network…</Text>
-                  <Text style={styles.emptyPeersHint}>
-                    Open the LANclave desktop app{"\n"}on the same Wi-Fi network.
+              {/* ── Manual IP Input Box ──────────────────────── */}
+              {showIpInput && (
+                <View style={styles.manualIpBox}>
+                  <Text style={styles.manualIpTitle}>Connect via IP Address</Text>
+                  <View style={styles.ipInputRow}>
+                    <TextInput
+                      style={styles.ipInput}
+                      placeholder="e.g. 192.168.43.142"
+                      placeholderTextColor={C.textMuted}
+                      value={manualIp}
+                      onChangeText={setManualIp}
+                      keyboardType="decimal-pad"
+                      autoCapitalize="none"
+                    />
+                    <Pressable
+                      style={styles.ipSubmitBtn}
+                      onPress={handleManualConnect}
+                    >
+                      <Text style={styles.ipSubmitText}>Connect</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              )}
+
+              {peers.length === 0 && !showIpInput ? (
+                <View style={styles.empty}>
+                  <Text style={styles.emptyIcon}>📡</Text>
+                  <Text style={styles.emptyTitle}>Scanning local network…</Text>
+                  <Text style={styles.emptyHint}>
+                    Open LANclave on another device (desktop or mobile) or tap "+ Add IP" above.
                   </Text>
                 </View>
               ) : (
-                <FlatList
-                  data={peers}
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.peerList}
-                  keyExtractor={(p) => p.id}
-                  renderItem={({ item }) => (
-                    <PeerCard name={item.name} ip={item.ip} />
-                  )}
-                />
+                peers.length > 0 && (
+                  <FlatList
+                    data={peers}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.peerList}
+                    keyExtractor={(p) => p.id}
+                    renderItem={({ item }) => (
+                      <PeerCard
+                        peer={item}
+                        isSelected={selectedPeer?.id === item.id}
+                        onConnect={handleConnect}
+                      />
+                    )}
+                  />
+                )
               )}
 
-              <SectionLabel>My Sandboxed Storage</SectionLabel>
+              {/* ── Connected peer's files ─────────────────── */}
+              {selectedPeer !== null && (
+                <>
+                  <Text style={styles.sectionLabel}>
+                    {selectedPeer.name.toUpperCase()}'S FILES
+                  </Text>
+
+                  {peerError !== null && (
+                    <View style={styles.errorBanner}>
+                      <Text style={styles.errorText}>{peerError}</Text>
+                    </View>
+                  )}
+
+                  {isFetching ? (
+                    <View style={styles.loading}>
+                      <ActivityIndicator color={C.accent} size="small" />
+                      <Text style={styles.loadingText}>Loading files…</Text>
+                    </View>
+                  ) : remoteFiles.length === 0 ? (
+                    <View style={styles.empty}>
+                      <Text style={styles.emptyIcon}>📂</Text>
+                      <Text style={styles.emptyTitle}>No files found</Text>
+                      <Text style={styles.emptyHint}>
+                        The connected peer's sandbox is empty.
+                      </Text>
+                    </View>
+                  ) : (
+                    <FlatList
+                      data={remoteFiles}
+                      scrollEnabled={false}
+                      keyExtractor={(f) => f.name}
+                      ItemSeparatorComponent={() => (
+                        <View style={styles.sep} />
+                      )}
+                      renderItem={({ item }) => (
+                        <RemoteFileRow
+                          name={item.name}
+                          size={item.size}
+                          is_directory={item.is_directory}
+                          progress={downloadProgress[item.name]}
+                          onDownload={downloadFile}
+                        />
+                      )}
+                    />
+                  )}
+                </>
+              )}
+
+              {/* ── Local sandbox files ────────────────────── */}
+              <Text style={styles.sectionLabel}>MY SANDBOXED STORAGE</Text>
+              {filesLoading && (
+                <View style={styles.loading}>
+                  <ActivityIndicator color={C.accent} size="small" />
+                  <Text style={styles.loadingText}>Loading files…</Text>
+                </View>
+              )}
             </>
           }
-          renderItem={({ item }) => (
-            <FileRow name={item.name} size={item.size} is_directory={item.is_directory} />
-          )}
-          ItemSeparatorComponent={() => <View style={styles.fileSeparator} />}
+          renderItem={({ item }) => <LocalFileRow file={item} />}
+          ItemSeparatorComponent={() => <View style={styles.sep} />}
+          ListEmptyComponent={
+            filesLoading ? null : (
+              <Text style={styles.emptyLocalText}>
+                No files yet — tap + to add one.
+              </Text>
+            )
+          }
         />
       </SafeAreaView>
 
-      {/* ── FAB ────────────────────────────────────────────────── */}
-      <Pressable
-        style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
-        onPress={() => {
-          // TODO: open document picker
-        }}
-      >
-        <Text style={styles.fabIcon}>+</Text>
-      </Pressable>
+      <AddFileButton onFileAdded={refreshFiles} />
     </View>
   );
 }
-
-// ─── StyleSheet ───────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
   safe: { flex: 1 },
 
   // Header
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 14,
-  },
+  header: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14 },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  headerTitle: {
+  title: {
     fontSize: 26,
     fontWeight: "700",
     color: C.accent,
     letterSpacing: -0.5,
   },
-  headerSubtitle: {
-    marginTop: 4,
-    fontSize: 13,
-    color: C.textSecond,
-  },
-  statusBadge: {
+  subtitle: { marginTop: 4, fontSize: 13, color: C.textSecond },
+  badge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
@@ -226,13 +257,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  statusDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: C.online,
-  },
-  statusText: {
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.online },
+  badgeText: {
     fontSize: 11,
     fontWeight: "600",
     color: C.online,
@@ -246,24 +272,82 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
 
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 100,
-  },
+  content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 110 },
 
-  // Section labels
+  // Section headers
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 16,
+    marginBottom: 10,
+  },
   sectionLabel: {
     fontSize: 10,
     fontWeight: "700",
     letterSpacing: 1.4,
     color: C.textMuted,
-    marginBottom: 10,
-    marginTop: 8,
+  },
+  connectIpBtn: {
+    backgroundColor: C.borderStrong,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  connectIpText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: C.accent,
   },
 
-  // Empty peers
-  emptyPeers: {
+  // Manual IP Box
+  manualIpBox: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+  },
+  manualIpTitle: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: C.textPrimary,
+    marginBottom: 8,
+  },
+  ipInputRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  ipInput: {
+    flex: 1,
+    backgroundColor: C.bg,
+    borderWidth: 1,
+    borderColor: C.borderStrong,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    color: C.textPrimary,
+    fontSize: 13,
+  },
+  ipSubmitBtn: {
+    backgroundColor: C.accentBtn,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ipSubmitText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+
+  // Peer list
+  peerList: { gap: 12, paddingBottom: 4 },
+
+  // Empty states
+  empty: {
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 16,
@@ -272,113 +356,49 @@ const styles = StyleSheet.create({
     backgroundColor: C.surface,
     paddingVertical: 28,
     paddingHorizontal: 20,
-    marginBottom: 20,
+    marginBottom: 4,
   },
-  emptyPeersIcon: { fontSize: 28, marginBottom: 10 },
-  emptyPeersTitle: {
+  emptyIcon: { fontSize: 28, marginBottom: 10 },
+  emptyTitle: {
     fontSize: 14,
     fontWeight: "600",
     color: C.textPrimary,
     marginBottom: 6,
   },
-  emptyPeersHint: {
+  emptyHint: {
     fontSize: 12,
     color: C.textSecond,
     textAlign: "center",
     lineHeight: 18,
   },
+  emptyLocalText: {
+    fontSize: 13,
+    color: C.textMuted,
+    textAlign: "center",
+    paddingVertical: 24,
+  },
 
-  // Peer cards
-  peerList: { gap: 12, paddingBottom: 20 },
-  peerCard: {
-    width: 172,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: C.border,
-    backgroundColor: C.surface,
-    padding: 16,
-  },
-  peerAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "#0C2344",
-    borderWidth: 1,
-    borderColor: C.borderStrong,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 12,
-  },
-  peerAvatarLetter: { fontSize: 16, fontWeight: "700", color: C.accent },
-  peerName: { fontSize: 14, fontWeight: "600", color: C.textPrimary },
-  peerIp: { marginTop: 2, fontSize: 11, color: C.textSecond },
-  peerBtn: {
-    marginTop: 14,
+  // Error banner
+  errorBanner: {
     borderRadius: 10,
-    backgroundColor: C.accentBtn,
-    paddingVertical: 9,
-    alignItems: "center",
+    borderWidth: 1,
+    borderColor: C.errorBorder,
+    backgroundColor: C.errorBg,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 8,
   },
-  peerBtnPressed: { opacity: 0.75 },
-  peerBtnText: { fontSize: 12, fontWeight: "700", color: "#FFFFFF" },
+  errorText: { fontSize: 12, color: C.errorText, lineHeight: 18 },
 
-  // File rows
-  fileRow: {
+  // Loading row
+  loading: {
     flexDirection: "row",
     alignItems: "center",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-    backgroundColor: C.surface,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    gap: 10,
+    paddingVertical: 20,
   },
-  fileSeparator: { height: 8 },
-  fileIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: C.borderStrong,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
-  fileIconText: { fontSize: 18 },
-  fileMeta: { flex: 1 },
-  fileName: { fontSize: 14, fontWeight: "600", color: C.textPrimary },
-  fileSize: { marginTop: 2, fontSize: 11, color: C.textSecond },
-  downloadBtn: {
-    marginLeft: 8,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#0C2040",
-    borderWidth: 1,
-    borderColor: C.borderStrong,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  downloadBtnPressed: { backgroundColor: "#0EA5E920" },
-  downloadBtnText: { fontSize: 16, color: C.accent, fontWeight: "600" },
+  loadingText: { fontSize: 13, color: C.textMuted },
 
-  // FAB
-  fab: {
-    position: "absolute",
-    bottom: 28,
-    right: 22,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: C.accentBtn,
-    alignItems: "center",
-    justifyContent: "center",
-    elevation: 8,
-  },
-  fabPressed: { opacity: 0.8, transform: [{ scale: 0.95 }] },
-  fabIcon: {
-    fontSize: 28,
-    color: "#FFFFFF",
-    fontWeight: "300",
-    lineHeight: 30,
-  },
+  // Separator
+  sep: { height: 8 },
 });
