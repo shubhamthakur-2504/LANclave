@@ -136,6 +136,7 @@ mod tests {
 
         let state = Arc::new(crate::server::AppState {
             sandbox_root: std::env::temp_dir(),
+            device_id: "test-device".to_string(),
             auth: Arc::new(AuthState::new()), // enabled
         });
         let app = crate::server::build_router(state);
@@ -168,6 +169,7 @@ mod tests {
 
         let state = Arc::new(crate::server::AppState {
             sandbox_root: std::env::temp_dir(),
+            device_id: "test-device".to_string(),
             auth,
         });
         let app = crate::server::build_router(state);
@@ -208,6 +210,7 @@ mod tests {
 
         let state = Arc::new(crate::server::AppState {
             sandbox_root: std::env::temp_dir(),
+            device_id: "test-device".to_string(),
             auth,
         });
         let app = crate::server::build_router(state);
@@ -247,6 +250,7 @@ mod tests {
 
         let state = Arc::new(crate::server::AppState {
             sandbox_root: std::env::temp_dir(),
+            device_id: "test-device".to_string(),
             auth,
         });
         let app = crate::server::build_router(state);

@@ -76,6 +76,7 @@ pub async fn start_server(state: State<'_, CliState>) -> Result<(), String> {
 
     let app_state = Arc::new(AppState {
         sandbox_root: state.sandbox_root.clone(),
+        device_id: state.device_id.clone(),
         auth: Arc::new(AuthState {
             store: std::sync::RwLock::new(cloned),
             enabled: true,
@@ -114,6 +115,7 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
 
     let peers: Vec<PeerInfo> = raw
         .into_iter()
+        .filter(|(_, device_id)| device_id != &state.device_id)
         .map(|(addr, device_id)| PeerInfo {
             paired: store.is_paired(&device_id),
             addr,

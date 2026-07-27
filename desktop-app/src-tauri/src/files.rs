@@ -253,6 +253,7 @@ mod tests {
     fn make_state(dir: &TempDir) -> Arc<AppState> {
         Arc::new(AppState {
             sandbox_root: dir.path().to_path_buf(),
+            device_id: "test-device".to_string(),
             auth: Arc::new(crate::pairing::AuthState::disabled()),
         })
     }

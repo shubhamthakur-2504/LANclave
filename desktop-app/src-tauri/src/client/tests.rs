@@ -31,6 +31,7 @@ async fn start_server(
 
     let state = Arc::new(AppState {
         sandbox_root: root,
+        device_id: "test-device".to_string(),
         auth: Arc::new(crate::pairing::AuthState::disabled()),
     });
     let router = build_raw_router(state);

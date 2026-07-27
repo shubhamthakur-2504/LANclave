@@ -14,6 +14,7 @@ pub struct AppState {
     pub sandbox_root: PathBuf,
     /// Authentication state — shared device store behind an `RwLock`.
     pub auth: Arc<AuthState>,
+    pub device_id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,17 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/sandbox/files",
             axum::routing::get(crate::files::list_files_handler),
+        )
+        .route(
+            "/health",
+            axum::routing::get(|axum::extract::State(state): axum::extract::State<Arc<AppState>>| async move {
+                axum::Json(serde_json::json!({
+                    "status": "ok",
+                    "app": "lanclave",
+                    "device_id": state.device_id,
+                    "name": "Desktop Workstation"
+                }))
+            }),
         )
         .with_state(state)
 }
@@ -204,6 +216,7 @@ mod tests {
     fn test_state(dir: &TempDir) -> Arc<AppState> {
         Arc::new(AppState {
             sandbox_root: dir.path().to_path_buf(),
+            device_id: "test-device".to_string(),
             auth: Arc::new(AuthState::disabled()),
         })
     }

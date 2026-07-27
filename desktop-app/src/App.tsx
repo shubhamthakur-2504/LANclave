@@ -87,13 +87,18 @@ export default function App() {
     refreshPeers();
   }, [refreshPeers]);
 
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+
   const pageContent = (() => {
     switch (activePage) {
       case "peers":
         return (
           <PeersPage
             peers={peers}
-            onOpenConnection={(peer) => setPairPeer(peer)}
+            onOpenConnection={(peer) => {
+              setPairPeer(peer);
+              setIsConnectModalOpen(true);
+            }}
           />
         );
       case "files":
@@ -115,9 +120,9 @@ export default function App() {
           onStopServer={handleStopServer}
           serverBusy={serverBusy}
           onOpenConnection={() => {
-            // Open modal for the first unpaired peer, or just open empty
             const target = peers.find((p) => !p.paired) ?? null;
             setPairPeer(target);
+            setIsConnectModalOpen(true);
           }}
         />
         <main className="flex-1 overflow-hidden">
@@ -130,10 +135,13 @@ export default function App() {
         </main>
       </div>
       <ConnectionModal
-        isOpen={pairPeer !== null}
+        isOpen={isConnectModalOpen || pairPeer !== null}
         peerAddr={pairPeer?.addr ?? ""}
         peerDeviceId={pairPeer?.device_id ?? ""}
-        onClose={() => setPairPeer(null)}
+        onClose={() => {
+          setPairPeer(null);
+          setIsConnectModalOpen(false);
+        }}
         onPaired={handlePaired}
       />
     </div>
