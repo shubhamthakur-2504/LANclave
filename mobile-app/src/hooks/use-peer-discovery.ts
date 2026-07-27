@@ -1,134 +1,237 @@
+/**
+ * usePeerDiscovery — two-layer peer discovery:
+ *
+ * Layer 1 – mDNS (react-native-zeroconf)
+ *   Discovers peers that advertise `_lanclave-portal._tcp.local.`
+ *   Requires CHANGE_WIFI_MULTICAST_STATE permission (now declared in app.json).
+ *
+ * Layer 2 – Active Subnet Probe (HTTP /health)
+ *   Reads the current gateway IP via expo-network, then sweeps every host in
+ *   the same /24 subnet on port 8377 in parallel. This makes discovery work
+ *   on ANY network topology — Wi-Fi router, Android hotspot (192.168.43.x,
+ *   10.123.104.x, 172.20.10.x, etc.), iOS hotspot, and emulators.
+ */
+
 import { useEffect, useRef, useState } from "react";
 import Zeroconf from "react-native-zeroconf";
+import * as Network from "expo-network";
+import { getOrCreateDeviceIdentity } from "@/services/identity";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export interface DiscoveredPeer {
-  /** Unique device identifier from the peer's mDNS TXT record. */
   id: string;
-  /** Human-readable display name (falls back to the mDNS instance name). */
   name: string;
-  /** Resolved IPv4 address. */
   ip: string;
-  /** Port the peer's HTTP server is listening on. */
   port: number;
 }
 
 // ---------------------------------------------------------------------------
-// Service type constants — must match the desktop's mdns-sd broadcast.
+// Constants
 // ---------------------------------------------------------------------------
 
 const SERVICE_TYPE = "lanclave-portal";
 const PROTOCOL = "tcp";
 const DOMAIN = "local.";
+const LANCLAVE_PORT = 8377;
+
+/**
+ * Derive the /24 subnet prefix from an IP address.
+ * e.g. "10.123.104.69" → "10.123.104."
+ */
+function subnetPrefix(ip: string): string {
+  const parts = ip.split(".");
+  if (parts.length < 3) return "";
+  return `${parts[0]}.${parts[1]}.${parts[2]}.`;
+}
+
+/**
+ * Probe all 254 hosts in the same /24 as the gateway IP on LANCLAVE_PORT.
+ * Returns any that respond with a valid LANclave /health response.
+ */
+async function probeSubnet(
+  gatewayOrLocalIp: string,
+  myDeviceId: string | null,
+  signal: AbortSignal,
+): Promise<DiscoveredPeer[]> {
+  const prefix = subnetPrefix(gatewayOrLocalIp);
+  if (!prefix) return [];
+
+  const results: DiscoveredPeer[] = [];
+
+  // Build all 254 host IPs in the subnet
+  const allIps: string[] = [];
+  for (let i = 1; i <= 254; i++) {
+    allIps.push(`${prefix}${i}`);
+  }
+
+  // Probe in chunks of 20 in parallel to be fast but not overwhelming
+  const CHUNK = 20;
+  for (let i = 0; i < allIps.length; i += CHUNK) {
+    if (signal.aborted) break;
+
+    const chunk = allIps.slice(i, i + CHUNK);
+    const probeResults = await Promise.all(
+      chunk.map(async (ip): Promise<DiscoveredPeer | null> => {
+        try {
+          const res = await fetch(`http://${ip}:${LANCLAVE_PORT}/health`, {
+            method: "GET",
+            signal: AbortSignal.timeout(500),
+          });
+
+          if (res.status === 200 || res.status === 401) {
+            let name = `LANclave @ ${ip}`;
+            let id = `ip-${ip}`;
+
+            if (res.status === 200) {
+              try {
+                const body = await res.json();
+                if (body.app === "lanclave") {
+                  if (body.device_id) id = body.device_id;
+                  if (body.name) name = body.name;
+                }
+              } catch {
+                // ignore
+              }
+            }
+
+            // Skip self
+            if (myDeviceId && myDeviceId === id) return null;
+
+            return { id, name, ip, port: LANCLAVE_PORT };
+          }
+        } catch {
+          // unreachable or no LANclave running
+        }
+        return null;
+      }),
+    );
+
+    for (const p of probeResults) {
+      if (p) results.push(p);
+    }
+  }
+
+  return results;
+}
 
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
-/**
- * Discover LANclave peers on the local network via mDNS.
- *
- * Initialises a single [`Zeroconf`] instance on mount, calls `scan()` with
- * the service type that the desktop app broadcasts
- * (`_lanclave-portal._tcp.local.`), and collects `resolved` events into a
- * deduplicated state array keyed by the peer's `device_id`.
- *
- * When the calling component unmounts, event listeners are removed and the
- * scan is stopped automatically.
- *
- * @returns An array of [`DiscoveredPeer`] objects, empty until peers are
- *          resolved on the LAN.
- */
 export function usePeerDiscovery(): DiscoveredPeer[] {
-  const [discoveredPeers, setDiscoveredPeers] = useState<DiscoveredPeer[]>(
-    [],
-  );
+  const [discoveredPeers, setDiscoveredPeers] = useState<DiscoveredPeer[]>([]);
 
-  // Keep the Zeroconf instance in a ref so it survives re-renders and can
-  // be cleaned up in the effect's return closure.
   const zeroconfRef = useRef<Zeroconf | null>(null);
+  const myDeviceIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    // Fetch own device ID once on mount for self-filtering
+    getOrCreateDeviceIdentity()
+      .then((ident) => {
+        myDeviceIdRef.current = ident.deviceId;
+      })
+      .catch(() => {});
+
+    // ── Layer 1: mDNS via react-native-zeroconf ──────────────────────────────
     const zc = new Zeroconf();
     zeroconfRef.current = zc;
 
-    const handleResolved = (service: {
-      host: string;
-      port: number;
-      name: string;
-      txt: Record<string, string>;
-      addresses: string[];
-    }) => {
-      // Extract the device_id from the TXT record.
-      const deviceId: string | undefined =
-        service.txt.device_id ?? service.txt["device_id"];
-
-      if (!deviceId) {
-        // Skip peers that don't advertise a device_id — they're not
-        // speaking our protocol.
-        return;
-      }
-
-      // Pick the first IPv4 address from the addresses list.
-      const ip: string | undefined =
-        service.addresses.find((addr: string) => !addr.includes(":")) ??
-        service.addresses[0];
-
-      if (!ip) {
-        return;
-      }
-
+    function addPeer(peer: DiscoveredPeer) {
       setDiscoveredPeers((prev) => {
-        // Deduplicate by device_id — only add if we haven't seen this
-        // peer before.
-        if (prev.some((p) => p.id === deviceId)) {
+        if (prev.some((p) => p.id === peer.id || p.ip === peer.ip)) {
           return prev;
         }
-        return [
-          ...prev,
-          {
-            id: deviceId,
-            name: service.name || deviceId.slice(0, 12),
-            ip,
-            port: service.port,
-          },
-        ];
+        return [...prev, peer];
       });
-    };
+    }
 
-    // -------------------------------------------------------------------
-    // Wire up event listeners
-    // -------------------------------------------------------------------
+    zc.on(
+      "resolved",
+      (service: {
+        host: string;
+        port: number;
+        name: string;
+        txt: Record<string, string>;
+        addresses: string[];
+      }) => {
+        const deviceId = service.txt.device_id ?? service.txt["device_id"];
+        if (!deviceId) return;
+        if (myDeviceIdRef.current && myDeviceIdRef.current === deviceId) return;
 
-    zc.on("resolved", handleResolved);
+        const ip =
+          service.addresses.find((a: string) => !a.includes(":")) ??
+          service.addresses[0];
+        if (!ip) return;
+
+        addPeer({
+          id: deviceId,
+          name: service.name || `Peer-${deviceId.slice(0, 8)}`,
+          ip,
+          port: service.port,
+        });
+      },
+    );
 
     zc.on("error", (err: unknown) => {
-      console.warn("[lanclave/zeroconf] scan error:", err);
+      // Suppress — will fall through to subnet probe layer
+      console.warn("[lanclave/zeroconf]", err);
     });
-
-    // -------------------------------------------------------------------
-    // Start scanning
-    // -------------------------------------------------------------------
 
     try {
       zc.scan(SERVICE_TYPE, PROTOCOL, DOMAIN);
-    } catch (err) {
-      console.warn("[lanclave/zeroconf] failed to start scan:", err);
+    } catch {
+      // Permission denied or unavailable — subnet probe handles discovery
     }
 
-    // -------------------------------------------------------------------
-    // Cleanup on unmount
-    // -------------------------------------------------------------------
+    // ── Layer 2: Active Subnet Probe ─────────────────────────────────────────
+    let isCancelled = false;
+    const abortController = new AbortController();
 
-    return () => {
+    async function runSubnetScan() {
       try {
-        zc.removeDeviceListeners(); // unbinds all event listeners
-        zc.stop();                  // stops the active scan
+        // Get the device's own IP address on the current network
+        const ipInfo = await Network.getIpAddressAsync();
+        const myIp = ipInfo; // e.g. "10.123.104.69" (laptop) or "192.168.43.1" (phone)
+
+        if (!myIp || myIp === "0.0.0.0" || myIp === "127.0.0.1") return;
+
+        console.log(`[lanclave/subnet] Scanning subnet: ${subnetPrefix(myIp)}0/24`);
+
+        const found = await probeSubnet(
+          myIp,
+          myDeviceIdRef.current,
+          abortController.signal,
+        );
+
+        if (!isCancelled) {
+          for (const peer of found) {
+            addPeer(peer);
+          }
+        }
+      } catch (err) {
+        console.warn("[lanclave/subnet] scan error:", err);
+      }
+    }
+
+    // Run immediately, then every 5 seconds
+    runSubnetScan();
+    const interval = setInterval(() => {
+      if (!isCancelled) runSubnetScan();
+    }, 5000);
+
+    // ── Cleanup ──────────────────────────────────────────────────────────────
+    return () => {
+      isCancelled = true;
+      abortController.abort();
+      clearInterval(interval);
+      try {
+        zc.removeDeviceListeners();
+        zc.stop();
       } catch {
-        // ignore cleanup errors
+        // ignore
       }
       zeroconfRef.current = null;
     };
