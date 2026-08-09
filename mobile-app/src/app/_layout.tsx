@@ -6,15 +6,18 @@ import { AnimatedSplashOverlay } from '@/components/animated-icon';
 SplashScreen.preventAutoHideAsync();
 
 /**
- * Root layout — single-screen app (no tab bar).
- * Uses Expo Router's Stack navigator with the header hidden so the custom
- * header inside HomeScreen is the only chrome visible.
+ * Root layout — orchestrates top-level navigation routes:
+ * - (tabs)         ← Bottom tab bar navigation (My Sandbox, Paired Peers, Scan & Pair)
+ * - peer-sandbox   ← Fullscreen peer sandbox file browser
  */
 export default function RootLayout() {
   return (
     <>
       <AnimatedSplashOverlay />
-      <Stack screenOptions={{ headerShown: false }} />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="peer-sandbox" options={{ headerShown: false }} />
+      </Stack>
     </>
   );
 }
