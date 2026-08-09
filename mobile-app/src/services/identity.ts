@@ -19,8 +19,9 @@ import { sha512 } from "@noble/hashes/sha2.js";
 import { getRandomBytes } from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 
-// Configure SHA-512 for @noble/ed25519
+// Configure SHA-512 for @noble/ed25519 (both sync and async fallback for React Native)
 ed.hashes.sha512 = sha512;
+ed.hashes.sha512Async = (m) => Promise.resolve(sha512(m));
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

@@ -96,15 +96,18 @@ export function useRemotePeer(
     [selectedPeer],
   );
 
-  // Automatically fetch peer files whenever selectedPeer updates
+  // Memoize string key so useEffect only fires when the target peer IP actually changes
+  const peerAddrKey = selectedPeer ? `${selectedPeer.ip}:${selectedPeer.port}` : "";
+
+  // Automatically fetch peer files whenever selectedPeer IP changes
   useEffect(() => {
-    if (selectedPeer) {
+    if (peerAddrKey && selectedPeer) {
       fetchPeerFiles(selectedPeer);
     } else {
       setRemoteFiles([]);
       setError(null);
     }
-  }, [selectedPeer]);
+  }, [peerAddrKey]);
 
   // ── downloadFile ────────────────────────────────────────────────────────────
 
