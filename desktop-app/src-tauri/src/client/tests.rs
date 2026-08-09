@@ -29,9 +29,12 @@ async fn start_server(
         std::fs::write(&path, content).expect("write seed file");
     }
 
+    use rand::rngs::OsRng;
     let state = Arc::new(AppState {
         sandbox_root: root,
         device_id: "test-device".to_string(),
+        identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
+        app_handle: None,
         auth: Arc::new(crate::pairing::AuthState::disabled()),
     });
     let router = build_raw_router(state);

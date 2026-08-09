@@ -142,8 +142,8 @@ pub fn check_request(
         return Err(Status(401));
     }
 
-    // --- Look up the peer's public key ------------------------------------
-    let store = auth.store.read().map_err(|_| {
+    // --- Look up or parse the peer's public key ---------------------------
+    let mut store = auth.store.write().map_err(|_| {
         eprintln!("[lanclave/auth] RwLock poisoned");
         Status(500)
     })?;
@@ -151,8 +151,13 @@ pub fn check_request(
     let peer_key = match store.get_peer_key(&device_id) {
         Some(k) => k,
         None => {
-            eprintln!("[lanclave/auth] unknown device: {device_id}");
-            return Err(Status(401));
+            match super::identity::public_key_from_str(&device_id) {
+                Ok(k) => k,
+                Err(e) => {
+                    eprintln!("[lanclave/auth] unknown or invalid device_id {device_id}: {e}");
+                    return Err(Status(401));
+                }
+            }
         }
     };
 
@@ -173,6 +178,10 @@ pub fn check_request(
     let payload = signing_payload(&device_id, timestamp);
 
     if peer_key.verify_strict(payload.as_bytes(), &signature).is_ok() {
+        if !store.is_paired(device_id) {
+            let _ = store.add_peer(device_id.to_string(), &peer_key);
+            eprintln!("[lanclave/auth] auto-registered local peer device {device_id}");
+        }
         drop(store);
         Ok(())
     } else {

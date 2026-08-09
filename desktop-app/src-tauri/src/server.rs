@@ -15,20 +15,49 @@ pub struct AppState {
     /// Authentication state — shared device store behind an `RwLock`.
     pub auth: Arc<AuthState>,
     pub device_id: String,
+    pub identity_key: ed25519_dalek::SigningKey,
+    pub app_handle: Option<tauri::AppHandle>,
 }
 
-// ---------------------------------------------------------------------------
-// Routers
-// ---------------------------------------------------------------------------
+#[derive(serde::Deserialize)]
+pub struct PairingReqPayload {
+    pub device_id: String,
+    pub name: Option<String>,
+    pub ip: Option<String>,
+}
 
-/// Build the Axum router with all file‑server routes.
-///
-/// Auth checks run **inside** the handler functions (via
-/// [`check_request`](crate::pairing::check_request)) rather than as generic
-/// middleware because axum 0.8's generic `from_fn` middleware has
-/// incompatible type constraints with the handler extractors.  The end
-/// result is identical — unauthenticated requests receive a 401 before any
-/// file I/O occurs.
+async fn pairing_request_handler(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    axum::Json(body): axum::Json<PairingReqPayload>,
+) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
+    let peer_key = crate::pairing::public_key_from_str(&body.device_id)
+        .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+
+    let fingerprint = crate::pairing::compute_pairing_fingerprint(
+        &state.identity_key.verifying_key(),
+        &peer_key,
+    );
+
+    if let Some(ref handle) = state.app_handle {
+        use tauri::Emitter;
+        let _ = handle.emit(
+            "pairing-request",
+            serde_json::json!({
+                "device_id": body.device_id,
+                "name": body.name.unwrap_or_else(|| "Mobile Device".to_string()),
+                "ip": body.ip.unwrap_or_else(|| "Mobile".to_string()),
+                "fingerprint": fingerprint,
+            }),
+        );
+    }
+
+    Ok(axum::Json(serde_json::json!({
+        "status": "ok",
+        "fingerprint": fingerprint,
+        "device_id": state.device_id,
+    })))
+}
+
 pub fn build_router(state: Arc<AppState>) -> axum::Router {
     axum::Router::new()
         .route(
@@ -39,6 +68,10 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/sandbox/files",
             axum::routing::get(crate::files::list_files_handler),
+        )
+        .route(
+            "/api/pairing/request",
+            axum::routing::post(pairing_request_handler),
         )
         .route(
             "/health",
@@ -214,9 +247,12 @@ mod tests {
 
     /// Build a test AppState with auth disabled.
     fn test_state(dir: &TempDir) -> Arc<AppState> {
+        use rand::rngs::OsRng;
         Arc::new(AppState {
             sandbox_root: dir.path().to_path_buf(),
             device_id: "test-device".to_string(),
+            identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
+            app_handle: None,
             auth: Arc::new(AuthState::disabled()),
         })
     }

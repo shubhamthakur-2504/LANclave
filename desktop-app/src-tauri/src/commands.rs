@@ -65,7 +65,10 @@ pub struct FileEntry {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn start_server(state: State<'_, CliState>) -> Result<(), String> {
+pub async fn start_server(
+    app: tauri::AppHandle,
+    state: State<'_, CliState>,
+) -> Result<(), String> {
     // Drop the read guard BEFORE any .await to satisfy Send bounds.
     let cloned = state
         .device_store
@@ -77,6 +80,8 @@ pub async fn start_server(state: State<'_, CliState>) -> Result<(), String> {
     let app_state = Arc::new(AppState {
         sandbox_root: state.sandbox_root.clone(),
         device_id: state.device_id.clone(),
+        identity_key: state.identity_key.clone(),
+        app_handle: Some(app),
         auth: Arc::new(AuthState {
             store: std::sync::RwLock::new(cloned),
             enabled: true,

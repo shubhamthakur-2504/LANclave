@@ -61,17 +61,39 @@ pub fn public_key_b64(keypair: &ed25519_dalek::SigningKey) -> String {
     engine.encode(keypair.verifying_key().to_bytes())
 }
 
-/// Decode a base64-encoded public key.
-pub fn public_key_from_b64(encoded: &str) -> Result<ed25519_dalek::VerifyingKey, PairingError> {
-    let engine = base64::engine::general_purpose::STANDARD;
-    let bytes = engine
-        .decode(encoded)
-        .map_err(|e| PairingError::StorageError(e.to_string()))?;
+/// Helper to convert a hex string to bytes.
+pub fn hex_to_bytes(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
+/// Decode an ed25519 public key from either base64 (44 chars) or hex (64 chars) format.
+pub fn public_key_from_str(encoded: &str) -> Result<ed25519_dalek::VerifyingKey, PairingError> {
+    let bytes = if encoded.len() == 64 && encoded.chars().all(|c| c.is_ascii_hexdigit()) {
+        hex_to_bytes(encoded).ok_or_else(|| PairingError::StorageError("invalid hex string".into()))?
+    } else {
+        let engine = base64::engine::general_purpose::STANDARD;
+        engine
+            .decode(encoded)
+            .map_err(|e| PairingError::StorageError(e.to_string()))?
+    };
+
     let arr: [u8; 32] = bytes
         .try_into()
         .map_err(|_| PairingError::StorageError("invalid public key length".into()))?;
+
     ed25519_dalek::VerifyingKey::from_bytes(&arr)
         .map_err(|e| PairingError::StorageError(e.to_string()))
+}
+
+/// Decode a base64-encoded public key.
+pub fn public_key_from_b64(encoded: &str) -> Result<ed25519_dalek::VerifyingKey, PairingError> {
+    public_key_from_str(encoded)
 }
 
 #[cfg(test)]
@@ -137,6 +159,8 @@ mod tests {
         let state = Arc::new(crate::server::AppState {
             sandbox_root: std::env::temp_dir(),
             device_id: "test-device".to_string(),
+            identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
+            app_handle: None,
             auth: Arc::new(AuthState::new()), // enabled
         });
         let app = crate::server::build_router(state);
@@ -170,6 +194,8 @@ mod tests {
         let state = Arc::new(crate::server::AppState {
             sandbox_root: std::env::temp_dir(),
             device_id: "test-device".to_string(),
+            identity_key: key.clone(),
+            app_handle: None,
             auth,
         });
         let app = crate::server::build_router(state);
@@ -211,6 +237,8 @@ mod tests {
         let state = Arc::new(crate::server::AppState {
             sandbox_root: std::env::temp_dir(),
             device_id: "test-device".to_string(),
+            identity_key: key.clone(),
+            app_handle: None,
             auth,
         });
         let app = crate::server::build_router(state);
@@ -251,6 +279,8 @@ mod tests {
         let state = Arc::new(crate::server::AppState {
             sandbox_root: std::env::temp_dir(),
             device_id: "test-device".to_string(),
+            identity_key: key.clone(),
+            app_handle: None,
             auth,
         });
         let app = crate::server::build_router(state);

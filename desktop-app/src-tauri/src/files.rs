@@ -251,9 +251,12 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn make_state(dir: &TempDir) -> Arc<AppState> {
+        use rand::rngs::OsRng;
         Arc::new(AppState {
             sandbox_root: dir.path().to_path_buf(),
             device_id: "test-device".to_string(),
+            identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
+            app_handle: None,
             auth: Arc::new(crate::pairing::AuthState::disabled()),
         })
     }
