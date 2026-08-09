@@ -1,14 +1,22 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { DiscoveredPeer } from "@/hooks/use-peer-discovery";
 import { C, short } from "@/constants/colors";
 
 export interface PeerCardProps {
   peer: DiscoveredPeer;
   isSelected: boolean;
+  isFetching?: boolean;
+  hasError?: boolean;
   onConnect: (peer: DiscoveredPeer) => void;
 }
 
-export function PeerCard({ peer, isSelected, onConnect }: PeerCardProps) {
+export function PeerCard({
+  peer,
+  isSelected,
+  isFetching,
+  hasError,
+  onConnect,
+}: PeerCardProps) {
   return (
     <View style={[styles.card, isSelected && styles.cardSelected]}>
       {/* Avatar */}
@@ -28,14 +36,24 @@ export function PeerCard({ peer, isSelected, onConnect }: PeerCardProps) {
       <Pressable
         style={({ pressed }) => [
           styles.btn,
-          isSelected && styles.btnActive,
+          isSelected && !hasError && styles.btnActive,
+          hasError && styles.btnError,
           pressed && styles.btnPressed,
         ]}
         onPress={() => onConnect(peer)}
+        disabled={isFetching}
       >
-        <Text style={styles.btnText}>
-          {isSelected ? "Connected ✓" : "Pair & Connect"}
-        </Text>
+        {isSelected && isFetching ? (
+          <ActivityIndicator size="small" color="#FFFFFF" />
+        ) : (
+          <Text style={styles.btnText}>
+            {isSelected
+              ? hasError
+                ? "Retry Pair"
+                : "Connected ✓"
+              : "Pair & Connect"}
+          </Text>
+        )}
       </Pressable>
     </View>
   );
@@ -76,6 +94,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   btnActive: { backgroundColor: C.accentBtnDim },
+  btnError: { backgroundColor: C.errorBorder },
   btnPressed: { opacity: 0.75 },
   btnText: { fontSize: 12, fontWeight: "700", color: "#FFFFFF" },
 });
