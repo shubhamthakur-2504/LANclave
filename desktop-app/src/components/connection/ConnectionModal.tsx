@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as api from "../../api";
 
 interface ConnectionModalProps {
   isOpen: boolean;
   peerAddr: string;
   peerDeviceId: string;
+  initialFingerprint?: string | null;
   onClose: () => void;
   onPaired: () => void;
 }
@@ -13,14 +14,27 @@ export default function ConnectionModal({
   isOpen,
   peerAddr: initialAddr,
   peerDeviceId: initialDeviceId,
+  initialFingerprint,
   onClose,
   onPaired,
 }: ConnectionModalProps) {
   const [customAddr, setCustomAddr] = useState(initialAddr);
-  const [fingerprint, setFingerprint] = useState<string | null>(null);
+  const [fingerprint, setFingerprint] = useState<string | null>(initialFingerprint || null);
   const [loading, setLoading] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      if (initialFingerprint) {
+        setFingerprint(initialFingerprint);
+      } else {
+        setFingerprint(null);
+      }
+      setConfirmed(false);
+      setError(null);
+    }
+  }, [isOpen, initialFingerprint]);
 
   if (!isOpen) return null;
 

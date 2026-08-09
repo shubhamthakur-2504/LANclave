@@ -20,6 +20,7 @@ export default function App() {
 
   // Pairing state
   const [pairPeer, setPairPeer] = useState<PeerInfo | null>(null);
+  const [pairFingerprint, setPairFingerprint] = useState<string | null>(null);
 
   const refreshServerStatus = useCallback(async () => {
     try {
@@ -56,6 +57,35 @@ export default function App() {
     const id = setInterval(refreshPeers, 10_000);
     return () => clearInterval(id);
   }, [refreshPeers]);
+
+  // Listen for pairing requests initiated by mobile peers
+  useEffect(() => {
+    let unlistenFn: (() => void) | null = null;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) => {
+        listen<{ device_id: string; ip: string; name: string; fingerprint: string }>(
+          "pairing-request",
+          (event) => {
+            setPairPeer({
+              addr: event.payload.ip,
+              device_id: event.payload.device_id,
+              paired: false,
+            });
+            if (event.payload.fingerprint) {
+              setPairFingerprint(event.payload.fingerprint);
+            }
+            setIsConnectModalOpen(true);
+          }
+        ).then((unsub) => {
+          unlistenFn = unsub;
+        });
+      })
+      .catch(() => {});
+
+    return () => {
+      if (unlistenFn) unlistenFn();
+    };
+  }, []);
 
   const handleStartServer = useCallback(async () => {
     setServerBusy(true);
@@ -138,8 +168,10 @@ export default function App() {
         isOpen={isConnectModalOpen || pairPeer !== null}
         peerAddr={pairPeer?.addr ?? ""}
         peerDeviceId={pairPeer?.device_id ?? ""}
+        initialFingerprint={pairFingerprint}
         onClose={() => {
           setPairPeer(null);
+          setPairFingerprint(null);
           setIsConnectModalOpen(false);
         }}
         onPaired={handlePaired}
