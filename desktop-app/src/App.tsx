@@ -1,6 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import type { PageType, PeerInfo, FileEntry } from "./types";
-import { mockTransfers } from "./mockdata";
 import * as api from "./api";
 import Header from "./components/layout/Header";
 import Sidebar from "./components/layout/Sidebar";
@@ -8,6 +7,7 @@ import PeersPage from "./components/peers/PeersPage";
 import FilesPage from "./components/files/FilesPage";
 import TransfersPage from "./components/transfers/TransfersPage";
 import ConnectionModal from "./components/connection/ConnectionModal";
+import RemoteFilesPage from "./components/files/RemoteFilesPage";
 import "./App.css";
 
 export default function App() {
@@ -22,6 +22,9 @@ export default function App() {
   const [pairPeer, setPairPeer] = useState<PeerInfo | null>(null);
   const [pairFingerprint, setPairFingerprint] = useState<string | null>(null);
 
+  const [viewingPeer, setViewingPeer] = useState<PeerInfo | null>(null);
+  const peerFailsRef = useRef<Record<string, number>>({});
+
   const refreshServerStatus = useCallback(async () => {
     try {
       setServerRunning(await api.isServerRunning());
@@ -32,8 +35,23 @@ export default function App() {
 
   const refreshPeers = useCallback(async () => {
     try {
-      const p = await api.discoverPeers();
-      setPeers(p);
+      const livePeers = await api.discoverPeers();
+      
+      setPeers((prevPeers) => {
+        const fails = peerFailsRef.current;
+        return livePeers.map(peer => {
+          const prev = prevPeers.find(p => p.device_id === peer.device_id);
+          if (!peer.addr && prev?.addr) {
+            fails[peer.device_id] = (fails[peer.device_id] || 0) + 1;
+            if (fails[peer.device_id] < 3) {
+              return { ...peer, addr: prev.addr };
+            }
+          } else if (peer.addr) {
+            fails[peer.device_id] = 0;
+          }
+          return peer;
+        });
+      });
     } catch {
       // silent
     }
@@ -54,9 +72,12 @@ export default function App() {
   }, [refreshServerStatus, refreshPeers, refreshFiles]);
 
   useEffect(() => {
-    const id = setInterval(refreshPeers, 10_000);
+    const id = setInterval(() => {
+      refreshPeers();
+      refreshFiles();
+    }, 5000);
     return () => clearInterval(id);
-  }, [refreshPeers]);
+  }, [refreshPeers, refreshFiles]);
 
   // Listen for pairing requests initiated by mobile peers
   useEffect(() => {
@@ -120,6 +141,16 @@ export default function App() {
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
 
   const pageContent = (() => {
+    if (viewingPeer) {
+      return (
+        <RemoteFilesPage
+          peer={viewingPeer}
+          onBack={() => setViewingPeer(null)}
+          onFileDownloaded={() => refreshFiles()}
+        />
+      );
+    }
+
     switch (activePage) {
       case "peers":
         return (
@@ -129,12 +160,13 @@ export default function App() {
               setPairPeer(peer);
               setIsConnectModalOpen(true);
             }}
+            onBrowseFiles={(peer) => setViewingPeer(peer)}
           />
         );
       case "files":
         return <FilesPage files={localFiles} />;
       case "transfers":
-        return <TransfersPage transfers={mockTransfers} />;
+        return <TransfersPage transfers={[]} />;
     }
   })();
 
@@ -149,11 +181,6 @@ export default function App() {
           onStartServer={handleStartServer}
           onStopServer={handleStopServer}
           serverBusy={serverBusy}
-          onOpenConnection={() => {
-            const target = peers.find((p) => !p.paired) ?? null;
-            setPairPeer(target);
-            setIsConnectModalOpen(true);
-          }}
         />
         <main className="flex-1 overflow-hidden">
           {error && (
