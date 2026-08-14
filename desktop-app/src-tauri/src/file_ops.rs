@@ -10,9 +10,9 @@ pub struct FileItem {
 }
 
 #[tauri::command]
-pub fn list_sandbox_files() -> Result<Vec<FileItem>, String> {
-    let sandbox_path_raw = "D:\\shubham\\code\\assignment";
-    let sandbox_path = fs::canonicalize(Path::new(sandbox_path_raw))
+pub fn list_sandbox_files(state: tauri::State<'_, crate::commands::CliState>) -> Result<Vec<FileItem>, String> {
+    let sandbox_path_raw = &state.sandbox_root;
+    let sandbox_path = fs::canonicalize(sandbox_path_raw)
         .map_err(|e| format!("Failed to resolve sandbox path: {}", e))?;
     let mut file_list = Vec::new();
 
@@ -20,6 +20,13 @@ pub fn list_sandbox_files() -> Result<Vec<FileItem>, String> {
         Ok(entries) => {
             for entry in entries {
                 if let Ok(entry) = entry {
+                    let name = entry.file_name().into_string().unwrap_or_default();
+                    
+                    // Skip hidden files and internal system files
+                    if name.starts_with('.') || name == "paired_devices.json" || name == "identity.json" {
+                        continue;
+                    }
+
                     let metadata = entry.metadata().map_err(|_| "Failed to read metadata".to_string())?;
                     let path = entry.path();
 
@@ -29,7 +36,7 @@ pub fn list_sandbox_files() -> Result<Vec<FileItem>, String> {
                         }
 
                         file_list.push(FileItem {
-                            name: entry.file_name().into_string().unwrap_or_default(),
+                            name,
                             size: metadata.len(),
                             is_directory: metadata.is_dir(),
                         });

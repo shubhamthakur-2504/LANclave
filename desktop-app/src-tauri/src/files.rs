@@ -210,12 +210,17 @@ pub async fn list_files_handler(
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     while let Some(entry) = dir.next_entry().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+        let name = entry.file_name().into_string().unwrap_or_default();
+        // Skip hidden files and internal system files
+        if name.starts_with('.') || name == "paired_devices.json" || name == "identity.json" {
+            continue;
+        }
         let metadata = match entry.metadata().await {
             Ok(m) => m,
             Err(_) => continue,
         };
         entries.push(ListFileItem {
-            name: entry.file_name().into_string().unwrap_or_default(),
+            name,
             size: metadata.len(),
             is_directory: metadata.is_dir(),
         });
