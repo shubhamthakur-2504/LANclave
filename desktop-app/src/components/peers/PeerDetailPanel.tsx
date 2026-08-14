@@ -3,6 +3,7 @@ import type { PeerInfo } from "../../types";
 interface PeerDetailPanelProps {
   peer: PeerInfo;
   onOpenConnection: (peer: PeerInfo) => void;
+  onBrowseFiles?: () => void;
 }
 
 function shortId(full: string): string {
@@ -13,18 +14,21 @@ function shortId(full: string): string {
 export default function PeerDetailPanel({
   peer,
   onOpenConnection,
+  onBrowseFiles,
 }: PeerDetailPanelProps) {
   return (
     <div className="flex h-full flex-col">
       {/* Profile header */}
       <div className="flex flex-col items-center border-b border-slate-800 px-6 py-8">
         <div className="mb-3 flex h-20 w-20 items-center justify-center rounded-full bg-sky-500/20 text-2xl font-bold text-sky-400">
-          {peer.addr[0].toUpperCase()}
+          {(peer.addr[0] ?? peer.device_id[0] ?? "?").toUpperCase()}
         </div>
         <h3 className="text-lg font-semibold text-slate-100">
           {shortId(peer.device_id)}
         </h3>
-        <p className="mt-0.5 text-xs text-slate-500">{peer.addr}</p>
+        <p className="mt-0.5 text-xs text-slate-500">
+          {peer.addr || <span className="text-slate-600 italic">Offline / unreachable</span>}
+        </p>
         <div className="mt-2">
           {peer.paired ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-400">
@@ -44,6 +48,7 @@ export default function PeerDetailPanel({
       {/* Action buttons */}
       <div className="flex gap-3 border-b border-slate-800 px-6 py-4">
         <button
+          onClick={onBrowseFiles}
           disabled={!peer.paired}
           className="flex-1 rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-sky-400 disabled:opacity-40"
         >

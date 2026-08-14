@@ -7,9 +7,10 @@ import EmptyState from "../ui/EmptyState";
 interface PeersPageProps {
   peers: PeerInfo[];
   onOpenConnection: (peer: PeerInfo) => void;
+  onBrowseFiles?: (peer: PeerInfo) => void;
 }
 
-export default function PeersPage({ peers, onOpenConnection }: PeersPageProps) {
+export default function PeersPage({ peers, onOpenConnection, onBrowseFiles }: PeersPageProps) {
   const [selectedPeerId, setSelectedPeerId] = useState<string | null>(null);
   const selectedPeer = peers.find((p) => p.device_id === selectedPeerId) ?? null;
 
@@ -27,6 +28,7 @@ export default function PeersPage({ peers, onOpenConnection }: PeersPageProps) {
           <PeerDetailPanel
             peer={selectedPeer}
             onOpenConnection={() => onOpenConnection(selectedPeer)}
+            onBrowseFiles={() => onBrowseFiles?.(selectedPeer)}
           />
         ) : (
           <EmptyState message="Select a peer to view details" />
