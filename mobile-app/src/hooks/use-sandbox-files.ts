@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { useFocusEffect } from "expo-router";
 
 import { SandboxFileEntry, getLocalSandboxFiles } from "@/services/storage";
 
@@ -46,10 +47,13 @@ export function useSandboxFiles(): UseSandboxFilesResult {
     }
   }, []);
 
-  // Load on mount.
-  useEffect(() => {
-    refreshFiles();
-  }, [refreshFiles]);
+
+  // Load when the screen gains focus
+  useFocusEffect(
+    useCallback(() => {
+      refreshFiles();
+    }, [refreshFiles]),
+  );
 
   return { files, isLoading, refreshFiles };
 }
