@@ -114,19 +114,42 @@ pub fn is_server_running(state: State<'_, CliState>) -> bool {
 
 #[tauri::command]
 pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>, String> {
-    let raw = discovery::browse_peers(2).await?;
+    // Run live discovery (mDNS + subnet probe)
+    let live = discovery::browse_peers(1).await.unwrap_or_default();
 
     let store = state.device_store.read().map_err(|e| e.to_string())?;
 
-    let peers: Vec<PeerInfo> = raw
+    // Build a map of live device_id -> addr for quick lookup
+    let mut live_map: std::collections::HashMap<String, String> = live
         .into_iter()
-        .filter(|(_, device_id)| device_id != &state.device_id)
-        .map(|(addr, device_id)| PeerInfo {
-            paired: store.is_paired(&device_id),
-            addr,
-            device_id,
+        .filter(|(_, id)| id != &state.device_id)
+        .map(|(addr, id)| (id, addr))
+        .collect();
+
+    // Start with all stored paired peers (they always appear in the list)
+    let mut peers: Vec<PeerInfo> = store
+        .devices
+        .values()
+        .filter(|d| d.device_id != state.device_id)
+        .map(|d| {
+            // Use live addr if we found it, otherwise leave addr empty (peer is offline)
+            let addr = live_map.remove(&d.device_id).unwrap_or_default();
+            PeerInfo {
+                addr,
+                device_id: d.device_id.clone(),
+                paired: true,
+            }
         })
         .collect();
+
+    // Add any live-discovered peers that are NOT already in the paired store
+    for (id, addr) in live_map {
+        peers.push(PeerInfo {
+            addr,
+            device_id: id,
+            paired: false,
+        });
+    }
 
     Ok(peers)
 }
@@ -263,8 +286,10 @@ pub async fn confirm_pairing(
         peer_public_key: peer_key,
     };
 
+    // Save to the parent of sandbox_root (which is app_data_dir) where it is loaded from
+    let app_data_dir = state.sandbox_root.parent().unwrap();
     let mut store = state.device_store.write().map_err(|e| e.to_string())?;
-    crate::pairing::confirm_pairing(session, &mut store, &state.sandbox_root)
+    crate::pairing::confirm_pairing(session, &mut store, app_data_dir)
         .map_err(|e| e.to_string())?;
 
     Ok(())

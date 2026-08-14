@@ -12,7 +12,6 @@ use commands::CliState;
 use ed25519_dalek::SigningKey;
 use pairing::DeviceStore;
 use server::ServerController;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Manager;
@@ -24,10 +23,19 @@ struct MdnsController {
 #[cfg_attr(mobile, tauri::mobile)]
 pub fn run() {
 
-    let app_data_dir = std::path::Path::new(".");
+    let app_data_dir = dirs_next::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("LANclave");
+    std::fs::create_dir_all(&app_data_dir).ok();
+
+    // Sandbox is a sub-folder of the data dir so paired_devices.json
+    // is never exposed through the file listing endpoint.
+    let sandbox_root = app_data_dir.join("Sandbox");
+    std::fs::create_dir_all(&sandbox_root).ok();
+
+    // ---- Load or generate our device identity (ed25519 keypair) ----------
     let identity_key =
-        pairing::load_or_generate_identity(app_data_dir).unwrap_or_else(|_| {
-            // Fallback: generate an ephemeral key if file I/O fails.
+        pairing::load_or_generate_identity(&app_data_dir).unwrap_or_else(|_| {
             use rand::rngs::OsRng;
             SigningKey::generate(&mut OsRng)
         });
@@ -36,21 +44,11 @@ pub fn run() {
 
     let mdns_shutdown_flag = discovery::start_mdns_broadcast(&device_id);
 
-    // ---- Load or generate our device identity (ed25519 keypair) ----------
-    // The app data dir is where Tauri stores config; we use
-    // app.path().app_data_dir() at runtime, but for startup we need a path.
-    // We hardcode a sensible default; the user can configure it via the UI.
-    
     let device_store = Arc::new(std::sync::RwLock::new(
-        DeviceStore::load(app_data_dir).unwrap_or_default(),
+        DeviceStore::load(&app_data_dir).unwrap_or_default(),
     ));
 
-    // ---- Server lifecycle controller ------------------------------------
     let server_controller = Arc::new(ServerController::new());
-
-    // ---- Sandbox root directory -----------------------------------------
-    // TODO: make this configurable via the frontend / settings file.
-    let sandbox_root = PathBuf::from("D:\\shubham\\code\\assignment");
 
     tauri::Builder::default()
         .manage(MdnsController {

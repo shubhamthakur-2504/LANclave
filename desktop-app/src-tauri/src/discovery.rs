@@ -1,9 +1,17 @@
 use mdns_sd::{DaemonEvent, ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::collections::HashMap;
+use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct HealthResponse {
+    app: String,
+    device_id: String,
+}
 
 const SERVICE_TYPE: &str = "_lanclave-portal._tcp.local.";
 
@@ -94,11 +102,11 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String)>, St
         .browse(SERVICE_TYPE)
         .map_err(|e| format!("mDNS browse: {e}"))?;
 
-    // Allow a short window for responses to arrive.
+    // Allow a short window for mDNS responses — subnet probe runs concurrently.
     let deadline = if timeout_secs == 0 {
-        Duration::from_millis(1500)
+        Duration::from_millis(500)
     } else {
-        Duration::from_secs(timeout_secs)
+        Duration::from_millis(timeout_secs * 1000)
     };
     let start = std::time::Instant::now();
     let mut peers: Vec<(String, String)> = Vec::new();
@@ -120,7 +128,63 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String)>, St
         }
     }
 
+    // Active Subnet & Gateway Probe Fallback
+    // Because hotspots drop mDNS, we query the gateway instantly, then scan the local /24 subnet.
+    let mut probe_tasks = Vec::new();
+
+    if let Ok(gateway) = default_net::get_default_gateway() {
+        let gw_ip = gateway.ip_addr.to_string();
+        probe_tasks.push(tokio::spawn(async move {
+            probe_ip(&gw_ip).await
+        }));
+    }
+
+    if let Ok(interface) = default_net::get_default_interface() {
+        if let Some(ipv4) = interface.ipv4.first() {
+            let ip: Ipv4Addr = ipv4.addr;
+            if ipv4.prefix_len == 24 {
+                let octets = ip.octets();
+                for i in 1..=254 {
+                    let test_ip = format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], i);
+                    if test_ip != ip.to_string() {
+                        probe_tasks.push(tokio::spawn(async move {
+                            probe_ip(&test_ip).await
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    // Await all probe tasks and merge with mDNS results
+    for task in probe_tasks {
+        if let Ok(Some(peer)) = task.await {
+            if !peers.iter().any(|(_, id)| id == &peer.1) {
+                peers.push(peer);
+            }
+        }
+    }
+
     Ok(peers)
+}
+
+async fn probe_ip(ip: &str) -> Option<(String, String)> {
+    let url = format!("http://{ip}:8377/health");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(1500))
+        .build()
+        .ok()?;
+
+    let res = client.get(&url).send().await.ok()?;
+    if res.status().is_success() || res.status() == 401 {
+        if let Ok(body) = res.json::<HealthResponse>().await {
+            if body.app == "lanclave" {
+                let addr = format!("{ip}:8377");
+                return Some((addr, body.device_id));
+            }
+        }
+    }
+    None
 }
 
 /// Extract `(socket_addr, device_id)` from a resolved mDNS service.
