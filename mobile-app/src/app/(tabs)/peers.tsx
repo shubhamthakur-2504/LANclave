@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   FlatList,
   Pressable,
@@ -21,6 +21,8 @@ export default function PairedPeersScreen() {
   const router = useRouter();
   const [peersWithStatus, setPeersWithStatus] = useState<PairedPeerStatus[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // Track consecutive failures per peer so we don't flicker on a single missed ping
+  const failCountRef = useRef<Record<string, number>>({});
 
   const checkPeersHealth = useCallback(async () => {
     setIsRefreshing(true);
@@ -31,12 +33,19 @@ export default function PairedPeersScreen() {
         try {
           const res = await fetch(`http://${p.ip}:${p.port}/health`, {
             method: "GET",
-            signal: AbortSignal.timeout(1500),
+            signal: AbortSignal.timeout(3000),
           });
-          return { ...p, isOnline: res.ok };
+          if (res.ok) {
+            failCountRef.current[p.id] = 0;
+            return { ...p, isOnline: true };
+          }
         } catch {
-          return { ...p, isOnline: false };
+          // fall through
         }
+        // Increment failure counter — only go offline after 2 consecutive misses
+        failCountRef.current[p.id] = (failCountRef.current[p.id] ?? 0) + 1;
+        const isOnline = failCountRef.current[p.id] < 2;
+        return { ...p, isOnline };
       }),
     );
 
@@ -47,7 +56,7 @@ export default function PairedPeersScreen() {
   useFocusEffect(
     useCallback(() => {
       checkPeersHealth();
-      const interval = setInterval(checkPeersHealth, 8000);
+      const interval = setInterval(checkPeersHealth, 15_000);
       return () => clearInterval(interval);
     }, [checkPeersHealth]),
   );

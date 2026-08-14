@@ -6,15 +6,32 @@ import {
   StyleSheet,
   Text,
   View,
+  Switch,
 } from "react-native";
 
 import { AddFileButton } from "@/components/AddFileButton";
 import { LocalFileRow } from "@/components/LocalFileRow";
 import { C } from "@/constants/colors";
 import { useSandboxFiles } from "@/hooks/use-sandbox-files";
+import { startServer, stopServer, isServerRunning } from "@/services/server";
+import { useState, useEffect } from "react";
 
 export default function MySandboxScreen() {
   const { files, isLoading: filesLoading, refreshFiles } = useSandboxFiles();
+  const [serverVisible, setServerVisible] = useState(false);
+
+  useEffect(() => {
+    setServerVisible(isServerRunning());
+  }, []);
+
+  const toggleServer = async (val: boolean) => {
+    if (val) {
+      await startServer();
+    } else {
+      stopServer();
+    }
+    setServerVisible(val);
+  };
 
   return (
     <View style={styles.root}>
@@ -29,7 +46,19 @@ export default function MySandboxScreen() {
               <Text style={styles.badgeText}>{files.length} Files</Text>
             </View>
           </View>
-          <Text style={styles.subtitle}>Local sandboxed storage on this device</Text>
+          <View style={styles.headerRow2}>
+            <Text style={styles.subtitle}>Local sandboxed storage on this device</Text>
+            <View style={styles.toggleRow}>
+               <Text style={styles.toggleLabel}>Visible</Text>
+               <Switch 
+                  value={serverVisible} 
+                  onValueChange={toggleServer} 
+                  trackColor={{ false: C.borderStrong, true: C.accent }}
+                  thumbColor={C.textPrimary}
+                  style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+               />
+            </View>
+          </View>
         </View>
 
         <View style={styles.divider} />
@@ -86,7 +115,23 @@ const styles = StyleSheet.create({
     color: C.accent,
     letterSpacing: -0.5,
   },
-  subtitle: { marginTop: 4, fontSize: 13, color: C.textSecond },
+  headerRow2: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 4,
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  toggleLabel: {
+    fontSize: 12,
+    color: C.textSecond,
+    fontWeight: "600",
+  },
+  subtitle: { fontSize: 13, color: C.textSecond },
   badge: {
     backgroundColor: C.surfaceRaised,
     borderWidth: 1,

@@ -1,13 +1,11 @@
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
   FlatList,
-  Pressable,
   SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 
@@ -16,19 +14,38 @@ import { PairingModal } from "@/components/PairingModal";
 import { C } from "@/constants/colors";
 import { DiscoveredPeer, usePeerDiscovery } from "@/hooks/use-peer-discovery";
 import { getOrCreateDeviceIdentity } from "@/services/identity";
-import { getPairingFingerprintForPeer, savePairedPeer } from "@/services/pairing";
+import {
+  getPairingFingerprintForPeer,
+  getPairedPeers,
+  savePairedPeer,
+} from "@/services/pairing";
 
 export default function ScanScreen() {
   const router = useRouter();
-  const peers = usePeerDiscovery();
+  const allDiscovered = usePeerDiscovery();
 
-  // Manual IP input
-  const [showIpInput, setShowIpInput] = useState(false);
-  const [manualIp, setManualIp] = useState("");
+  // Keep a live set of paired IDs so we can filter them out of the scan list
+  const [pairedIds, setPairedIds] = useState<Set<string>>(new Set());
+
+  // Refresh paired IDs every time this screen gains focus
+  useFocusEffect(
+    useCallback(() => {
+      getPairedPeers().then((saved) =>
+        setPairedIds(new Set(saved.map((p) => p.id)))
+      );
+    }, []),
+  );
+
+  // Only show devices that are NOT yet paired
+  const peers = allDiscovered.filter((p) => !pairedIds.has(p.id));
 
   // Interactive 6-Digit Pairing Modal state
-  const [pairingTarget, setPairingTarget] = useState<DiscoveredPeer | null>(null);
-  const [pairingFingerprint, setPairingFingerprint] = useState<string | null>(null);
+  const [pairingTarget, setPairingTarget] = useState<DiscoveredPeer | null>(
+    null,
+  );
+  const [pairingFingerprint, setPairingFingerprint] = useState<string | null>(
+    null,
+  );
   const [isPairingSubmitting, setIsPairingSubmitting] = useState(false);
 
   /**
@@ -77,6 +94,9 @@ export default function ScanScreen() {
     setIsPairingSubmitting(true);
     try {
       await savePairedPeer(pairingTarget);
+      // Refresh paired IDs so this device disappears from the scan list immediately
+      const saved = await getPairedPeers();
+      setPairedIds(new Set(saved.map((p) => p.id)));
       setPairingTarget(null);
       // Navigate to the Paired Peers tab
       router.replace("/peers" as any);
@@ -87,19 +107,6 @@ export default function ScanScreen() {
     }
   }, [pairingTarget, router]);
 
-  const handleManualConnect = () => {
-    if (!manualIp.trim()) return;
-    const ip = manualIp.trim();
-    const customPeer: DiscoveredPeer = {
-      id: `manual-${ip}`,
-      name: `LANclave (${ip})`,
-      ip,
-      port: 8377,
-    };
-    setShowIpInput(false);
-    handleInitiatePairing(customPeer);
-  };
-
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg} />
@@ -107,17 +114,7 @@ export default function ScanScreen() {
       <SafeAreaView style={styles.safe}>
         {/* Header */}
         <View style={styles.header}>
-          <View style={styles.headerRow}>
-            <Text style={styles.title}>Scan & Pair</Text>
-            <Pressable
-              style={styles.connectIpBtn}
-              onPress={() => setShowIpInput((prev) => !prev)}
-            >
-              <Text style={styles.connectIpText}>
-                {showIpInput ? "Cancel" : "+ Add IP"}
-              </Text>
-            </Pressable>
-          </View>
+          <Text style={styles.title}>Scan &amp; Pair</Text>
           <Text style={styles.subtitle}>
             Discover nearby LANclave devices on local network
           </Text>
@@ -127,37 +124,13 @@ export default function ScanScreen() {
 
         {/* Content */}
         <View style={styles.content}>
-          {/* Manual IP Input Box */}
-          {showIpInput && (
-            <View style={styles.manualIpBox}>
-              <Text style={styles.manualIpTitle}>Connect via IP Address</Text>
-              <View style={styles.ipInputRow}>
-                <TextInput
-                  style={styles.ipInput}
-                  placeholder="e.g. 192.168.43.142"
-                  placeholderTextColor={C.textMuted}
-                  value={manualIp}
-                  onChangeText={setManualIp}
-                  keyboardType="decimal-pad"
-                  autoCapitalize="none"
-                />
-                <Pressable
-                  style={styles.ipSubmitBtn}
-                  onPress={handleManualConnect}
-                >
-                  <Text style={styles.ipSubmitText}>Pair</Text>
-                </Pressable>
-              </View>
-            </View>
-          )}
-
-          {/* Discovered Peers List */}
-          {peers.length === 0 && !showIpInput ? (
+          {peers.length === 0 ? (
             <View style={styles.empty}>
               <Text style={styles.emptyIcon}>📡</Text>
               <Text style={styles.emptyTitle}>Scanning local network…</Text>
               <Text style={styles.emptyHint}>
-                Make sure both devices are on the same Wi-Fi network or hotspot and LANclave server is active.
+                Make sure both devices are on the same Wi-Fi network or hotspot
+                and LANclave server is active.
               </Text>
             </View>
           ) : (
@@ -199,11 +172,6 @@ const styles = StyleSheet.create({
 
   // Header
   header: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14 },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
   title: {
     fontSize: 26,
     fontWeight: "700",
@@ -211,13 +179,6 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   subtitle: { marginTop: 4, fontSize: 13, color: C.textSecond },
-  connectIpBtn: {
-    backgroundColor: C.borderStrong,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-  },
-  connectIpText: { fontSize: 11, fontWeight: "600", color: C.accent },
 
   divider: {
     height: 1,
@@ -227,42 +188,6 @@ const styles = StyleSheet.create({
   },
 
   content: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
-
-  // Manual IP Box
-  manualIpBox: {
-    backgroundColor: C.surface,
-    borderWidth: 1,
-    borderColor: C.border,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 16,
-  },
-  manualIpTitle: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: C.textPrimary,
-    marginBottom: 8,
-  },
-  ipInputRow: { flexDirection: "row", gap: 8 },
-  ipInput: {
-    flex: 1,
-    backgroundColor: C.bg,
-    borderWidth: 1,
-    borderColor: C.borderStrong,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    color: C.textPrimary,
-    fontSize: 13,
-  },
-  ipSubmitBtn: {
-    backgroundColor: C.accentBtn,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  ipSubmitText: { fontSize: 13, fontWeight: "700", color: "#FFFFFF" },
 
   columnWrapper: { gap: 12, marginBottom: 12 },
 
