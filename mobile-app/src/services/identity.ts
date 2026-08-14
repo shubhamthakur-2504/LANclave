@@ -17,6 +17,7 @@
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { getRandomBytes } from "expo-crypto";
+import { Buffer } from "buffer";
 import * as SecureStore from "expo-secure-store";
 
 // Configure SHA-512 for @noble/ed25519 (both sync and async fallback for React Native)
@@ -45,6 +46,11 @@ function toHex(bytes: Uint8Array): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+/** Convert a Uint8Array to a standard base64 string (matches desktop Rust base64::STANDARD). */
+function toBase64(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64");
 }
 
 /** Convert a lowercase hex string back to Uint8Array. */
@@ -108,9 +114,11 @@ export async function getOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
 
   const publicKeyBytes = ed.getPublicKey(seed);
   const publicKeyHex = toHex(publicKeyBytes);
+  // The desktop identifies devices by base64-encoded public keys.
+  const publicKeyB64 = toBase64(publicKeyBytes);
 
   _cachedIdentity = {
-    deviceId: publicKeyHex,   // deviceId === publicKey hex (no extra hash needed)
+    deviceId: publicKeyB64,   // deviceId === base64(publicKey) to match desktop pairing store
     publicKey: publicKeyHex,
     privateKey: toHex(seed),
   };
@@ -132,12 +140,12 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
   const message = new TextEncoder().encode(`${identity.deviceId}:${timestamp}`);
   const seed = fromHex(identity.privateKey);
   const signatureBytes = await ed.signAsync(message, seed);
-  const signature = toHex(signatureBytes);
+  const signatureB64 = toBase64(signatureBytes);
 
   return {
     "X-LANclave-Device-Id": identity.deviceId,
     "X-LANclave-Timestamp": String(timestamp),
-    "X-LANclave-Signature": signature,
+    "X-LANclave-Signature": signatureB64,
   };
 }
 
