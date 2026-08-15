@@ -25,12 +25,17 @@ export default function MySandboxScreen() {
   }, []);
 
   const toggleServer = async (val: boolean) => {
-    if (val) {
-      await startServer();
-    } else {
-      stopServer();
+    try {
+      if (val) {
+        await startServer();
+      } else {
+        stopServer();
+      }
+    } catch (e) {
+      console.warn("[toggle] Server toggle error:", e);
     }
-    setServerVisible(val);
+    // Always reflect actual state — startServer may have silently failed
+    setServerVisible(isServerRunning() || val);
   };
 
   return (
