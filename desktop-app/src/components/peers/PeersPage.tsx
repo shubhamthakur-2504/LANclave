@@ -1,7 +1,5 @@
-import { useState } from "react";
 import type { PeerInfo } from "../../types";
 import PeersListPanel from "./PeersListPanel";
-import PeerDetailPanel from "./PeerDetailPanel";
 import EmptyState from "../ui/EmptyState";
 
 interface PeersPageProps {
@@ -11,27 +9,24 @@ interface PeersPageProps {
 }
 
 export default function PeersPage({ peers, onOpenConnection, onBrowseFiles }: PeersPageProps) {
-  const [selectedPeerId, setSelectedPeerId] = useState<string | null>(null);
-  const selectedPeer = peers.find((p) => p.device_id === selectedPeerId) ?? null;
-
   return (
-    <div className="flex h-full">
-      <div className="w-80 shrink-0 border-r border-slate-800">
-        <PeersListPanel
-          peers={peers}
-          selectedId={selectedPeerId}
-          onSelect={setSelectedPeerId}
-        />
+    <div className="flex h-full flex-col">
+      <div className="flex items-center gap-4 border-b border-slate-800 bg-slate-900/50 px-6 py-4">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-100">Network Peers</h2>
+          <p className="text-xs text-slate-400">Other LANclave devices on your network</p>
+        </div>
       </div>
-      <div className="flex-1">
-        {selectedPeer ? (
-          <PeerDetailPanel
-            peer={selectedPeer}
-            onOpenConnection={() => onOpenConnection(selectedPeer)}
-            onBrowseFiles={() => onBrowseFiles?.(selectedPeer)}
-          />
+      
+      <div className="flex-1 overflow-hidden">
+        {peers.length === 0 ? (
+          <EmptyState message="No peers found on network" />
         ) : (
-          <EmptyState message="Select a peer to view details" />
+          <PeersListPanel
+            peers={peers}
+            onConnect={onOpenConnection}
+            onBrowseFiles={onBrowseFiles}
+          />
         )}
       </div>
     </div>

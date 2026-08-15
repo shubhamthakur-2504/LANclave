@@ -2,8 +2,8 @@ import type { PeerInfo } from "../../types";
 
 interface PeersListPanelProps {
   peers: PeerInfo[];
-  selectedId: string | null;
-  onSelect: (deviceId: string) => void;
+  onConnect: (peer: PeerInfo) => void;
+  onBrowseFiles?: (peer: PeerInfo) => void;
 }
 
 function shortId(full: string): string {
@@ -13,21 +13,16 @@ function shortId(full: string): string {
 
 function PeerRow({
   peer,
-  isSelected,
-  onSelect,
+  onConnect,
+  onBrowseFiles,
 }: {
   peer: PeerInfo;
-  isSelected: boolean;
-  onSelect: () => void;
+  onConnect: () => void;
+  onBrowseFiles: (() => void) | undefined;
 }) {
   const isOnline = peer.addr !== "";
   return (
-    <button
-      onClick={onSelect}
-      className={`flex w-full items-center gap-3 border-b border-slate-800/50 px-5 py-3 text-left transition-colors ${
-        isSelected ? "bg-sky-500/10" : "hover:bg-slate-800/30"
-      }`}
-    >
+    <div className="flex w-full items-center gap-3 border-b border-slate-800/50 px-5 py-3 text-left transition-colors hover:bg-slate-800/10">
       <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-500/20 text-sm font-semibold text-sky-400">
         {shortId(peer.device_id)[0].toUpperCase()}
         {/* Online dot */}
@@ -52,30 +47,46 @@ function PeerRow({
           {peer.addr || "Offline / unreachable"}
         </p>
       </div>
-    </button>
+      
+      {/* Actions */}
+      <div className="shrink-0 flex gap-2">
+        {peer.paired ? (
+          <button
+            onClick={onBrowseFiles}
+            disabled={!isOnline}
+            className="rounded-lg bg-sky-500 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-sky-400 disabled:opacity-50"
+          >
+            Browse Files
+          </button>
+        ) : (
+          <button
+            onClick={onConnect}
+            disabled={!isOnline}
+            className="rounded-lg border border-slate-700 bg-slate-800 px-4 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-700 disabled:opacity-50"
+          >
+            Connect
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
 export default function PeersListPanel({
   peers,
-  selectedId,
-  onSelect,
+  onConnect,
+  onBrowseFiles,
 }: PeersListPanelProps) {
   const paired = peers.filter((p) => p.paired);
   const nearby = peers.filter((p) => !p.paired);
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3">
-        <h2 className="text-sm font-semibold text-slate-200">Peers</h2>
-        <span className="text-xs text-slate-500">{peers.length} total</span>
-      </div>
-
       <div className="flex-1 overflow-y-auto">
         {/* ── Paired Devices ── */}
         {paired.length > 0 && (
           <>
-            <div className="px-5 pt-3 pb-1">
+            <div className="px-5 pt-3 pb-1 border-b border-slate-800">
               <span className="text-[10px] font-semibold uppercase tracking-widest text-emerald-500">
                 Paired Devices
               </span>
@@ -84,8 +95,8 @@ export default function PeersListPanel({
               <PeerRow
                 key={peer.device_id}
                 peer={peer}
-                isSelected={peer.device_id === selectedId}
-                onSelect={() => onSelect(peer.device_id)}
+                onConnect={() => onConnect(peer)}
+                onBrowseFiles={() => onBrowseFiles?.(peer)}
               />
             ))}
           </>
@@ -94,7 +105,7 @@ export default function PeersListPanel({
         {/* ── Nearby (unpaired) ── */}
         {nearby.length > 0 && (
           <>
-            <div className="px-5 pt-3 pb-1">
+            <div className="px-5 pt-4 pb-1 border-b border-slate-800 mt-2">
               <span className="text-[10px] font-semibold uppercase tracking-widest text-sky-500">
                 Nearby (unpaired)
               </span>
@@ -103,17 +114,11 @@ export default function PeersListPanel({
               <PeerRow
                 key={peer.device_id}
                 peer={peer}
-                isSelected={peer.device_id === selectedId}
-                onSelect={() => onSelect(peer.device_id)}
+                onConnect={() => onConnect(peer)}
+                onBrowseFiles={() => onBrowseFiles?.(peer)}
               />
             ))}
           </>
-        )}
-
-        {peers.length === 0 && (
-          <div className="p-6 text-center text-xs text-slate-500">
-            No peers found — make sure server is running on both devices
-          </div>
         )}
       </div>
     </div>
