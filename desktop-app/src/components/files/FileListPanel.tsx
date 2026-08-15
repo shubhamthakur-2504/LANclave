@@ -3,8 +3,9 @@ import type { FileEntry } from "../../types";
 
 interface FileListPanelProps {
   files: FileEntry[];
-  selectedName: string | null;
-  onSelect: (name: string) => void;
+  downloadingName?: string | null;
+  onDownload?: (name: string) => void;
+  onSelect?: (name: string) => void;
 }
 
 function iconForFile(file: FileEntry): ReactNode {
@@ -57,7 +58,8 @@ function formatSize(bytes: number): string {
 
 export default function FileListPanel({
   files,
-  selectedName,
+  downloadingName,
+  onDownload,
   onSelect,
 }: FileListPanelProps) {
   const sorted = [...files].sort((a, b) => {
@@ -74,23 +76,43 @@ export default function FileListPanel({
 
       <div className="flex-1 overflow-y-auto">
         {sorted.map((file) => {
-          const isSelected = file.name === selectedName;
+          const isDownloading = file.name === downloadingName;
           return (
-            <button
+            <div
               key={file.name}
-              onClick={() => onSelect(file.name)}
-              className={`flex w-full items-center gap-3 border-b border-slate-800/50 px-5 py-3 text-left transition-colors ${
-                isSelected ? "bg-sky-500/10" : "hover:bg-slate-800/30"
-              }`}
+              onClick={() => onSelect?.(file.name)}
+              className={`flex w-full items-center gap-3 border-b border-slate-800/50 px-5 py-3 text-left transition-colors ${onSelect ? 'cursor-pointer hover:bg-slate-800/30' : 'hover:bg-slate-800/10'}`}
             >
               <span className="shrink-0">{iconForFile(file)}</span>
               <div className="flex-1 min-w-0">
                 <p className="truncate text-sm text-slate-200">{file.name}</p>
               </div>
-              <span className="shrink-0 text-xs text-slate-500">
+              <span className="shrink-0 text-xs text-slate-500 mr-2">
                 {formatSize(file.size)}
               </span>
-            </button>
+              {onDownload && !file.is_directory && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDownload(file.name);
+                  }}
+                  disabled={isDownloading || downloadingName !== null}
+                  className="p-1.5 rounded-lg hover:bg-sky-500/20 text-sky-400 disabled:opacity-50 transition-colors"
+                  title="Download"
+                >
+                  {isDownloading ? (
+                    <svg className="h-5 w-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  ) : (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                  )}
+                </button>
+              )}
+            </div>
           );
         })}
       </div>

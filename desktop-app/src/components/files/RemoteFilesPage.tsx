@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import type { PeerInfo, FileEntry } from "../../types";
 import * as api from "../../api";
 import FileListPanel from "./FileListPanel";
-import EmptyState from "../ui/EmptyState";
 
 interface RemoteFilesPageProps {
   peer: PeerInfo;
@@ -14,8 +13,7 @@ export default function RemoteFilesPage({ peer, onBack, onFileDownloaded }: Remo
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null);
-  const [downloading, setDownloading] = useState(false);
+  const [downloadingName, setDownloadingName] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -35,18 +33,16 @@ export default function RemoteFilesPage({ peer, onBack, onFileDownloaded }: Remo
     return () => { active = false; };
   }, [peer.addr]);
 
-  const handleDownload = async () => {
-    if (!selectedFile) return;
-    setDownloading(true);
+  const handleDownload = async (name: string) => {
+    setDownloadingName(name);
     setError(null);
     try {
-      await api.pullFile(peer.addr, selectedFile.name, selectedFile.name);
+      await api.pullFile(peer.addr, name, name);
       onFileDownloaded();
-      // Temporarily show success (or rely on the user seeing it in the local files)
     } catch (err) {
       setError(`Download failed: ${err}`);
     } finally {
-      setDownloading(false);
+      setDownloadingName(null);
     }
   };
 
@@ -62,63 +58,50 @@ export default function RemoteFilesPage({ peer, onBack, onFileDownloaded }: Remo
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
           </svg>
         </button>
-        <div>
-          <h2 className="text-lg font-semibold text-slate-100">
+        <div className="flex-1 min-w-0">
+          <h2 className="truncate text-lg font-semibold text-slate-100">
             Browsing {peer.device_id.slice(0, 10)}...
           </h2>
-          <p className="text-xs text-slate-400">{peer.addr}</p>
+          <p className="truncate text-xs text-slate-400">{peer.addr}</p>
         </div>
+        <button
+          onClick={() => {
+            setLoading(true);
+            setError(null);
+            api.listPeerFiles(peer.addr).then(setFiles).catch((err) => setError(String(err))).finally(() => setLoading(false));
+          }}
+          className="shrink-0 flex h-8 items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-700"
+        >
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+          </svg>
+          Refresh
+        </button>
       </div>
 
       {error && (
-        <div className="mx-6 mt-4 rounded-lg bg-red-950/50 px-4 py-3 text-sm text-red-200">
-          {error}
+        <div className="mx-6 mt-4 rounded-lg bg-red-950/50 px-4 py-3 text-sm text-red-200 flex items-center justify-between">
+          <span>{error}</span>
         </div>
       )}
 
       {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
-        <div className="w-96 shrink-0 border-r border-slate-800">
-          {loading ? (
-            <div className="flex h-full items-center justify-center text-sm text-slate-500">
-              Loading files...
-            </div>
-          ) : (
-            <FileListPanel
-              files={files}
-              selectedName={selectedFile?.name ?? null}
-              onSelect={(name) => {
-                const f = files.find((x) => x.name === name) ?? null;
-                setSelectedFile(f);
-              }}
-            />
-          )}
-        </div>
-
-        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-          {selectedFile ? (
-            <div className="w-full max-w-sm rounded-xl border border-slate-800 bg-slate-900/50 p-6">
-              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-800 text-slate-400 mx-auto">
-                <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-                </svg>
-              </div>
-              <h3 className="mb-1 text-base font-semibold text-slate-100">{selectedFile.name}</h3>
-              <p className="mb-6 text-sm text-slate-400">
-                {(selectedFile.size / 1024).toFixed(1)} KB
-              </p>
-              <button
-                onClick={handleDownload}
-                disabled={downloading}
-                className="w-full rounded-lg bg-sky-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-sky-400 disabled:opacity-50"
-              >
-                {downloading ? "Downloading..." : "Download to Local Sandbox"}
-              </button>
-            </div>
-          ) : (
-            <EmptyState message="Select a remote file to download" />
-          )}
-        </div>
+      <div className="flex-1 overflow-hidden">
+        {loading ? (
+          <div className="flex h-full items-center justify-center text-sm text-slate-500">
+            Loading files...
+          </div>
+        ) : files.length === 0 ? (
+          <div className="flex h-full items-center justify-center text-sm text-slate-500">
+            No files found on remote device.
+          </div>
+        ) : (
+          <FileListPanel
+            files={files}
+            downloadingName={downloadingName}
+            onDownload={handleDownload}
+          />
+        )}
       </div>
     </div>
   );

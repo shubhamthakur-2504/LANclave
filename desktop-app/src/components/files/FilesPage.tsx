@@ -1,7 +1,5 @@
-import { useState } from "react";
 import type { FileEntry } from "../../types";
 import FileListPanel from "./FileListPanel";
-import FileDetailPanel from "./FileDetailPanel";
 import EmptyState from "../ui/EmptyState";
 
 interface FilesPageProps {
@@ -9,25 +7,20 @@ interface FilesPageProps {
 }
 
 export default function FilesPage({ files }: FilesPageProps) {
-  const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null);
-
   return (
-    <div className="flex h-full">
-      <div className="w-96 shrink-0 border-r border-slate-800">
-        <FileListPanel
-          files={files}
-          selectedName={selectedFile?.name ?? null}
-          onSelect={(name) => {
-            const f = files.find((x) => x.name === name) ?? null;
-            setSelectedFile(f);
-          }}
-        />
+    <div className="flex h-full flex-col">
+      <div className="flex items-center gap-4 border-b border-slate-800 bg-slate-900/50 px-6 py-4">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-100">Local Sandbox</h2>
+          <p className="text-xs text-slate-400">Files stored on this computer</p>
+        </div>
       </div>
-      <div className="flex-1">
-        {selectedFile ? (
-          <FileDetailPanel file={selectedFile} />
+      
+      <div className="flex-1 overflow-hidden">
+        {files.length === 0 ? (
+          <EmptyState message="Your local sandbox is empty" />
         ) : (
-          <EmptyState message="Select a file to view details" />
+          <FileListPanel files={files} />
         )}
       </div>
     </div>
