@@ -176,7 +176,10 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           activePage={activePage}
-          onNavigate={setActivePage}
+          onNavigate={(page) => {
+            setActivePage(page);
+            setViewingPeer(null);
+          }}
           serverRunning={serverRunning}
           onStartServer={handleStartServer}
           onStopServer={handleStopServer}

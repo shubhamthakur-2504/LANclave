@@ -168,32 +168,50 @@ pub async fn list_peer_files(
     let (ts, sig) = crate::pairing::sign_request(&state.identity_key, &state.device_id);
     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
 
-    let response = CLIENT
-        .get(&url)
-        .header(crate::pairing::HEADER_DEVICE_ID, &state.device_id)
-        .header(crate::pairing::HEADER_TIMESTAMP, ts.to_string())
-        .header(crate::pairing::HEADER_SIGNATURE, &sig_b64)
-        .send()
-        .await
-        .map_err(|e| format!("connection to peer failed: {e}"))?;
+    // Retry up to 3 times — mobile TCP servers on WiFi can drop connections transiently
+    let mut last_err = String::new();
+    for attempt in 0..3u32 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(500 * (attempt as u64))).await;
+        }
 
-    if !response.status().is_success() {
-        return Err(format!("peer returned HTTP {}", response.status()));
+        let result = CLIENT
+            .get(&url)
+            .header(crate::pairing::HEADER_DEVICE_ID, &state.device_id)
+            .header(crate::pairing::HEADER_TIMESTAMP, ts.to_string())
+            .header(crate::pairing::HEADER_SIGNATURE, &sig_b64)
+            .send()
+            .await;
+
+        match result {
+            Ok(response) => {
+                if !response.status().is_success() {
+                    last_err = format!("peer returned HTTP {}", response.status());
+                    continue;
+                }
+
+                let entries: Vec<RemoteFileEntry> = response
+                    .json()
+                    .await
+                    .map_err(|e| format!("failed to parse peer response: {e}"))?;
+
+                return Ok(entries
+                    .into_iter()
+                    .map(|e| FileEntry {
+                        name: e.name,
+                        size: e.size,
+                        is_directory: e.is_directory,
+                    })
+                    .collect());
+            }
+            Err(e) => {
+                last_err = format!("connection to peer failed: {e}");
+                continue;
+            }
+        }
     }
 
-    let entries: Vec<RemoteFileEntry> = response
-        .json()
-        .await
-        .map_err(|e| format!("failed to parse peer response: {e}"))?;
-
-    Ok(entries
-        .into_iter()
-        .map(|e| FileEntry {
-            name: e.name,
-            size: e.size,
-            is_directory: e.is_directory,
-        })
-        .collect())
+    Err(last_err)
 }
 
 #[derive(Deserialize)]
