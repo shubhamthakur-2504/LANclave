@@ -38,6 +38,15 @@ const navItems: { id: PageType; label: string; icon: ReactNode }[] = [
       </svg>
     ),
   },
+  {
+    id: "settings",
+    label: "Settings",
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.5-1.14-.16-2.5.76-3.17C12.02 12.02 12.5 11 12.5 9.5c0-1.5-.48-2.52-1.4-3.17-.92-.67-1.26-2.03-.76-3.17C10.74 2.23 11.35 2 12 2s1.26.23 1.66 1.16c.5 1.14.16 2.5-.76 3.17C11.98 6.98 11.5 8 11.5 9.5c0 1.5.48 2.52 1.4 3.17.92.67 1.26 2.03.76 3.17-.4.93-1.01 1.16-1.66 1.16s-1.26-.23-1.66-1.16ZM12 15.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+      </svg>
+    ),
+  },
 ];
 
 export default function Sidebar({

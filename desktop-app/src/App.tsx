@@ -8,6 +8,8 @@ import FilesPage from "./components/files/FilesPage";
 import TransfersPage from "./components/transfers/TransfersPage";
 import ConnectionModal from "./components/connection/ConnectionModal";
 import RemoteFilesPage from "./components/files/RemoteFilesPage";
+import { SettingsPage } from "./components/settings/SettingsPage";
+import { TransferProvider } from "./contexts/TransferContext";
 import "./App.css";
 
 export default function App() {
@@ -166,46 +168,50 @@ export default function App() {
       case "files":
         return <FilesPage files={localFiles} />;
       case "transfers":
-        return <TransfersPage transfers={[]} />;
+        return <TransfersPage />; // removed transfers={[]} 
+      case "settings":
+        return <SettingsPage />;
     }
   })();
 
   return (
-    <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
-      <Header />
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          activePage={activePage}
-          onNavigate={(page) => {
-            setActivePage(page);
-            setViewingPeer(null);
+    <TransferProvider>
+      <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
+        <Header />
+        <div className="flex flex-1 overflow-hidden">
+          <Sidebar
+            activePage={activePage}
+            onNavigate={(page) => {
+              setActivePage(page);
+              setViewingPeer(null);
+            }}
+            serverRunning={serverRunning}
+            onStartServer={handleStartServer}
+            onStopServer={handleStopServer}
+            serverBusy={serverBusy}
+          />
+          <main className="flex-1 overflow-hidden">
+            {error && (
+              <div className="mx-4 mt-2 rounded-lg bg-red-950/50 px-4 py-2 text-xs text-red-200">
+                {error}
+              </div>
+            )}
+            {pageContent}
+          </main>
+        </div>
+        <ConnectionModal
+          isOpen={isConnectModalOpen || pairPeer !== null}
+          peerAddr={pairPeer?.addr ?? ""}
+          peerDeviceId={pairPeer?.device_id ?? ""}
+          initialFingerprint={pairFingerprint}
+          onClose={() => {
+            setPairPeer(null);
+            setPairFingerprint(null);
+            setIsConnectModalOpen(false);
           }}
-          serverRunning={serverRunning}
-          onStartServer={handleStartServer}
-          onStopServer={handleStopServer}
-          serverBusy={serverBusy}
+          onPaired={handlePaired}
         />
-        <main className="flex-1 overflow-hidden">
-          {error && (
-            <div className="mx-4 mt-2 rounded-lg bg-red-950/50 px-4 py-2 text-xs text-red-200">
-              {error}
-            </div>
-          )}
-          {pageContent}
-        </main>
       </div>
-      <ConnectionModal
-        isOpen={isConnectModalOpen || pairPeer !== null}
-        peerAddr={pairPeer?.addr ?? ""}
-        peerDeviceId={pairPeer?.device_id ?? ""}
-        initialFingerprint={pairFingerprint}
-        onClose={() => {
-          setPairPeer(null);
-          setPairFingerprint(null);
-          setIsConnectModalOpen(false);
-        }}
-        onPaired={handlePaired}
-      />
-    </div>
+    </TransferProvider>
   );
 }

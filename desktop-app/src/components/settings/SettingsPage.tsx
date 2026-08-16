@@ -1,0 +1,111 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+
+interface AppSettings {
+  display_name: string;
+  sandbox_path: string;
+}
+
+export function SettingsPage() {
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    invoke<AppSettings>("get_settings")
+      .then(setSettings)
+      .catch((e) => console.error("Failed to load settings:", e));
+  }, []);
+
+  const handleSave = async (newSettings: AppSettings) => {
+    setSaving(true);
+    try {
+      await invoke("update_settings", { newSettings });
+      setSettings(newSettings);
+      
+      // If server is currently running, restart it to apply new settings
+      const isRunning = await invoke<boolean>("is_server_running");
+      if (isRunning) {
+        await invoke("start_server");
+      }
+    } catch (e) {
+      console.error("Failed to save settings:", e);
+      alert("Failed to save settings");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePickDirectory = async () => {
+    if (!settings) return;
+    try {
+      const path = await invoke<string | null>("pick_directory");
+      if (path) {
+        handleSave({ ...settings, sandbox_path: path });
+      }
+    } catch (e) {
+      console.error("Failed to pick directory:", e);
+    }
+  };
+
+  if (!settings) {
+    return (
+      <div className="flex-1 p-6 flex items-center justify-center text-[var(--color-text-second)]">
+        Loading settings...
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 p-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-[var(--color-accent)] mb-2">Settings</h1>
+        <p className="text-[var(--color-text-second)]">Configure your LANclave preferences</p>
+      </div>
+
+      <div className="max-w-2xl space-y-8">
+        <section>
+          <label className="block text-lg font-semibold text-[var(--color-text-primary)] mb-1">
+            Display Name
+          </label>
+          <p className="text-sm text-[var(--color-text-second)] mb-3">
+            This name will be shown to other devices on the network.
+          </p>
+          <input
+            type="text"
+            className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-3 text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)] transition-colors"
+            value={settings.display_name}
+            onChange={(e) => setSettings({ ...settings, display_name: e.target.value })}
+            onBlur={() => handleSave(settings)}
+            placeholder="e.g. My PC"
+          />
+        </section>
+
+        <section>
+          <label className="block text-lg font-semibold text-[var(--color-text-primary)] mb-1">
+            Sandbox Location
+          </label>
+          <p className="text-sm text-[var(--color-text-second)] mb-3">
+            The folder where LANclave stores and serves your files. 
+            Changing this will update what other devices can see.
+          </p>
+          
+          <div className="flex gap-4">
+            <input
+              type="text"
+              readOnly
+              className="flex-1 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-xl px-4 py-3 text-[var(--color-text-second)] focus:outline-none"
+              value={settings.sandbox_path}
+            />
+            <button
+              onClick={handlePickDirectory}
+              disabled={saving}
+              className="px-6 py-3 bg-[var(--color-accent)] text-white font-medium rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50 whitespace-nowrap"
+            >
+              Browse...
+            </button>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
