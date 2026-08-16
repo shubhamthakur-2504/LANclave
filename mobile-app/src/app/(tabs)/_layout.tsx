@@ -40,6 +40,24 @@ export default function TabsLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="transfers"
+        options={{
+          title: "Transfers",
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 18, color }}>🔄</Text>
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: "Settings",
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 18, color }}>⚙️</Text>
+          ),
+        }}
+      />
     </Tabs>
   );
 }

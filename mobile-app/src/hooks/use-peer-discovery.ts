@@ -90,7 +90,7 @@ async function probeSubnet(
                 const body = await res.json();
                 if (body.app === "lanclave") {
                   if (body.device_id) id = body.device_id;
-                  if (body.name) name = body.name;
+                  if (body.device_name) name = body.device_name;
                 }
               } catch {
                 // ignore
@@ -166,9 +166,11 @@ export function usePeerDiscovery(): DiscoveredPeer[] {
           service.addresses[0];
         if (!ip) return;
 
+        const deviceName = service.txt.device_name ?? service.txt["device_name"];
+
         addPeer({
           id: deviceId,
-          name: service.name || `Peer-${deviceId.slice(0, 8)}`,
+          name: deviceName || service.name || `Peer-${deviceId.slice(0, 8)}`,
           ip,
           port: service.port,
         });

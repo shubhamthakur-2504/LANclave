@@ -12,8 +12,10 @@
  */
 
 import { Directory, File, Paths } from "expo-file-system";
+import { StorageAccessFramework } from "expo-file-system/legacy";
 
 import { getAuthHeaders } from "@/services/identity";
+import { getSettings } from "@/services/settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -90,17 +92,10 @@ export async function fetchRemoteFileList(
 /**
  * Download a single file from a remote peer into the app's sandbox.
  *
- * Uses `File.downloadFileAsync()` (SDK 57) which streams directly into the
- * destination file. The destination directory is always `Paths.document`.
- *
- * Non-2xx responses cause `downloadFileAsync` to reject with an
- * `UnableToDownload` error — no partial file is created on iOS; on Android a
- * partial file may remain (documented SDK behaviour).
- *
  * @param peerAddr       `host:port` of the target peer.
  * @param remoteFileName Path of the file on the peer (may include sub-dirs).
  * @param localFileName  Target filename inside the local sandbox.
- * @returns Local `file://` URI of the downloaded file.
+ * @returns Local `file://` or `content://` URI of the downloaded file.
  */
 export async function downloadRemoteFile(
   peerAddr: string,
@@ -109,16 +104,23 @@ export async function downloadRemoteFile(
 ): Promise<string> {
   const url = `http://${peerAddr}/files/${encodeFilePath(remoteFileName)}`;
   const headers = await getAuthHeaders();
+  const settings = await getSettings();
 
-  // Destination: a named File inside the document directory.
-  const destination = new File(Paths.document, localFileName);
+  let destination: File;
 
-  // If a previous partial download exists, remove it so we start clean.
-  if (destination.exists) {
-    try {
-      destination.delete();
-    } catch {
-      // ignore — downloadFileAsync with idempotent:true will overwrite it
+  if (settings.sandboxPath.startsWith("content://")) {
+    const createdUri = await StorageAccessFramework.createFileAsync(
+      settings.sandboxPath,
+      localFileName,
+      "application/octet-stream"
+    );
+    destination = new File(createdUri);
+  } else {
+    destination = new File(new Directory(settings.sandboxPath), localFileName);
+    if (destination.exists) {
+      try {
+        destination.delete();
+      } catch {}
     }
   }
 
@@ -126,7 +128,6 @@ export async function downloadRemoteFile(
     const downloaded = await File.downloadFileAsync(url, destination, {
       headers,
     });
-
     return downloaded.uri;
   } catch (err) {
     throw new Error(
