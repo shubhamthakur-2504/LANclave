@@ -1,35 +1,20 @@
 import { useState } from "react";
-import type { Transfer, TransferFilter } from "../../types";
+import type { TransferFilter } from "../../types";
+import { useTransfers } from "../../contexts/TransferContext";
 import TransferListPanel from "./TransferListPanel";
-import TransferDetailPanel from "./TransferDetailPanel";
-import EmptyState from "../ui/EmptyState";
 
-interface TransfersPageProps {
-  transfers: Transfer[];
-}
-
-export default function TransfersPage({ transfers }: TransfersPageProps) {
-  const [selectedTransferId, setSelectedTransferId] = useState<string | null>(null);
+export default function TransfersPage() {
+  const { transfers } = useTransfers();
   const [activeFilter, setActiveFilter] = useState<TransferFilter>("all");
-  const selected = transfers.find((t) => t.id === selectedTransferId) ?? null;
 
   return (
-    <div className="flex h-full">
-      <div className="w-96 shrink-0 border-r border-slate-800">
+    <div className="flex h-full w-full">
+      <div className="flex-1 border-r border-slate-800">
         <TransferListPanel
           transfers={transfers}
-          selectedId={selectedTransferId}
-          onSelect={setSelectedTransferId}
           activeFilter={activeFilter}
           onFilterChange={setActiveFilter}
         />
-      </div>
-      <div className="flex-1">
-        {selected ? (
-          <TransferDetailPanel transfer={selected} />
-        ) : (
-          <EmptyState message="Select a transfer to view details" />
-        )}
       </div>
     </div>
   );

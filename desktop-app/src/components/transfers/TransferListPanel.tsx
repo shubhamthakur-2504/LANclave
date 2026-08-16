@@ -1,11 +1,11 @@
+import { useState } from "react";
 import type React from "react";
 import type { ReactNode } from "react";
 import type { Transfer, TransferFilter } from "../../types";
+import { useTransfers } from "../../contexts/TransferContext";
 
 interface TransferListPanelProps {
   transfers: Transfer[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
   activeFilter: TransferFilter;
   onFilterChange: (filter: TransferFilter) => void;
 }
@@ -40,6 +40,23 @@ function formatSpeed(bytesPerSec: number): string {
   if (bytesPerSec >= 1_000_000) return `${(bytesPerSec / 1_000_000).toFixed(1)} MB/s`;
   if (bytesPerSec >= 1_000) return `${(bytesPerSec / 1_000).toFixed(1)} KB/s`;
   return `${bytesPerSec} B/s`;
+}
+
+function formatTime(iso: string): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function calcEta(transfer: Transfer): string {
+  if (transfer.status !== "in_progress" || transfer.speed === 0) return "—";
+  const remaining = transfer.fileSize - transfer.progress;
+  if (remaining <= 0) return "Almost done";
+  const seconds = remaining / transfer.speed;
+  if (seconds < 60) return `~${Math.round(seconds)}s remaining`;
+  return `~${Math.round(seconds / 60)}m remaining`;
 }
 
 function statusBadge(status: Transfer["status"]): React.ReactNode {
@@ -83,11 +100,12 @@ function statusBadge(status: Transfer["status"]): React.ReactNode {
 
 export default function TransferListPanel({
   transfers,
-  selectedId,
-  onSelect,
   activeFilter,
   onFilterChange,
 }: TransferListPanelProps) {
+  const { cancelTransfer } = useTransfers();
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   const filtered =
     activeFilter === "all"
       ? transfers
@@ -120,46 +138,108 @@ export default function TransferListPanel({
       </div>
 
       {/* Transfer list */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {filtered.length === 0 ? (
           <div className="p-8 text-center text-xs text-slate-600">
             No transfers
           </div>
         ) : (
           filtered.map((t) => {
-            const isSelected = t.id === selectedId;
+            const isExpanded = t.id === expandedId;
+            const percent = t.fileSize > 0 ? Math.round((t.progress / t.fileSize) * 100) : 0;
+            
             return (
-              <button
+              <div 
                 key={t.id}
-                onClick={() => onSelect(t.id)}
-                className={`flex w-full items-center gap-3 border-b border-slate-800/50 px-5 py-3 text-left transition-colors ${
-                  isSelected ? "bg-sky-500/10" : "hover:bg-slate-800/30"
-                }`}
+                className="rounded-xl border border-slate-800/60 bg-slate-900/40 overflow-hidden transition-colors hover:border-slate-700/60"
               >
-                <span className="shrink-0">{iconForTransfer(t.direction)}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium text-slate-200">
-                      {t.fileName}
-                    </span>
-                    {statusBadge(t.status)}
-                  </div>
-                  <p className="truncate text-xs text-slate-500">
-                    {t.direction === "upload" ? "To" : "From"} {t.peerName}
-                    {" · "}
-                    {formatSize(t.fileSize)}
-                    {t.speed > 0 && ` · ${formatSpeed(t.speed)}`}
-                  </p>
-                  {(t.status === "in_progress" || t.status === "pending") && (
-                    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-slate-700">
-                      <div
-                        className="h-full rounded-full bg-sky-400 transition-all duration-300"
-                        style={{ width: `${t.progress}%` }}
-                      />
+                {/* Header row (clickable) */}
+                <button
+                  onClick={() => setExpandedId(isExpanded ? null : t.id)}
+                  className="flex w-full items-center gap-4 p-4 text-left focus:outline-none"
+                >
+                  <span className="shrink-0">{iconForTransfer(t.direction)}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium text-slate-200">
+                        {t.fileName}
+                      </span>
+                      {statusBadge(t.status)}
                     </div>
-                  )}
-                </div>
-              </button>
+                    <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+                      <span className="truncate">
+                        {t.direction === "upload" ? "To" : "From"} {t.peerName.length > 20 ? `${t.peerName.substring(0, 8)}...` : t.peerName}
+                      </span>
+                      <span className="shrink-0 pl-2">
+                        {formatSize(t.fileSize)}
+                        {t.speed > 0 && ` · ${formatSpeed(t.speed)}`}
+                      </span>
+                    </div>
+                    
+                    {(t.status === "in_progress" || t.status === "pending") && (
+                      <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-slate-800">
+                        <div
+                          className="h-full rounded-full bg-sky-400 transition-all duration-300"
+                          style={{ width: `${percent}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Expand icon */}
+                  <div className="shrink-0 text-slate-500 pl-2">
+                    <svg
+                      className={`h-4 w-4 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                    </svg>
+                  </div>
+                </button>
+
+                {/* Expanded Details */}
+                {isExpanded && (
+                  <div className="border-t border-slate-800/60 bg-slate-900/80 px-4 py-3">
+                    <div className="grid grid-cols-2 gap-y-2 text-xs">
+                      <div className="text-slate-500">Speed</div>
+                      <div className="text-slate-300 text-right">{formatSpeed(t.speed) || "—"}</div>
+                      
+                      <div className="text-slate-500">Time Remaining</div>
+                      <div className="text-slate-300 text-right">{calcEta(t)}</div>
+                      
+                      <div className="text-slate-500">Started</div>
+                      <div className="text-slate-300 text-right">{formatTime(t.startedAt)}</div>
+                    </div>
+                    
+                    {/* Actions */}
+                    <div className="mt-4 flex gap-2">
+                      {t.status === "in_progress" && (
+                        <>
+                          <button disabled className="flex-1 rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-500 transition-colors opacity-50 cursor-not-allowed" title="Pause requires HTTP Range support">
+                            Pause
+                          </button>
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); cancelTransfer(t.id); }}
+                            className="flex-1 rounded-lg border border-red-800/50 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-950/30"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      )}
+                      {t.status === "completed" && (
+                        <button className="flex w-full items-center justify-center gap-2 rounded-lg bg-sky-500/10 border border-sky-500/20 px-3 py-1.5 text-xs font-medium text-sky-400 transition-colors hover:bg-sky-500/20">
+                          Open File Location
+                        </button>
+                      )}
+                      {t.status === "failed" && (
+                        <button className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800">
+                          Retry
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             );
           })
         )}

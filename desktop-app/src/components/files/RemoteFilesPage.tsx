@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { PeerInfo, FileEntry } from "../../types";
 import * as api from "../../api";
 import FileListPanel from "./FileListPanel";
+import { useTransfers } from "../../contexts/TransferContext";
 
 interface RemoteFilesPageProps {
   peer: PeerInfo;
@@ -13,6 +14,9 @@ export default function RemoteFilesPage({ peer, onBack, onFileDownloaded }: Remo
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  const { startDownload } = useTransfers();
+  // We no longer track downloadingName locally since transfers are backgrounded globally
   const [downloadingName, setDownloadingName] = useState<string | null>(null);
 
   useEffect(() => {
@@ -34,15 +38,18 @@ export default function RemoteFilesPage({ peer, onBack, onFileDownloaded }: Remo
   }, [peer.addr]);
 
   const handleDownload = async (name: string) => {
-    setDownloadingName(name);
+    const file = files.find(f => f.name === name);
+    if (!file) return;
+    
+    setDownloadingName(name); // just for brief UI feedback
     setError(null);
     try {
-      await api.pullFile(peer.addr, name, name);
-      onFileDownloaded();
+      await startDownload(peer, file);
+      onFileDownloaded(); // this just refreshes local sandbox view
     } catch (err) {
-      setError(`Download failed: ${err}`);
+      setError(`Failed to start download: ${err}`);
     } finally {
-      setDownloadingName(null);
+      setTimeout(() => setDownloadingName(null), 500); // clear after half second
     }
   };
 
@@ -60,7 +67,7 @@ export default function RemoteFilesPage({ peer, onBack, onFileDownloaded }: Remo
         </button>
         <div className="flex-1 min-w-0">
           <h2 className="truncate text-lg font-semibold text-slate-100">
-            Browsing {peer.device_id.slice(0, 10)}...
+            Browsing {peer.device_name || `${peer.device_id.slice(0, 10)}...`}
           </h2>
           <p className="truncate text-xs text-slate-400">{peer.addr}</p>
         </div>
