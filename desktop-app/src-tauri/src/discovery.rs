@@ -11,6 +11,7 @@ use serde::Deserialize;
 struct HealthResponse {
     app: String,
     device_id: String,
+    device_name: String,
 }
 
 const SERVICE_TYPE: &str = "_lanclave-portal._tcp.local.";
@@ -21,12 +22,13 @@ const SERVICE_TYPE: &str = "_lanclave-portal._tcp.local.";
 ///
 /// The service advertises our `device_id` in the TXT record so that peers
 /// who browse the network can pair with us by identifier.
-pub fn start_mdns_broadcast(device_id: &str) -> Arc<AtomicBool> {
+pub fn start_mdns_broadcast(device_id: &str, device_name: &str) -> Arc<AtomicBool> {
     let shutdown = Arc::new(AtomicBool::new(false));
 
     thread::spawn({
         let shutdown = shutdown.clone();
         let device_id = device_id.to_owned();
+        let device_name = device_name.to_owned();
         move || {
             let mdns = match ServiceDaemon::new() {
                 Ok(d) => d,
@@ -40,6 +42,7 @@ pub fn start_mdns_broadcast(device_id: &str) -> Arc<AtomicBool> {
             props.insert("version".to_string(), "1.0.0".to_string());
             props.insert("node_type".to_string(), "desktop".to_string());
             props.insert("device_id".to_string(), device_id);
+            props.insert("device_name".to_string(), device_name);
 
             let service_info = match ServiceInfo::new(
                 SERVICE_TYPE,
@@ -95,7 +98,7 @@ pub fn start_mdns_broadcast(device_id: &str) -> Arc<AtomicBool> {
 ///
 /// The function blocks for up to `timeout_secs` seconds, collecting
 /// `ServiceResolved` events.  Pass `0` for a single quick scan.
-pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String)>, String> {
+pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, String)>, String> {
     let mdns = ServiceDaemon::new().map_err(|e| format!("mDNS daemon: {e}"))?;
 
     let receiver = mdns
@@ -109,7 +112,7 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String)>, St
         Duration::from_millis(timeout_secs * 1000)
     };
     let start = std::time::Instant::now();
-    let mut peers: Vec<(String, String)> = Vec::new();
+    let mut peers: Vec<(String, String, String)> = Vec::new();
 
     loop {
         let remaining = deadline.saturating_sub(start.elapsed());
@@ -119,7 +122,7 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String)>, St
         match receiver.recv_timeout(remaining) {
             Ok(ServiceEvent::ServiceResolved(info)) => {
                 if let Some(entry) = parse_peer(&*info) {
-                    if !peers.iter().any(|(_, id)| id == &entry.1) {
+                    if !peers.iter().any(|(_, id, _)| id == &entry.1) {
                         peers.push(entry);
                     }
                 }
@@ -159,7 +162,7 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String)>, St
     // Await all probe tasks and merge with mDNS results
     for task in probe_tasks {
         if let Ok(Some(peer)) = task.await {
-            if !peers.iter().any(|(_, id)| id == &peer.1) {
+            if !peers.iter().any(|(_, id, _)| id == &peer.1) {
                 peers.push(peer);
             }
         }
@@ -168,7 +171,7 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String)>, St
     Ok(peers)
 }
 
-async fn probe_ip(ip: &str) -> Option<(String, String)> {
+async fn probe_ip(ip: &str) -> Option<(String, String, String)> {
     let url = format!("http://{ip}:8377/health");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(1500))
@@ -180,21 +183,24 @@ async fn probe_ip(ip: &str) -> Option<(String, String)> {
         if let Ok(body) = res.json::<HealthResponse>().await {
             if body.app == "lanclave" {
                 let addr = format!("{ip}:8377");
-                return Some((addr, body.device_id));
+                return Some((addr, body.device_id, body.device_name));
             }
         }
     }
     None
 }
 
-/// Extract `(socket_addr, device_id)` from a resolved mDNS service.
-fn parse_peer(info: &mdns_sd::ResolvedService) -> Option<(String, String)> {
+/// Extract `(socket_addr, device_id, device_name)` from a resolved mDNS service.
+fn parse_peer(info: &mdns_sd::ResolvedService) -> Option<(String, String, String)> {
     // Build the socket address from the first resolved IP + port.
     let ip = info.get_addresses().iter().next()?;
     let addr = format!("{ip}:{}", info.get_port());
 
     // Device ID is stored in the TXT properties.
     let device_id = info.get_property_val_str("device_id")?.to_owned();
+    let device_name = info.get_property_val_str("device_name")
+        .map(|s| s.to_owned())
+        .unwrap_or_else(|| "Unknown Device".to_string());
 
-    Some((addr, device_id))
+    Some((addr, device_id, device_name))
 }

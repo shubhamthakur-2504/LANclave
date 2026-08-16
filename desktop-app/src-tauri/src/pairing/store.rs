@@ -16,6 +16,9 @@ pub struct PairedDevice {
     pub public_key_b64: String,
     /// ISO-like timestamp of when this device was first paired.
     pub paired_at: String,
+    /// Human-readable name of the device.
+    #[serde(default)]
+    pub device_name: Option<String>,
 }
 
 /// In-memory store of paired devices.
@@ -69,6 +72,7 @@ impl DeviceStore {
         &mut self,
         device_id: String,
         public_key: &VerifyingKey,
+        device_name: Option<String>,
     ) -> Result<(), PairingError> {
         use base64::Engine;
         let engine = base64::engine::general_purpose::STANDARD;
@@ -79,9 +83,21 @@ impl DeviceStore {
                 device_id,
                 public_key_b64,
                 paired_at: iso_timestamp_now(),
+                device_name,
             },
         );
         Ok(())
+    }
+
+    /// Update the device name for an existing peer
+    pub fn update_peer_name(&mut self, device_id: &str, device_name: String) -> bool {
+        if let Some(peer) = self.devices.get_mut(device_id) {
+            if peer.device_name.as_ref() != Some(&device_name) {
+                peer.device_name = Some(device_name);
+                return true;
+            }
+        }
+        false
     }
 
     /// Retrieve the stored [`VerifyingKey`] for a paired device.
@@ -144,7 +160,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let key = SigningKey::generate(&mut OsRng);
         let mut store = DeviceStore::new();
-        store.add_peer("device-a".into(), &key.verifying_key()).unwrap();
+        store.add_peer("device-a".into(), &key.verifying_key(), None).unwrap();
 
         store.save(dir.path()).unwrap();
 
@@ -166,7 +182,7 @@ mod tests {
     fn add_peer_stores_key() {
         let key = SigningKey::generate(&mut OsRng);
         let mut store = DeviceStore::new();
-        store.add_peer("dev".into(), &key.verifying_key()).unwrap();
+        store.add_peer("dev".into(), &key.verifying_key(), None).unwrap();
         let stored = store.get_peer_key("dev").unwrap();
         assert_eq!(stored, key.verifying_key());
     }
@@ -181,7 +197,7 @@ mod tests {
     fn is_paired_returns_true_for_known() {
         let key = SigningKey::generate(&mut OsRng);
         let mut store = DeviceStore::new();
-        store.add_peer("known-dev".into(), &key.verifying_key()).unwrap();
+        store.add_peer("known-dev".into(), &key.verifying_key(), None).unwrap();
         assert!(store.is_paired("known-dev"));
     }
 

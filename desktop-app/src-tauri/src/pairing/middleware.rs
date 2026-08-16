@@ -49,9 +49,9 @@ impl Default for AuthState {
 // Header constants
 // ---------------------------------------------------------------------------
 
-pub const HEADER_DEVICE_ID: &str = "X-LANclave-Device-Id";
-pub const HEADER_TIMESTAMP: &str = "X-LANclave-Timestamp";
-pub const HEADER_SIGNATURE: &str = "X-LANclave-Signature";
+pub const HEADER_DEVICE_ID: &str = "x-lanclave-device-id";
+pub const HEADER_TIMESTAMP: &str = "x-lanclave-timestamp";
+pub const HEADER_SIGNATURE: &str = "x-lanclave-signature";
 
 // ---------------------------------------------------------------------------
 // Request signing helpers (client side)
@@ -179,7 +179,7 @@ pub fn check_request(
 
     if peer_key.verify_strict(payload.as_bytes(), &signature).is_ok() {
         if !store.is_paired(device_id) {
-            let _ = store.add_peer(device_id.to_string(), &peer_key);
+            let _ = store.add_peer(device_id.to_string(), &peer_key, None);
             eprintln!("[lanclave/auth] auto-registered local peer device {device_id}");
         }
         drop(store);

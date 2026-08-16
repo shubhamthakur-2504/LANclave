@@ -1,8 +1,9 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::oneshot;
 
 use crate::pairing::AuthState;
+use crate::settings::AppSettings;
 
 // ---------------------------------------------------------------------------
 // Shared state
@@ -11,7 +12,7 @@ use crate::pairing::AuthState;
 /// Application state, shared across all Axum handlers via `axum::extract::State`.
 #[derive(Clone)]
 pub struct AppState {
-    pub sandbox_root: PathBuf,
+    pub settings: Arc<RwLock<AppSettings>>,
     /// Authentication state — shared device store behind an `RwLock`.
     pub auth: Arc<AuthState>,
     pub device_id: String,
@@ -37,6 +38,12 @@ async fn pairing_request_handler(
         &state.identity_key.verifying_key(),
         &peer_key,
     );
+
+    let display_name = state
+        .settings
+        .read()
+        .map(|s| s.display_name.clone())
+        .unwrap_or_else(|_| "Desktop Workstation".to_string());
 
     if let Some(ref handle) = state.app_handle {
         use tauri::Emitter;
@@ -76,11 +83,17 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/health",
             axum::routing::get(|axum::extract::State(state): axum::extract::State<Arc<AppState>>| async move {
+                let display_name = state
+                    .settings
+                    .read()
+                    .map(|s| s.display_name.clone())
+                    .unwrap_or_else(|_| "Desktop Workstation".to_string());
+
                 axum::Json(serde_json::json!({
                     "status": "ok",
                     "app": "lanclave",
                     "device_id": state.device_id,
-                    "name": "Desktop Workstation"
+                    "device_name": display_name
                 }))
             }),
         )
@@ -249,7 +262,10 @@ mod tests {
     fn test_state(dir: &TempDir) -> Arc<AppState> {
         use rand::rngs::OsRng;
         Arc::new(AppState {
-            sandbox_root: dir.path().to_path_buf(),
+            settings: Arc::new(std::sync::RwLock::new(crate::settings::AppSettings {
+                display_name: "Test Node".to_string(),
+                sandbox_path: dir.path().to_string_lossy().into_owned(),
+            })),
             device_id: "test-device".to_string(),
             identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
             app_handle: None,

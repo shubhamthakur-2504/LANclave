@@ -18,6 +18,8 @@ pub struct PairingSession {
     pub peer_device_id: String,
     /// The remote peer's public key (received during exchange).
     pub peer_public_key: VerifyingKey,
+    /// The human-readable name of the remote peer (if available).
+    pub peer_device_name: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +81,11 @@ pub fn confirm_pairing(
     store: &mut DeviceStore,
     app_data_dir: &Path,
 ) -> Result<(), PairingError> {
-    store.add_peer(session.peer_device_id.clone(), &session.peer_public_key)?;
+    store.add_peer(
+        session.peer_device_id.clone(),
+        &session.peer_public_key,
+        session.peer_device_name,
+    )?;
     store.save(app_data_dir)
 }
 
@@ -146,6 +152,7 @@ mod tests {
         let session = PairingSession {
             peer_device_id: "test-device".into(),
             peer_public_key: key.verifying_key(),
+            peer_device_name: Some("Test Phone".into()),
         };
 
         confirm_pairing(session, &mut store, dir.path()).unwrap();
