@@ -57,7 +57,12 @@ pub async fn download_file(
     crate::pairing::check_request(&state.auth, &headers)
         .map_err(|s| StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
 
-    let path = crate::sandbox::verify_sandboxed_path(&state.sandbox_root, &requested_path)
+    let sandbox_root = {
+        let settings = state.settings.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        std::path::PathBuf::from(&settings.sandbox_path)
+    };
+
+    let path = crate::sandbox::verify_sandboxed_path(&sandbox_root, &requested_path)
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     let metadata = tokio_fs::metadata(&path)
@@ -124,9 +129,14 @@ pub async fn upload_file(
     crate::pairing::check_request(&state.auth, &headers)
         .map_err(|s| StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
 
+    let sandbox_root = {
+        let settings = state.settings.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        std::path::PathBuf::from(&settings.sandbox_path)
+    };
+
     // ---- 1. Lexical validation only (no I/O) ----------------------------
     let joined =
-        crate::sandbox::validate_sandboxed_path(&state.sandbox_root, &requested_path)
+        crate::sandbox::validate_sandboxed_path(&sandbox_root, &requested_path)
             .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // ---- 2. Ensure the parent directory tree exists ----------------------
@@ -137,7 +147,7 @@ pub async fn upload_file(
     }
 
     // ---- 3. Full canonicalised validation -------------------------------
-    let path = crate::sandbox::verify_sandboxed_path(&state.sandbox_root, &requested_path)
+    let path = crate::sandbox::verify_sandboxed_path(&sandbox_root, &requested_path)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // ---- 4. Atomically create the file (fails if already exists) ---------
@@ -203,9 +213,14 @@ pub async fn list_files_handler(
     crate::pairing::check_request(&state.auth, &headers)
         .map_err(|s| StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
 
+    let sandbox_root = {
+        let settings = state.settings.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        std::path::PathBuf::from(&settings.sandbox_path)
+    };
+
     // ---- 1. Scan the sandbox root ----------------------------------------
     let mut entries = Vec::new();
-    let mut dir = tokio_fs::read_dir(&state.sandbox_root)
+    let mut dir = tokio_fs::read_dir(&sandbox_root)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
@@ -258,7 +273,10 @@ mod tests {
     fn make_state(dir: &TempDir) -> Arc<AppState> {
         use rand::rngs::OsRng;
         Arc::new(AppState {
-            sandbox_root: dir.path().to_path_buf(),
+            settings: Arc::new(std::sync::RwLock::new(crate::settings::AppSettings {
+                display_name: "Test Node".to_string(),
+                sandbox_path: dir.path().to_string_lossy().into_owned(),
+            })),
             device_id: "test-device".to_string(),
             identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
             app_handle: None,

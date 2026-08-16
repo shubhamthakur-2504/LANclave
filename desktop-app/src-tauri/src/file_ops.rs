@@ -11,8 +11,9 @@ pub struct FileItem {
 
 #[tauri::command]
 pub fn list_sandbox_files(state: tauri::State<'_, crate::commands::CliState>) -> Result<Vec<FileItem>, String> {
-    let sandbox_path_raw = &state.sandbox_root;
-    let sandbox_path = fs::canonicalize(sandbox_path_raw)
+    let settings = state.settings.read().map_err(|e| e.to_string())?;
+    let sandbox_path_raw = std::path::PathBuf::from(&settings.sandbox_path);
+    let sandbox_path = fs::canonicalize(&sandbox_path_raw)
         .map_err(|e| format!("Failed to resolve sandbox path: {}", e))?;
     let mut file_list = Vec::new();
 

@@ -7,14 +7,16 @@ mod fs_util;
 mod pairing;
 mod sandbox;
 mod server;
+mod settings;
 
 use commands::CliState;
 use ed25519_dalek::SigningKey;
 use pairing::DeviceStore;
 use server::ServerController;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tauri::Manager;
+use settings::{AppSettings, load_settings};
 
 struct MdnsController {
     shutdown_flag: Arc<AtomicBool>,
@@ -22,16 +24,22 @@ struct MdnsController {
 
 #[cfg_attr(mobile, tauri::mobile)]
 pub fn run() {
-
     let app_data_dir = dirs_next::data_local_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("LANclave");
     std::fs::create_dir_all(&app_data_dir).ok();
 
-    // Sandbox is a sub-folder of the data dir so paired_devices.json
-    // is never exposed through the file listing endpoint.
-    let sandbox_root = app_data_dir.join("Sandbox");
+    // The default sandbox root if none is configured
+    let default_sandbox_root = app_data_dir.join("Sandbox");
+    std::fs::create_dir_all(&default_sandbox_root).ok();
+
+    let settings = load_settings(&app_data_dir, &default_sandbox_root);
+    
+    // We create the actual active sandbox root from the settings
+    let sandbox_root = std::path::PathBuf::from(&settings.sandbox_path);
     std::fs::create_dir_all(&sandbox_root).ok();
+
+    let settings = Arc::new(RwLock::new(settings));
 
     // ---- Load or generate our device identity (ed25519 keypair) ----------
     let identity_key =
@@ -41,26 +49,31 @@ pub fn run() {
         });
 
     let device_id = pairing::public_key_b64(&identity_key);
+    let device_name = settings.read().unwrap().display_name.clone();
 
-    let mdns_shutdown_flag = discovery::start_mdns_broadcast(&device_id);
+    let mdns_shutdown_flag = discovery::start_mdns_broadcast(&device_id, &device_name);
 
-    let device_store = Arc::new(std::sync::RwLock::new(
+    let device_store = Arc::new(RwLock::new(
         DeviceStore::load(&app_data_dir).unwrap_or_default(),
     ));
 
     let server_controller = Arc::new(ServerController::new());
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(MdnsController {
             shutdown_flag: mdns_shutdown_flag,
         })
         .manage(CliState {
+            app_data_dir,
             sandbox_root,
+            settings,
             identity_key,
             device_id,
             device_store,
             server_controller,
         })
+        .manage(commands::TransferState::default())
         .invoke_handler(tauri::generate_handler![
             // Server lifecycle
             commands::start_server,
@@ -72,10 +85,15 @@ pub fn run() {
             commands::list_peer_files,
             commands::pull_file,
             commands::push_file,
+            commands::cancel_transfer,
             // Pairing
             commands::initiate_pairing,
             commands::confirm_pairing,
             commands::get_paired_peers,
+            // Settings
+            commands::get_settings,
+            commands::update_settings,
+            commands::pick_directory,
             // Legacy (migrate to commands eventually)
             file_ops::list_sandbox_files,
         ])
