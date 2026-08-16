@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { TransferProvider } from '@/contexts/TransferContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -12,12 +13,12 @@ SplashScreen.preventAutoHideAsync();
  */
 export default function RootLayout() {
   return (
-    <>
+    <TransferProvider>
       <AnimatedSplashOverlay />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="peer-sandbox" options={{ headerShown: false }} />
       </Stack>
-    </>
+    </TransferProvider>
   );
 }

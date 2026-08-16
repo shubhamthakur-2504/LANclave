@@ -14,6 +14,7 @@ import { RemoteFileRow } from "@/components/RemoteFileRow";
 import { C } from "@/constants/colors";
 import { useRemotePeer } from "@/hooks/use-remote-peer";
 import { useSandboxFiles } from "@/hooks/use-sandbox-files";
+import { useTransfers } from "@/contexts/TransferContext";
 
 export default function PeerSandboxScreen() {
   const router = useRouter();
@@ -24,17 +25,15 @@ export default function PeerSandboxScreen() {
   const name = params.name ?? "Peer";
 
   const { refreshFiles } = useSandboxFiles();
+  const { transfers, startDownload } = useTransfers();
 
   const {
     remoteFiles,
     isFetching,
-    downloadProgress,
     error,
     fetchPeerFiles,
-    downloadFile,
   } = useRemotePeer(
     ip ? { ip, port, name } : null,
-    refreshFiles,
   );
 
   return (
@@ -91,15 +90,23 @@ export default function PeerSandboxScreen() {
               </View>
             ) : null
           }
-          renderItem={({ item }) => (
-            <RemoteFileRow
-              name={item.name}
-              size={item.size}
-              is_directory={item.is_directory}
-              progress={downloadProgress[item.name]}
-              onDownload={downloadFile}
-            />
-          )}
+          renderItem={({ item }) => {
+            const transferId = `${ip}-${item.name}`;
+            const transfer = transfers.find(t => t.id === transferId);
+            const progressPct = transfer && transfer.fileSize > 0 && transfer.status === 'in_progress' 
+              ? Math.round((transfer.progress / transfer.fileSize) * 100) 
+              : undefined;
+
+            return (
+              <RemoteFileRow
+                name={item.name}
+                size={item.size}
+                is_directory={item.is_directory}
+                progress={progressPct}
+                onDownload={() => startDownload({ ip, port, name }, item.name, item.size, refreshFiles)}
+              />
+            );
+          }}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           ListEmptyComponent={
             isFetching ? null : (

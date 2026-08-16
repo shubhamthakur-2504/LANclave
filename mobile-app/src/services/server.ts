@@ -2,6 +2,7 @@ import TcpSocket from "react-native-tcp-socket";
 import { Directory, File, Paths } from "expo-file-system";
 import { getOrCreateDeviceIdentity } from "./identity";
 import { Buffer } from "buffer";
+import { getSettings } from "./settings";
 
 let server: TcpSocket.Server | null = null;
 let isShuttingDown = false;
@@ -13,11 +14,6 @@ const PORT = 8377;
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Attempt to destroy any server WE still hold a reference to.
- * After a hot-reload, `server` is null so this is a no-op — the ghost
- * native server keeps running, which is fine (it still serves correctly).
- */
 function destroyServer(): Promise<void> {
   return new Promise((resolve) => {
     isShuttingDown = true;
@@ -36,12 +32,9 @@ function destroyServer(): Promise<void> {
   });
 }
 
-/**
- * Build the request handler and bind to PORT.
- * Rejects with EADDRINUSE if the port is taken.
- */
 function createAndListen(
   deviceId: string,
+  displayName: string,
   sandboxDir: Directory,
 ): Promise<TcpSocket.Server> {
   return new Promise((resolve, reject) => {
@@ -53,26 +46,26 @@ function createAndListen(
       socket.on("close", markDead);
       socket.on("error", markDead);
 
-      /**
-       * Safe write: silently no-ops if the socket or server is gone.
-       * The try/catch protects against synchronous JS errors;
-       * the `dead` flag prevents us from reaching the native bridge
-       * for sockets that are already destroyed on the Java side.
-       */
-      const safeWrite = (data: string | Buffer): Promise<void> =>
-        new Promise((resolve) => {
-          if (dead || isShuttingDown) { resolve(); return; }
-          try {
-            if (typeof data === "string") {
-              socket.write(data, "utf8" as any, resolve as any);
-            } else {
-              socket.write(data as any, resolve as any);
-            }
-          } catch {
-            dead = true;
-            resolve();
+      const safeWrite = async (data: string | Buffer, skipDelay: boolean = false, encoding: any = "utf8"): Promise<void> => {
+        if (dead || isShuttingDown) return;
+
+        try {
+          if (typeof data === "string") {
+            socket.write(data, encoding);
+          } else {
+            socket.write(data);
           }
-        });
+        } catch {
+          dead = true;
+          return;
+        }
+        
+        if (!skipDelay) {
+          // Yield to the event loop and allow GC/socket flush.
+          // In React Native, setImmediate is faster than setTimeout(..., 2).
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      };
 
       const safeEnd = () => {
         if (dead || isShuttingDown) return;
@@ -101,7 +94,7 @@ function createAndListen(
               status: "ok",
               app: "lanclave",
               device_id: deviceId,
-              name: "Mobile Device",
+              device_name: displayName,
             });
             await safeWrite(
               `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`,
@@ -131,18 +124,59 @@ function createAndListen(
               safeEnd();
               return;
             }
-            const file = new File(sandboxDir, pathParam);
-            if (!file.exists) {
+            const items = sandboxDir.list();
+            const child = items.find(i => i.name === pathParam);
+            
+            if (!child || child instanceof Directory) {
               await safeWrite("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
               safeEnd();
               return;
             }
-            const binaryData = await file.bytes();
-            if (dead || isShuttingDown) return;
+            const file = child as File;
+            const fileSize = file.size ?? 0;
+            
             await safeWrite(
-              `HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: ${binaryData.byteLength}\r\nConnection: close\r\n\r\n`,
+              `HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: ${fileSize}\r\nConnection: close\r\n\r\n`,
             );
-            await safeWrite(Buffer.from(binaryData));
+
+            const chunkSize = 1024 * 1024; // 1 MB chunks
+            let offset = 0;
+            console.log(`[server] Starting download for ${pathParam} (${fileSize} bytes)`);
+            let lastLogTime = Date.now();
+            let chunkCount = 0;
+            
+            try {
+              while (offset < fileSize) {
+                if (dead || isShuttingDown) {
+                  console.log(`[server] Transfer cancelled or server shutting down. dead=${dead}, isShuttingDown=${isShuttingDown}`);
+                  break;
+                }
+                
+                const length = Math.min(chunkSize, fileSize - offset);
+                // Read chunk as base64 to avoid react-native string encoding issues with binary data
+                const b64Chunk = await require("expo-file-system/legacy").readAsStringAsync(file.uri, {
+                  encoding: "base64",
+                  position: offset,
+                  length: length,
+                });
+                
+                chunkCount++;
+                // Skip the delay except for every 4th chunk (every 4 MB)
+                const skipDelay = chunkCount % 4 !== 0;
+                await safeWrite(b64Chunk, skipDelay, "base64");
+                offset += length;
+                
+                const now = Date.now();
+                if (now - lastLogTime > 1000) {
+                    console.log(`[server] Sent ${offset}/${fileSize} bytes for ${pathParam}`);
+                    lastLogTime = now;
+                }
+              }
+              console.log(`[server] Transfer complete for ${pathParam}, total sent: ${offset}`);
+            } catch (err) {
+              console.error(`[server] Error during transfer of ${pathParam}:`, err);
+            }
+            
             safeEnd();
           } else {
             await safeWrite("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
@@ -155,10 +189,7 @@ function createAndListen(
       });
     });
 
-    // Listen for server-level errors (e.g. native crash / unexpected close)
     s.on("error", (err: NodeJS.ErrnoException) => {
-      // If the server dies while we want it running, mark it null so
-      // the watchdog picks it up and restarts
       if (server === s) {
         console.warn("[server] Server error while running:", err.message);
         server = null;
@@ -173,35 +204,30 @@ function createAndListen(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Watchdog — periodically checks if the server is still alive and restarts it
-// ---------------------------------------------------------------------------
-
 function startWatchdog(): void {
   stopWatchdog();
   watchdogTimer = setInterval(async () => {
-    if (!serverDesiredOn) return; // user turned it off, don't restart
+    if (!serverDesiredOn) return; 
 
-    // If server reference is lost (native crash, hot reload, etc.) try to restart
     if (!server) {
       console.log("[watchdog] Server is gone, attempting restart…");
       try {
         const identity = await getOrCreateDeviceIdentity();
-        const sandboxDir = Paths.document;
-        server = await createAndListen(identity.deviceId, sandboxDir);
+        const settings = await getSettings();
+        const sandboxDir = new Directory(settings.sandboxPath);
+        server = await createAndListen(identity.deviceId, settings.displayName, sandboxDir);
         isShuttingDown = false;
         console.log("[watchdog] Server restarted successfully.");
       } catch (err: unknown) {
         const code = (err as NodeJS.ErrnoException)?.code;
         if (code === "EADDRINUSE") {
-          // Ghost server is still alive — that's fine, it's serving requests
           isShuttingDown = false;
         } else {
           console.warn("[watchdog] Restart failed:", err);
         }
       }
     }
-  }, 10_000); // check every 10 seconds
+  }, 10_000);
 }
 
 function stopWatchdog(): void {
@@ -211,27 +237,16 @@ function stopWatchdog(): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Start the HTTP server. **Never throws** — if the port is already in use
- * (e.g. a ghost server from a hot-reload), we treat it as "server is running"
- * and return successfully, because the old native server is still serving
- * requests just fine.
- *
- * Also starts a watchdog that auto-restarts the server if it dies.
- */
 export async function startServer(): Promise<void> {
   serverDesiredOn = true;
   await destroyServer();
 
   const identity = await getOrCreateDeviceIdentity();
-  const sandboxDir = Paths.document;
+  const settings = await getSettings();
+  const sandboxDir = new Directory(settings.sandboxPath);
 
   try {
-    server = await createAndListen(identity.deviceId, sandboxDir);
+    server = await createAndListen(identity.deviceId, settings.displayName, sandboxDir);
     isShuttingDown = false;
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code;
@@ -247,7 +262,6 @@ export async function startServer(): Promise<void> {
     }
   }
 
-  // Start the watchdog to auto-recover from crashes
   startWatchdog();
 }
 
@@ -257,11 +271,6 @@ export function stopServer(): void {
   destroyServer();
 }
 
-/**
- * Returns true if the user intended the server to be on.
- * This stays true even if the native server crashed momentarily —
- * the watchdog will bring it back.
- */
 export function isServerRunning(): boolean {
   return serverDesiredOn;
 }
