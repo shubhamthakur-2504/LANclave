@@ -35,7 +35,7 @@ function PeerRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium text-slate-200">
-            {shortId(peer.device_id)}
+            {peer.device_name || `${peer.device_id.substring(0, 8)}...`}
           </span>
           {peer.paired && (
             <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">

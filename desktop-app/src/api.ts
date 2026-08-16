@@ -59,13 +59,15 @@ export async function listSandboxFiles(): Promise<SandboxFile[]> {
 export async function initiatePairing(
   peerAddr: string,
   peerDeviceId: string,
+  peerDeviceName?: string,
 ): Promise<string> {
-  return await invoke("initiate_pairing", { peerAddr, peerDeviceId });
+  return await invoke("initiate_pairing", { peerAddr, peerDeviceId, peerDeviceName });
 }
 
 export async function confirmPairing(
   peerAddr: string,
   peerDeviceId: string,
+  peerDeviceName?: string,
 ): Promise<void> {
-  await invoke("confirm_pairing", { peerAddr, peerDeviceId });
+  await invoke("confirm_pairing", { peerAddr, peerDeviceId, peerDeviceName });
 }

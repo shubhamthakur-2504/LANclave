@@ -21,10 +21,10 @@ export default function PeerDetailPanel({
       {/* Profile header */}
       <div className="flex flex-col items-center border-b border-slate-800 px-6 py-8">
         <div className="mb-3 flex h-20 w-20 items-center justify-center rounded-full bg-sky-500/20 text-2xl font-bold text-sky-400">
-          {(peer.addr[0] ?? peer.device_id[0] ?? "?").toUpperCase()}
+          {(peer.device_name?.[0] ?? peer.addr[0] ?? peer.device_id[0] ?? "?").toUpperCase()}
         </div>
         <h3 className="text-lg font-semibold text-slate-100">
-          {shortId(peer.device_id)}
+          {peer.device_name || shortId(peer.device_id)}
         </h3>
         <p className="mt-0.5 text-xs text-slate-500">
           {peer.addr || <span className="text-slate-600 italic">Offline / unreachable</span>}

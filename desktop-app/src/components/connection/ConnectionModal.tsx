@@ -5,6 +5,7 @@ interface ConnectionModalProps {
   isOpen: boolean;
   peerAddr: string;
   peerDeviceId: string;
+  peerDeviceName?: string;
   initialFingerprint?: string | null;
   onClose: () => void;
   onPaired: () => void;
@@ -14,6 +15,7 @@ export default function ConnectionModal({
   isOpen,
   peerAddr: initialAddr,
   peerDeviceId: initialDeviceId,
+  peerDeviceName: initialDeviceName,
   initialFingerprint,
   onClose,
   onPaired,
@@ -50,6 +52,7 @@ export default function ConnectionModal({
     setError(null);
 
     let devId = initialDeviceId;
+    let devName = initialDeviceName;
     let normalizedAddr = targetAddr.trim();
 
     // Ensure port is present
@@ -67,6 +70,7 @@ export default function ConnectionModal({
         if (res.ok) {
           const body = await res.json();
           if (body.device_id) devId = body.device_id;
+          if (body.device_name) devName = body.device_name;
         }
       }
 
@@ -75,7 +79,7 @@ export default function ConnectionModal({
         devId = normalizedAddr;
       }
 
-      const fp = await api.initiatePairing(normalizedAddr, devId);
+      const fp = await api.initiatePairing(normalizedAddr, devId, devName);
       setFingerprint(fp);
     } catch (e: unknown) {
       setError(
@@ -93,7 +97,7 @@ export default function ConnectionModal({
       let normalizedAddr = targetAddr.trim();
       if (!normalizedAddr.includes(":")) normalizedAddr += ":8377";
 
-      await api.confirmPairing(normalizedAddr, initialDeviceId || normalizedAddr);
+      await api.confirmPairing(normalizedAddr, initialDeviceId || normalizedAddr, initialDeviceName);
       setConfirmed(true);
       onPaired();
       setTimeout(onClose, 1500);
