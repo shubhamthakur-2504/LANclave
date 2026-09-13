@@ -1,0 +1,23 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.nativeserver'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.nativeserver"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  implementation 'org.nanohttpd:nanohttpd:2.3.1'
+  implementation 'androidx.documentfile:documentfile:1.0.1'
+}

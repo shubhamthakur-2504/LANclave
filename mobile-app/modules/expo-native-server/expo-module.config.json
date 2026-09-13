@@ -1,0 +1,9 @@
+{
+  "platforms": ["android", "apple"],
+  "apple": {
+    "modules": ["ExpoNativeServerModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.nativeserver.ExpoNativeServerModule"]
+  }
+}

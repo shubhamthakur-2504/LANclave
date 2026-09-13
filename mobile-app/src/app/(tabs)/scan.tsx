@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   View,
+  Alert,
 } from "react-native";
 
 import { PeerCard } from "@/components/PeerCard";
@@ -15,10 +16,12 @@ import { C } from "@/constants/colors";
 import { DiscoveredPeer, usePeerDiscovery } from "@/hooks/use-peer-discovery";
 import { getOrCreateDeviceIdentity } from "@/services/identity";
 import {
-  getPairingFingerprintForPeer,
   getPairedPeers,
   savePairedPeer,
+  getPairingFingerprintForPeer,
 } from "@/services/pairing";
+import { getSettings } from "@/services/settings";
+import * as Network from "expo-network";
 
 export default function ScanScreen() {
   const router = useRouter();
@@ -59,16 +62,27 @@ export default function ScanScreen() {
 
       // Notify remote desktop peer via HTTP POST so desktop opens its modal simultaneously
       const identity = await getOrCreateDeviceIdentity();
+      const settings = await getSettings();
+      let myIp = "Unknown IP";
+      try {
+        myIp = await Network.getIpAddressAsync();
+      } catch (e) {
+        // fallback
+      }
+
       fetch(`http://${peer.ip}:${peer.port}/api/pairing/request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           device_id: identity.deviceId,
-          name: "Mobile App",
-          ip: peer.ip,
+          name: settings.displayName,
+          ip: myIp,
         }),
       })
-        .then((res) => res.json())
+        .then((res) => {
+          if (!res.ok) throw new Error("Server rejected pairing request");
+          return res.json();
+        })
         .then((data) => {
           if (data && data.fingerprint) {
             setPairingFingerprint(data.fingerprint);
@@ -77,10 +91,12 @@ export default function ScanScreen() {
           }
         })
         .catch(() => {
-          setPairingFingerprint(localFp);
+          setPairingTarget(null);
+          Alert.alert("Connection Failed", "Could not connect to the peer. Make sure its server is running.");
         });
     } catch {
-      setPairingFingerprint("000000");
+      setPairingTarget(null);
+      Alert.alert("Error", "An error occurred while initiating pairing.");
     }
   }, []);
 
