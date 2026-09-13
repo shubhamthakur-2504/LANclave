@@ -176,12 +176,14 @@ impl ServerHandle {
 /// it internally.
 pub struct ServerController {
     handle: Mutex<Option<ServerHandle>>,
+    mdns_shutdown: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl ServerController {
     pub fn new() -> Self {
         Self {
             handle: Mutex::new(None),
+            mdns_shutdown: Mutex::new(None),
         }
     }
 
@@ -211,7 +213,7 @@ impl ServerController {
             .map_err(|e| ServerError::BindFailed(e.to_string()))?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-        let router = build_router(state);
+        let router = build_router(state.clone());
 
         tokio::spawn(async move {
             axum::serve(listener, router)
@@ -225,6 +227,10 @@ impl ServerController {
         let handle = ServerHandle::new(shutdown_tx);
         *self.handle.lock().unwrap() = Some(handle);
 
+        let device_name = state.settings.read().unwrap().display_name.clone();
+        let mdns_flag = crate::discovery::start_mdns_broadcast(&state.device_id, &device_name);
+        *self.mdns_shutdown.lock().unwrap() = Some(mdns_flag);
+
         Ok(())
     }
 
@@ -232,6 +238,10 @@ impl ServerController {
     ///
     /// Returns [`ServerError::NotRunning`] if no server is active.
     pub fn stop(&self) -> Result<(), ServerError> {
+        if let Some(flag) = self.mdns_shutdown.lock().unwrap().take() {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+
         let mut guard = self.handle.lock().unwrap();
         match guard.take() {
             Some(handle) => {

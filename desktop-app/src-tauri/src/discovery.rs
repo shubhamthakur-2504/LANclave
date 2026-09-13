@@ -135,10 +135,18 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, Stri
     // Because hotspots drop mDNS, we query the gateway instantly, then scan the local /24 subnet.
     let mut probe_tasks = Vec::new();
 
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(1500))
+        .build()
+        .unwrap_or_default();
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(20));
+
     if let Ok(gateway) = default_net::get_default_gateway() {
         let gw_ip = gateway.ip_addr.to_string();
+        let client_clone = client.clone();
+        let sem_clone = semaphore.clone();
         probe_tasks.push(tokio::spawn(async move {
-            probe_ip(&gw_ip).await
+            probe_ip(client_clone, &gw_ip, sem_clone).await
         }));
     }
 
@@ -150,8 +158,10 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, Stri
                 for i in 1..=254 {
                     let test_ip = format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], i);
                     if test_ip != ip.to_string() {
+                        let client_clone = client.clone();
+                        let sem_clone = semaphore.clone();
                         probe_tasks.push(tokio::spawn(async move {
-                            probe_ip(&test_ip).await
+                            probe_ip(client_clone, &test_ip, sem_clone).await
                         }));
                     }
                 }
@@ -171,13 +181,10 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, Stri
     Ok(peers)
 }
 
-async fn probe_ip(ip: &str) -> Option<(String, String, String)> {
+async fn probe_ip(client: reqwest::Client, ip: &str, semaphore: Arc<tokio::sync::Semaphore>) -> Option<(String, String, String)> {
+    let _permit = semaphore.acquire().await.ok()?;
     let url = format!("http://{ip}:8377/health");
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(1500))
-        .build()
-        .ok()?;
-
+    
     let res = client.get(&url).send().await.ok()?;
     if res.status().is_success() || res.status() == 401 {
         if let Ok(body) = res.json::<HealthResponse>().await {

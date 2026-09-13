@@ -17,11 +17,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use tauri::Manager;
 use settings::{AppSettings, load_settings};
-
-struct MdnsController {
-    shutdown_flag: Arc<AtomicBool>,
-}
-
 #[cfg_attr(mobile, tauri::mobile)]
 pub fn run() {
     let app_data_dir = dirs_next::data_local_dir()
@@ -51,8 +46,6 @@ pub fn run() {
     let device_id = pairing::public_key_b64(&identity_key);
     let device_name = settings.read().unwrap().display_name.clone();
 
-    let mdns_shutdown_flag = discovery::start_mdns_broadcast(&device_id, &device_name);
-
     let device_store = Arc::new(RwLock::new(
         DeviceStore::load(&app_data_dir).unwrap_or_default(),
     ));
@@ -61,9 +54,6 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(MdnsController {
-            shutdown_flag: mdns_shutdown_flag,
-        })
         .manage(CliState {
             app_data_dir,
             sandbox_root,
@@ -97,14 +87,6 @@ pub fn run() {
             // Legacy (migrate to commands eventually)
             file_ops::list_sandbox_files,
         ])
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                if let Some(controller) = window.try_state::<MdnsController>()
-                {
-                    controller.shutdown_flag.store(true, Ordering::Relaxed);
-                }
-            }
-        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
