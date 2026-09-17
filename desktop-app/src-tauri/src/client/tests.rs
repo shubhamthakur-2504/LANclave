@@ -31,7 +31,10 @@ async fn start_server(
 
     use rand::rngs::OsRng;
     let state = Arc::new(AppState {
-        sandbox_root: root,
+        settings: Arc::new(std::sync::RwLock::new(crate::settings::AppSettings {
+            display_name: "Test Node".to_string(),
+            sandbox_path: root.to_string_lossy().into_owned(),
+        })),
         device_id: "test-device".to_string(),
         identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
         app_handle: None,
@@ -51,6 +54,13 @@ async fn start_server(
     format!("127.0.0.1:{port}")
 }
 
+fn cancel_channel() -> (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::sync::oneshot::Receiver<()>,
+) {
+    tokio::sync::oneshot::channel()
+}
+
 // ── Pull tests ───────────────────────────────────────────────────
 
 #[tokio::test]
@@ -61,9 +71,19 @@ async fn pull_small_file_success() {
     let peer_addr = start_server(&dir, &[("hello.txt", b"Hello, world!")]).await;
 
     let save_path = dir.path().join("downloaded.txt");
-    crate::client::pull_file_from_peer(&peer_addr, "hello.txt", &save_path, &did, &key)
-        .await
-        .unwrap();
+    let (_tx, rx) = cancel_channel();
+    super::pull_file_to_disk(
+        "test-transfer",
+        &peer_addr,
+        "hello.txt",
+        &save_path,
+        &did,
+        &key,
+        rx,
+        |_| {},
+    )
+    .await
+    .unwrap();
 
     let data = tokio::fs::read(&save_path).await.unwrap();
     assert_eq!(data, b"Hello, world!");
@@ -77,18 +97,22 @@ async fn pull_peer_404_no_local_file_created() {
     let peer_addr = start_server(&dir, &[("actual.txt", b"real")]).await;
 
     let save_path = dir.path().join("nope.txt");
-    let err = crate::client::pull_file_from_peer(
+    let (_tx, rx) = cancel_channel();
+    let err = super::pull_file_to_disk(
+        "test-transfer",
         &peer_addr,
         "nope.txt",
         &save_path,
         &did,
         &key,
+        rx,
+        |_| {},
     )
     .await
     .unwrap_err();
 
     match err {
-        crate::client::ClientError::ServerRejected(code) => {
+        super::ClientError::ServerRejected(code) => {
             assert_eq!(code, 404);
         }
         other => panic!("expected ServerRejected(404), got {other:?}"),
@@ -98,7 +122,7 @@ async fn pull_peer_404_no_local_file_created() {
 }
 
 #[tokio::test]
-async fn pull_interrupted_mid_stream_cleans_up_partial() {
+async fn pull_large_file_success() {
     let key = test_keypair();
     let did = test_device_id(&key);
     let dir = TempDir::new().unwrap();
@@ -106,11 +130,23 @@ async fn pull_interrupted_mid_stream_cleans_up_partial() {
     let peer_addr = start_server(&dir, &[("big.bin", &big)]).await;
 
     let save_path = dir.path().join("big.bin");
+    let (_tx, rx) = cancel_channel();
 
-    let result =
-        crate::client::pull_file_from_peer(&peer_addr, "big.bin", &save_path, &did, &key)
-            .await;
+    let result = super::pull_file_to_disk(
+        "test-transfer",
+        &peer_addr,
+        "big.bin",
+        &save_path,
+        &did,
+        &key,
+        rx,
+        |_| {},
+    )
+    .await;
     assert!(result.is_ok(), "successful pull should work: {:?}", result);
+
+    let data = tokio::fs::read(&save_path).await.unwrap();
+    assert_eq!(data.len(), 100_000);
 }
 
 // ── Push tests ───────────────────────────────────────────────────

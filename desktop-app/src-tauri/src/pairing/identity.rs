@@ -157,7 +157,10 @@ mod tests {
         use tower::ServiceExt;
 
         let state = Arc::new(crate::server::AppState {
-            sandbox_root: std::env::temp_dir(),
+            settings: Arc::new(std::sync::RwLock::new(crate::settings::AppSettings {
+                display_name: "Test Node".to_string(),
+                sandbox_path: std::env::temp_dir().to_string_lossy().into_owned(),
+            })),
             device_id: "test-device".to_string(),
             identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
             app_handle: None,
@@ -184,7 +187,7 @@ mod tests {
         let key = ed25519_dalek::SigningKey::generate(&mut OsRng);
         let device_id = public_key_b64(&key);
         let mut store = DeviceStore::new();
-        store.add_peer(device_id.clone(), &key.verifying_key()).unwrap();
+        store.add_peer(device_id.clone(), &key.verifying_key(), None).unwrap();
 
         let auth = Arc::new(AuthState {
             store: std::sync::RwLock::new(store),
@@ -192,7 +195,10 @@ mod tests {
         });
 
         let state = Arc::new(crate::server::AppState {
-            sandbox_root: std::env::temp_dir(),
+            settings: Arc::new(std::sync::RwLock::new(crate::settings::AppSettings {
+                display_name: "Test Node".to_string(),
+                sandbox_path: std::env::temp_dir().to_string_lossy().into_owned(),
+            })),
             device_id: "test-device".to_string(),
             identity_key: key.clone(),
             app_handle: None,
@@ -227,7 +233,7 @@ mod tests {
         let key = ed25519_dalek::SigningKey::generate(&mut OsRng);
         let device_id = public_key_b64(&key);
         let mut store = DeviceStore::new();
-        store.add_peer(device_id.clone(), &key.verifying_key()).unwrap();
+        store.add_peer(device_id.clone(), &key.verifying_key(), None).unwrap();
 
         let auth = Arc::new(AuthState {
             store: std::sync::RwLock::new(store),
@@ -235,7 +241,10 @@ mod tests {
         });
 
         let state = Arc::new(crate::server::AppState {
-            sandbox_root: std::env::temp_dir(),
+            settings: Arc::new(std::sync::RwLock::new(crate::settings::AppSettings {
+                display_name: "Test Node".to_string(),
+                sandbox_path: std::env::temp_dir().to_string_lossy().into_owned(),
+            })),
             device_id: "test-device".to_string(),
             identity_key: key.clone(),
             app_handle: None,
@@ -269,7 +278,7 @@ mod tests {
         let key = ed25519_dalek::SigningKey::generate(&mut OsRng);
         let device_id = public_key_b64(&key);
         let mut store = DeviceStore::new();
-        store.add_peer(device_id.clone(), &key.verifying_key()).unwrap();
+        store.add_peer(device_id.clone(), &key.verifying_key(), None).unwrap();
 
         let auth = Arc::new(AuthState {
             store: std::sync::RwLock::new(store),
@@ -277,7 +286,10 @@ mod tests {
         });
 
         let state = Arc::new(crate::server::AppState {
-            sandbox_root: std::env::temp_dir(),
+            settings: Arc::new(std::sync::RwLock::new(crate::settings::AppSettings {
+                display_name: "Test Node".to_string(),
+                sandbox_path: std::env::temp_dir().to_string_lossy().into_owned(),
+            })),
             device_id: "test-device".to_string(),
             identity_key: key.clone(),
             app_handle: None,
@@ -299,6 +311,49 @@ mod tests {
             .uri("/files/some_file.txt")
             .header("X-LANclave-Device-Id", &device_id)
             .header("X-LANclave-Timestamp", old_ts.to_string())
+            .header("X-LANclave-Signature", &sig_b64)
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn auth_rejects_valid_signature_from_unpaired_device() {
+        use axum::http::Request;
+        use std::sync::Arc;
+        use tower::ServiceExt;
+
+        let key = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let device_id = public_key_b64(&key);
+
+        // The device is intentionally NOT added to the store — only devices
+        // that completed the one-time pairing confirmation may authenticate.
+        let auth = Arc::new(AuthState {
+            store: std::sync::RwLock::new(DeviceStore::new()),
+            enabled: true,
+        });
+
+        let state = Arc::new(crate::server::AppState {
+            settings: Arc::new(std::sync::RwLock::new(crate::settings::AppSettings {
+                display_name: "Test Node".to_string(),
+                sandbox_path: std::env::temp_dir().to_string_lossy().into_owned(),
+            })),
+            device_id: "test-device".to_string(),
+            identity_key: key.clone(),
+            app_handle: None,
+            auth,
+        });
+        let app = crate::server::build_router(state);
+
+        let (ts, sig) = crate::pairing::sign_request(&key, &device_id);
+        let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
+
+        let req = Request::builder()
+            .uri("/files/some_file.txt")
+            .header("X-LANclave-Device-Id", &device_id)
+            .header("X-LANclave-Timestamp", ts.to_string())
             .header("X-LANclave-Signature", &sig_b64)
             .body(axum::body::Body::empty())
             .unwrap();

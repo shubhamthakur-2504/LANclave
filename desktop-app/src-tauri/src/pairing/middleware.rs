@@ -142,24 +142,20 @@ pub fn check_request(
         return Err(Status(401));
     }
 
-    // --- Look up or parse the peer's public key ---------------------------
-    let mut store = auth.store.write().map_err(|_| {
+    // --- Look up the paired peer's public key -----------------------------
+    // Only devices that completed the one-time pairing confirmation are
+    // authorised.  We must NOT derive the public key from the device_id
+    // itself, otherwise any device could self-authorise by signing with a
+    // key it controls.
+    let store = auth.store.read().map_err(|_| {
         eprintln!("[lanclave/auth] RwLock poisoned");
         Status(500)
     })?;
 
-    let peer_key = match store.get_peer_key(&device_id) {
-        Some(k) => k,
-        None => {
-            match super::identity::public_key_from_str(&device_id) {
-                Ok(k) => k,
-                Err(e) => {
-                    eprintln!("[lanclave/auth] unknown or invalid device_id {device_id}: {e}");
-                    return Err(Status(401));
-                }
-            }
-        }
-    };
+    let peer_key = store.get_peer_key(&device_id).ok_or_else(|| {
+        eprintln!("[lanclave/auth] unknown or unpaired device_id {device_id}");
+        Status(401)
+    })?;
 
     // --- Verify the signature ---------------------------------------------
     use base64::Engine;
@@ -178,10 +174,6 @@ pub fn check_request(
     let payload = signing_payload(&device_id, timestamp);
 
     if peer_key.verify_strict(payload.as_bytes(), &signature).is_ok() {
-        if !store.is_paired(device_id) {
-            let _ = store.add_peer(device_id.to_string(), &peer_key, None);
-            eprintln!("[lanclave/auth] auto-registered local peer device {device_id}");
-        }
         drop(store);
         Ok(())
     } else {
