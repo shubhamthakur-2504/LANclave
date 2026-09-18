@@ -1,12 +1,13 @@
 mod transport;
-mod pull;
-mod push;
+pub(crate) mod pull;
+pub(crate) mod push;
 #[cfg(test)]
 mod tests;
 
 pub use pull::pull_file_from_peer;
 pub(crate) use pull::pull_file_to_disk;
 pub use push::push_file_to_peer;
+pub(crate) use push::push_file_to_peer_managed;
 
 /// Errors that can occur during client‑side file transfer operations.
 ///

@@ -84,6 +84,7 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::pick_directory,
+            commands::pick_file,
             // Legacy (migrate to commands eventually)
             file_ops::list_sandbox_files,
         ])

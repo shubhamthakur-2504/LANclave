@@ -46,9 +46,14 @@ pub struct CliState {
     pub server_controller: Arc<ServerController>,
 }
 
+pub enum CancelHandle {
+    Pull(tokio::sync::oneshot::Sender<()>),
+    Push(std::sync::Arc<std::sync::atomic::AtomicBool>),
+}
+
 #[derive(Default)]
 pub struct TransferState {
-    pub cancellations: RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    pub cancellations: RwLock<std::collections::HashMap<String, CancelHandle>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +261,7 @@ pub async fn pull_file(
     // Actually, we can add a new Managed State: TransferState
     // Let's assume TransferState is passed. If not, we'll need to define it.
     let transfer_state: State<'_, TransferState> = app.state();
-    transfer_state.cancellations.write().unwrap().insert(transfer_id.clone(), cancel_tx);
+    transfer_state.cancellations.write().unwrap().insert(transfer_id.clone(), CancelHandle::Pull(cancel_tx));
 
     let device_id = state.device_id.clone();
     let identity_key = state.identity_key.clone();
@@ -284,18 +289,26 @@ pub fn cancel_transfer(
     transfer_state: State<'_, TransferState>,
     transfer_id: String,
 ) {
-    if let Some(tx) = transfer_state.cancellations.write().unwrap().remove(&transfer_id) {
-        let _ = tx.send(());
+    if let Some(handle) = transfer_state.cancellations.write().unwrap().remove(&transfer_id) {
+        match handle {
+            CancelHandle::Pull(tx) => {
+                let _ = tx.send(());
+            }
+            CancelHandle::Push(flag) => {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
     }
 }
 
 #[tauri::command]
 pub async fn push_file(
+    app: tauri::AppHandle,
     state: State<'_, CliState>,
     peer_addr: String,
     local_relative_path: String,
     remote_path: String,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let safe_local_path = {
         let settings = state.settings.read().map_err(|e| e.to_string())?;
         let sandbox_root = PathBuf::from(&settings.sandbox_path);
@@ -303,15 +316,31 @@ pub async fn push_file(
             .map_err(|e| format!("invalid source path: {e}"))?
     };
 
-    client::push_file_to_peer(
-        &peer_addr,
-        &safe_local_path,
-        &remote_path,
-        &state.device_id,
-        &state.identity_key,
-    )
-    .await
-    .map_err(|e| e.to_string())
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let transfer_state: State<'_, TransferState> = app.state();
+    transfer_state.cancellations.write().unwrap().insert(transfer_id.clone(), CancelHandle::Push(cancel_flag.clone()));
+
+    let device_id = state.device_id.clone();
+    let identity_key = state.identity_key.clone();
+    let transfer_id_clone = transfer_id.clone();
+
+    tokio::spawn(async move {
+        let _ = crate::client::push::push_file_to_peer_managed(
+            app,
+            transfer_id_clone,
+            &peer_addr,
+            &safe_local_path,
+            &remote_path,
+            &device_id,
+            &identity_key,
+            cancel_flag,
+        )
+        .await;
+    });
+
+    Ok(transfer_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -405,6 +434,30 @@ pub async fn pick_directory(app: tauri::AppHandle) -> Result<Option<String>, Str
     
     app.dialog().file().pick_folder(move |folder| {
         let path = folder.map(|f| f.into_path().unwrap().to_string_lossy().to_string());
+        let _ = tx.send(path);
+    });
+    
+    rx.await.map_err(|_| "Dialog cancelled".to_string())
+}
+
+#[tauri::command]
+pub async fn pick_file(app: tauri::AppHandle, state: State<'_, CliState>) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    
+    let sandbox_root = {
+        let settings = state.settings.read().map_err(|e| e.to_string())?;
+        PathBuf::from(&settings.sandbox_path)
+    };
+    let root_clone = sandbox_root.clone();
+    
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    
+    app.dialog().file().set_directory(sandbox_root).pick_file(move |file| {
+        let path = file.and_then(|f| {
+            let p = f.into_path().unwrap();
+            // Convert absolute path to relative path inside sandbox
+            p.strip_prefix(&root_clone).ok().map(|rel| rel.to_string_lossy().to_string().replace("\\", "/"))
+        });
         let _ = tx.send(path);
     });
     
