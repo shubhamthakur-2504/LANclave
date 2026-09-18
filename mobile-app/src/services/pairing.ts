@@ -12,6 +12,7 @@ import { Buffer } from "buffer";
 import { sha256 } from "@noble/hashes/sha2.js";
 import * as SecureStore from "expo-secure-store";
 import { getOrCreateDeviceIdentity } from "@/services/identity";
+import { updateNativeServerPairedDevices } from "@/services/server";
 
 const PAIRED_PEERS_KEY = "lanclave_paired_peers";
 
@@ -89,6 +90,7 @@ export async function savePairedPeer(peer: { id: string; name: string; ip: strin
   };
   filtered.push(updated);
   await SecureStore.setItemAsync(PAIRED_PEERS_KEY, JSON.stringify(filtered));
+  updateNativeServerPairedDevices().catch(err => console.error("Failed to update native server pairings", err));
 }
 
 /** Check if a peer ID is already paired */

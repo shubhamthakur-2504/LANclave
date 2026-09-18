@@ -15,10 +15,15 @@ class NativeServer(
     port: Int,
     private val deviceId: String,
     private val deviceName: String,
-    private val rawSandboxPath: String
+    private val rawSandboxPath: String,
+    private var pairedDevices: List<String>
 ) : NanoHTTPD(port) {
     private val isContentUri = rawSandboxPath.startsWith("content://")
     private val sandboxPath = rawSandboxPath.removePrefix("file://")
+
+    fun updatePairedDevices(devices: List<String>) {
+        pairedDevices = devices
+    }
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
@@ -26,6 +31,53 @@ class NativeServer(
 
         if (method != Method.GET && method != Method.PUT) {
             return newFixedLengthResponse(Response.Status.METHOD_NOT_ALLOWED, MIME_PLAINTEXT, "Method Not Allowed")
+        }
+
+        if (uri != "/health") {
+            val reqDeviceId = session.headers["x-lanclave-device-id"]
+            val reqTimestamp = session.headers["x-lanclave-timestamp"]
+            val reqSignature = session.headers["x-lanclave-signature"]
+
+            if (reqDeviceId == null || reqTimestamp == null || reqSignature == null) {
+                return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Missing authentication headers")
+            }
+
+            if (!pairedDevices.contains(reqDeviceId)) {
+                return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Device not paired")
+            }
+
+            val timestampSecs = reqTimestamp.toLongOrNull()
+            if (timestampSecs == null) {
+                return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Invalid timestamp format")
+            }
+
+            val currentSecs = System.currentTimeMillis() / 1000
+            if (kotlin.math.abs(currentSecs - timestampSecs) > 30) {
+                return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Timestamp expired")
+            }
+
+            try {
+                val payload = "$reqDeviceId:$reqTimestamp".toByteArray(Charsets.UTF_8)
+                val signatureBytes = hexStringToByteArray(reqSignature)
+                val pubKeyBytes = hexStringToByteArray(reqDeviceId)
+
+                val x509Prefix = byteArrayOf(
+                    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00
+                )
+                val x509Bytes = x509Prefix + pubKeyBytes
+                val spec = java.security.spec.X509EncodedKeySpec(x509Bytes)
+                val factory = java.security.KeyFactory.getInstance("Ed25519")
+                val publicKey = factory.generatePublic(spec)
+
+                val verifier = java.security.Signature.getInstance("Ed25519")
+                verifier.initVerify(publicKey)
+                verifier.update(payload)
+                if (!verifier.verify(signatureBytes)) {
+                    return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Invalid signature")
+                }
+            } catch (e: Exception) {
+                return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Invalid signature format")
+            }
         }
 
         try {
@@ -183,5 +235,16 @@ class NativeServer(
     private val Status_201_CREATED = object : Response.IStatus {
         override fun getDescription(): String = "201 Created"
         override fun getRequestStatus(): Int = 201
+    }
+
+    private fun hexStringToByteArray(s: String): ByteArray {
+        val len = s.length
+        val data = ByteArray(len / 2)
+        var i = 0
+        while (i < len) {
+            data[i / 2] = ((Character.digit(s[i], 16) shl 4) + Character.digit(s[i + 1], 16)).toByte()
+            i += 2
+        }
+        return data
     }
 }

@@ -9,13 +9,13 @@ class ExpoNativeServerModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ExpoNativeServer")
 
-    Function("startServer") { port: Int, deviceId: String, deviceName: String, sandboxPath: String ->
+    Function("startServer") { port: Int, deviceId: String, deviceName: String, sandboxPath: String, pairedDevices: Array<String> ->
       try {
         if (server != null) {
           server?.stop()
         }
         val context = appContext.reactContext ?: throw Exception("React context is null")
-        server = NativeServer(context, port, deviceId, deviceName, sandboxPath)
+        server = NativeServer(context, port, deviceId, deviceName, sandboxPath, pairedDevices.toList())
         server?.start(5000, false)
         true
       } catch (e: Exception) {
@@ -26,6 +26,10 @@ class ExpoNativeServerModule : Module() {
     Function("stopServer") {
       server?.stop()
       server = null
+    }
+
+    Function("updatePairedDevices") { devices: Array<String> ->
+      server?.updatePairedDevices(devices.toList())
     }
   }
 }

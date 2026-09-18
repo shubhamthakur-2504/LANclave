@@ -1,6 +1,7 @@
 import ExpoNativeServerModule from "../../modules/expo-native-server/src/ExpoNativeServerModule";
 import { getOrCreateDeviceIdentity } from "./identity";
 import { getSettings } from "./settings";
+import { getPairedPeers } from "./pairing";
 import { Platform } from "react-native";
 
 let serverDesiredOn = false; // tracks user intent: should the server be running?
@@ -15,8 +16,11 @@ function startWatchdog(): void {
     try {
       const identity = await getOrCreateDeviceIdentity();
       const settings = await getSettings();
+      const peers = await getPairedPeers();
+      const pairedDevices = peers.map(p => p.id);
+      
       if (Platform.OS === 'android') {
-        ExpoNativeServerModule.startServer(PORT, identity.deviceId, settings.displayName, settings.sandboxPath);
+        ExpoNativeServerModule.startServer(PORT, identity.deviceId, settings.displayName, settings.sandboxPath, pairedDevices);
       }
     } catch (err: unknown) {
       console.warn("[watchdog] Restart failed:", err);
@@ -41,9 +45,11 @@ export async function startServer(): Promise<void> {
 
   const identity = await getOrCreateDeviceIdentity();
   const settings = await getSettings();
+  const peers = await getPairedPeers();
+  const pairedDevices = peers.map(p => p.id);
 
   try {
-    ExpoNativeServerModule.startServer(PORT, identity.deviceId, settings.displayName, settings.sandboxPath);
+    ExpoNativeServerModule.startServer(PORT, identity.deviceId, settings.displayName, settings.sandboxPath, pairedDevices);
     console.log(`[server] Native Server started on port ${PORT}`);
   } catch (err: unknown) {
     console.error("[server] Failed to start native server:", err);
@@ -62,4 +68,12 @@ export function stopServer(): void {
 
 export function isServerRunning(): boolean {
   return serverDesiredOn;
+}
+
+export async function updateNativeServerPairedDevices(): Promise<void> {
+  if (Platform.OS === 'android' && serverDesiredOn) {
+    const peers = await getPairedPeers();
+    const pairedDevices = peers.map(p => p.id);
+    ExpoNativeServerModule.updatePairedDevices(pairedDevices);
+  }
 }
