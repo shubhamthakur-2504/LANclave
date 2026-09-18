@@ -24,7 +24,7 @@ class NativeServer(
         val uri = session.uri
         val method = session.method
 
-        if (method != Method.GET) {
+        if (method != Method.GET && method != Method.PUT) {
             return newFixedLengthResponse(Response.Status.METHOD_NOT_ALLOWED, MIME_PLAINTEXT, "Method Not Allowed")
         }
 
@@ -75,6 +75,10 @@ class NativeServer(
                         return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Bad Request")
                     }
 
+                    if (method == Method.PUT) {
+                        return handlePutFile(session, pathParam)
+                    }
+
                     if (isContentUri) {
                         val treeUri = Uri.parse(rawSandboxPath)
                         val documentFile = DocumentFile.fromTreeUri(context, treeUri)
@@ -108,5 +112,76 @@ class NativeServer(
         } catch (e: Exception) {
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, e.message ?: "Unknown error")
         }
+    }
+
+    private fun handlePutFile(session: IHTTPSession, pathParam: String): Response {
+        try {
+            val contentLengthStr = session.headers["content-length"]
+                ?: return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing Content-Length")
+            val contentLength = contentLengthStr.toLongOrNull()
+                ?: return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Invalid Content-Length")
+
+            val outputStream: java.io.OutputStream
+            val fileToDeleteOnError: File?
+            val documentToDeleteOnError: DocumentFile?
+
+            if (isContentUri) {
+                val treeUri = Uri.parse(rawSandboxPath)
+                val documentFile = DocumentFile.fromTreeUri(context, treeUri)
+                val existingFile = documentFile?.findFile(pathParam)
+                if (existingFile != null && existingFile.exists()) {
+                    return newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "File already exists")
+                }
+                val newFile = documentFile?.createFile("application/octet-stream", pathParam)
+                    ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Could not create file")
+                
+                documentToDeleteOnError = newFile
+                fileToDeleteOnError = null
+                outputStream = context.contentResolver.openOutputStream(newFile.uri)
+                    ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Could not open output stream")
+            } else {
+                val file = File(sandboxPath, pathParam)
+                if (file.exists()) {
+                    return newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "File already exists")
+                }
+                
+                documentToDeleteOnError = null
+                fileToDeleteOnError = file
+                outputStream = java.io.FileOutputStream(file)
+            }
+
+            try {
+                val inputStream = session.inputStream
+                val buffer = ByteArray(64 * 1024)
+                var bytesReadTotal: Long = 0
+                while (bytesReadTotal < contentLength) {
+                    val bytesToRead = minOf(buffer.size.toLong(), contentLength - bytesReadTotal).toInt()
+                    val read = inputStream.read(buffer, 0, bytesToRead)
+                    if (read == -1) break
+                    outputStream.write(buffer, 0, read)
+                    bytesReadTotal += read
+                }
+                outputStream.flush()
+                outputStream.close()
+
+                if (bytesReadTotal < contentLength) {
+                    throw Exception("Short read: expected $contentLength, got $bytesReadTotal")
+                }
+                // Use custom CREATED status instead of casting to existing Response.Status since NanoHTTPD doesn't have 201 CREATED
+                return newFixedLengthResponse(Status_201_CREATED, MIME_PLAINTEXT, "Created")
+            } catch (e: Exception) {
+                outputStream.close()
+                fileToDeleteOnError?.delete()
+                documentToDeleteOnError?.delete()
+                throw e
+            }
+        } catch (e: Exception) {
+            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, e.message ?: "Unknown error")
+        }
+    }
+    
+    private val Status_201_CREATED = object : Response.IStatus {
+        override fun getDescription(): String = "201 Created"
+        override fun getRequestStatus(): Int = 201
     }
 }

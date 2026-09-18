@@ -8,6 +8,7 @@
  * - Extracts 6-digit decimal fingerprint for visual human verification.
  */
 
+import { Buffer } from "buffer";
 import { sha256 } from "@noble/hashes/sha2.js";
 import * as SecureStore from "expo-secure-store";
 import { getOrCreateDeviceIdentity } from "@/services/identity";
@@ -22,23 +23,18 @@ export interface PairedPeerRecord {
   pairedAt: string;
 }
 
-/** Convert hex string to Uint8Array bytes */
-function hexToBytes(hex: string): Uint8Array {
-  const cleanHex = hex.replace(/[^0-9a-fA-F]/g, "");
-  const bytes = new Uint8Array(cleanHex.length / 2);
-  for (let i = 0; i < cleanHex.length; i += 2) {
-    bytes[i / 2] = parseInt(cleanHex.slice(i, i + 2), 16);
-  }
-  return bytes;
+/** Convert a base64-encoded public key (device id) to bytes. */
+function b64ToBytes(b64: string): Uint8Array {
+  return new Uint8Array(Buffer.from(b64, "base64"));
 }
 
 /**
- * Compute the 6-digit numeric pairing fingerprint from two public key hex strings.
- * 100% identical to Rust `compute_pairing_fingerprint`.
+ * Compute the 6-digit numeric pairing fingerprint from two base64-encoded
+ * device ids. 100% identical to Rust `compute_pairing_fingerprint`.
  */
-export function computeFingerprint(pubKeyHexA: string, pubKeyHexB: string): string {
-  const bytesA = hexToBytes(pubKeyHexA);
-  const bytesB = hexToBytes(pubKeyHexB);
+export function computeFingerprint(deviceIdA: string, deviceIdB: string): string {
+  const bytesA = b64ToBytes(deviceIdA);
+  const bytesB = b64ToBytes(deviceIdB);
 
   // Lexicographical comparison
   let aIsSmaller = false;
@@ -69,7 +65,7 @@ export function computeFingerprint(pubKeyHexA: string, pubKeyHexB: string): stri
 /** Calculate the pairing fingerprint between the local device and a remote peer's deviceId */
 export async function getPairingFingerprintForPeer(remoteDeviceId: string): Promise<string> {
   const localIdentity = await getOrCreateDeviceIdentity();
-  return computeFingerprint(localIdentity.publicKey, remoteDeviceId);
+  return computeFingerprint(localIdentity.deviceId, remoteDeviceId);
 }
 
 /** Get all paired peers saved in SecureStore */

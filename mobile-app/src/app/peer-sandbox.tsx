@@ -16,6 +16,8 @@ import { useRemotePeer } from "@/hooks/use-remote-peer";
 import { useSandboxFiles } from "@/hooks/use-sandbox-files";
 import { useTransfers } from "@/contexts/TransferContext";
 
+import * as DocumentPicker from "expo-document-picker";
+
 export default function PeerSandboxScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ ip: string; port: string; name: string }>();
@@ -25,7 +27,7 @@ export default function PeerSandboxScreen() {
   const name = params.name ?? "Peer";
 
   const { refreshFiles } = useSandboxFiles();
-  const { transfers, startDownload } = useTransfers();
+  const { transfers, startDownload, startUpload } = useTransfers();
 
   const {
     remoteFiles,
@@ -35,6 +37,18 @@ export default function PeerSandboxScreen() {
   } = useRemotePeer(
     ip ? { ip, port, name } : null,
   );
+
+  const handleSendFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: false });
+      if (result.canceled || result.assets.length === 0) return;
+      
+      const file = result.assets[0];
+      await startUpload({ ip, port, name }, file.uri, file.name, file.size || 0, fetchPeerFiles);
+    } catch (err) {
+      console.warn("Failed to pick or send file:", err);
+    }
+  };
 
   return (
     <View style={styles.root}>
@@ -50,15 +64,23 @@ export default function PeerSandboxScreen() {
             >
               <Text style={styles.backText}>‹ Back</Text>
             </Pressable>
-            <Pressable
-              style={styles.refreshBtn}
-              onPress={() => fetchPeerFiles()}
-              disabled={isFetching}
-            >
-              <Text style={styles.refreshText}>
-                {isFetching ? "Syncing…" : "🔄 Sync"}
-              </Text>
-            </Pressable>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <Pressable
+                style={styles.refreshBtn}
+                onPress={handleSendFile}
+              >
+                <Text style={styles.refreshText}>📤 Send</Text>
+              </Pressable>
+              <Pressable
+                style={styles.refreshBtn}
+                onPress={() => fetchPeerFiles()}
+                disabled={isFetching}
+              >
+                <Text style={styles.refreshText}>
+                  {isFetching ? "Syncing…" : "🔄 Sync"}
+                </Text>
+              </Pressable>
+            </View>
           </View>
 
           <Text style={styles.title}>{name}'s Sandbox</Text>

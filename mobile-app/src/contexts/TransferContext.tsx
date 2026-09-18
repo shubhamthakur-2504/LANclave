@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
 import { File, Paths, Directory } from 'expo-file-system';
-import type { DownloadTask } from 'expo-file-system';
+import type { DownloadTask, UploadTask } from 'expo-file-system';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 import { getAuthHeaders } from '@/services/identity';
 import { getSettings } from '@/services/settings';
@@ -29,6 +29,7 @@ export interface SelectedPeer {
 interface TransferContextState {
   transfers: Transfer[];
   startDownload: (peer: SelectedPeer, fileName: string, fileSize: number, onComplete?: () => void) => Promise<void>;
+  startUpload: (peer: SelectedPeer, localUri: string, remoteFileName: string, fileSize: number, onComplete?: () => void) => Promise<void>;
   cancelTransfer: (id: string) => Promise<void>;
 }
 
@@ -43,8 +44,8 @@ export const useTransfers = () => {
 export function TransferProvider({ children }: { children: React.ReactNode }) {
   const [transfers, setTransfers] = useState<Transfer[]>([]);
 
-  // Track Expo FileSystem DownloadTasks
-  const tasksRef = useRef<Record<string, DownloadTask>>({});
+  // Track Expo FileSystem DownloadTasks and UploadTasks
+  const tasksRef = useRef<Record<string, DownloadTask | UploadTask>>({});
   // Track speed calculations
   const speedTrackerRef = useRef<Record<string, { lastBytes: number; lastTime: number }>>({});
 
@@ -153,6 +154,94 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const startUpload = useCallback(async (
+    peer: SelectedPeer, 
+    localUri: string,
+    remoteFileName: string, 
+    fileSize: number,
+    onComplete?: () => void
+  ) => {
+    const transferId = `${peer.ip}-up-${remoteFileName}`;
+    
+    if (tasksRef.current[transferId]) return;
+
+    setTransfers(prev => {
+      const filtered = prev.filter(t => t.id !== transferId);
+      return [{
+        id: transferId,
+        fileName: remoteFileName,
+        fileSize,
+        peerName: peer.name,
+        direction: 'upload',
+        progress: 0,
+        status: 'pending',
+        speed: 0,
+        startedAt: new Date().toISOString(),
+      }, ...filtered];
+    });
+
+    try {
+      const encodedPath = remoteFileName.split('/').map(encodeURIComponent).join('/');
+      const url = `http://${peer.ip}:${peer.port}/files/${encodedPath}`;
+      const headers = await getAuthHeaders();
+
+      setTransfers(prev => prev.map(t => t.id === transferId ? { ...t, status: 'in_progress' } : t));
+
+      const fileToUpload = new File(localUri);
+      const task = fileToUpload.createUploadTask(url, {
+        headers,
+        httpMethod: 'PUT',
+        uploadType: 0, // UploadType.BINARY_CONTENT from expo-file-system is usually 0
+        onProgress: ({ totalBytesSent, totalBytesExpectedToSend }: any) => {
+          const now = Date.now();
+          const tracker = speedTrackerRef.current[transferId];
+          let speed = 0;
+          
+          if (tracker) {
+            const timeDiff = (now - tracker.lastTime) / 1000;
+            if (timeDiff > 0) {
+              speed = (totalBytesSent - tracker.lastBytes) / timeDiff;
+            }
+          } else {
+            speedTrackerRef.current[transferId] = { lastBytes: totalBytesSent, lastTime: now };
+          }
+          
+          if (tracker && now - tracker.lastTime > 500) {
+            speedTrackerRef.current[transferId] = { lastBytes: totalBytesSent, lastTime: now };
+          }
+
+          setTransfers(prev => prev.map(t => 
+            t.id === transferId 
+              ? { ...t, progress: totalBytesSent, fileSize: totalBytesExpectedToSend > 0 ? totalBytesExpectedToSend : t.fileSize, speed: speed > 0 ? speed : t.speed } 
+              : t
+          ));
+        }
+      });
+
+      tasksRef.current[transferId] = task;
+      await task.uploadAsync();
+
+      setTransfers(prev => prev.map(t => 
+        t.id === transferId 
+          ? { ...t, status: 'completed', speed: 0, progress: t.fileSize } 
+          : t
+      ));
+      
+      delete tasksRef.current[transferId];
+      delete speedTrackerRef.current[transferId];
+      
+      onComplete?.();
+
+    } catch (err) {
+      console.warn('Upload failed:', err);
+      setTransfers(prev => prev.map(t => 
+        t.id === transferId ? { ...t, status: 'failed', speed: 0 } : t
+      ));
+      delete tasksRef.current[transferId];
+      delete speedTrackerRef.current[transferId];
+    }
+  }, []);
+
   const cancelTransfer = useCallback(async (id: string) => {
     const task = tasksRef.current[id];
     if (task) {
@@ -171,7 +260,7 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <TransferContext.Provider value={{ transfers, startDownload, cancelTransfer }}>
+    <TransferContext.Provider value={{ transfers, startDownload, startUpload, cancelTransfer }}>
       {children}
     </TransferContext.Provider>
   );
