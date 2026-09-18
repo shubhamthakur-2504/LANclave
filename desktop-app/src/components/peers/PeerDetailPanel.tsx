@@ -1,4 +1,6 @@
 import type { PeerInfo } from "../../types";
+import { pickFile } from "../../api";
+import { useTransfers } from "../../contexts/TransferContext";
 
 interface PeerDetailPanelProps {
   peer: PeerInfo;
@@ -16,6 +18,24 @@ export default function PeerDetailPanel({
   onOpenConnection,
   onBrowseFiles,
 }: PeerDetailPanelProps) {
+  const { startUpload } = useTransfers();
+
+  const handleSendFile = async () => {
+    try {
+      const relPath = await pickFile();
+      if (!relPath) return; // User cancelled or selected file outside sandbox
+      
+      // In a real app, we might want to get the file size from the backend before starting
+      // but for now we'll pass 0 and let the backend update it.
+      // The remote path is just the filename for now (basename of relative path).
+      const fileName = relPath.split('/').pop() || relPath;
+      await startUpload(peer, relPath, fileName, 0);
+    } catch (err) {
+      console.error("Failed to pick or send file:", err);
+      // To-do: show toast error if user picked outside sandbox
+    }
+  };
+
   return (
     <div className="flex h-full flex-col">
       {/* Profile header */}
@@ -55,6 +75,7 @@ export default function PeerDetailPanel({
           Browse Files
         </button>
         <button
+          onClick={handleSendFile}
           disabled={!peer.paired}
           className="flex-1 rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800 disabled:opacity-40"
         >

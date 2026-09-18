@@ -13,6 +13,7 @@ interface TransferProgressEvent {
 interface TransferContextState {
   transfers: Transfer[];
   startDownload: (peer: PeerInfo, file: FileEntry) => Promise<void>;
+  startUpload: (peer: PeerInfo, localRelativePath: string, fileName: string, fileSize?: number) => Promise<void>;
   cancelTransfer: (id: string) => Promise<void>;
 }
 
@@ -192,8 +193,57 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     }
   }, []);
 
+  const startUpload = useCallback(async (peer: PeerInfo, localRelativePath: string, fileName: string, fileSize: number = 0) => {
+    try {
+      const tempId = Math.random().toString();
+      
+      const newTransfer: Transfer = {
+        id: tempId,
+        fileName,
+        fileSize,
+        peerName: peer.device_name || peer.device_id,
+        direction: "upload",
+        progress: 0,
+        status: "pending",
+        speed: 0,
+        startedAt: new Date().toISOString(),
+      };
+      
+      setTransfers((prev) => [newTransfer, ...prev]);
+
+      const transferId = await invoke<string>("push_file", {
+        peerAddr: peer.addr,
+        localRelativePath,
+        remotePath: fileName,
+      });
+
+      const earlyEvent = earlyEventsRef.current[transferId];
+      if (earlyEvent) {
+        delete earlyEventsRef.current[transferId];
+      }
+
+      setTransfers((prev) => 
+        prev.map((t) => {
+          if (t.id === tempId) {
+            return {
+              ...t,
+              id: transferId,
+              status: earlyEvent ? earlyEvent.status : "in_progress",
+              progress: earlyEvent ? earlyEvent.bytes : t.progress,
+              fileSize: earlyEvent && earlyEvent.total > 0 ? earlyEvent.total : t.fileSize,
+            };
+          }
+          return t;
+        })
+      );
+
+    } catch (err) {
+      console.error("Failed to start upload:", err);
+    }
+  }, []);
+
   return (
-    <TransferContext.Provider value={{ transfers, startDownload, cancelTransfer }}>
+    <TransferContext.Provider value={{ transfers, startDownload, startUpload, cancelTransfer }}>
       {children}
     </TransferContext.Provider>
   );

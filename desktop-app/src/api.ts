@@ -36,16 +36,24 @@ export async function pullFile(
   peerAddr: string,
   remotePath: string,
   localFilename: string,
-): Promise<void> {
-  await invoke("pull_file", { peerAddr, remotePath, localFilename });
+): Promise<string> {
+  return await invoke("pull_file", { peerAddr, remotePath, localFilename });
 }
 
 export async function pushFile(
   peerAddr: string,
   localRelativePath: string,
   remotePath: string,
-): Promise<void> {
-  await invoke("push_file", { peerAddr, localRelativePath, remotePath });
+): Promise<string> {
+  return await invoke("push_file", { peerAddr, localRelativePath, remotePath });
+}
+
+export async function cancelTransfer(transferId: string): Promise<void> {
+  await invoke("cancel_transfer", { transferId });
+}
+
+export async function pickFile(): Promise<string | null> {
+  return await invoke("pick_file");
 }
 
 // ── Local sandbox (legacy) ─────────────────────────────────────────
