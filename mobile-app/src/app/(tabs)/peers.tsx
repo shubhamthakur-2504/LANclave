@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   FlatList,
   Pressable,
@@ -11,55 +11,57 @@ import {
 } from "react-native";
 
 import { C, short } from "@/constants/colors";
-import { getPairedPeers, PairedPeerRecord } from "@/services/pairing";
+import {
+  getPeerPresence,
+  PeerPresence,
+  rescanPeer,
+  subscribePresence,
+} from "@/services/presence";
 
-interface PairedPeerStatus extends PairedPeerRecord {
-  isOnline: boolean;
-}
+type PairedPeerStatus = PeerPresence;
+
+/**
+ * Local re-read interval. Reads in-memory presence only (no network) so the
+ * list notices a TTL expiring, which by nature emits no event.
+ */
+const LOCAL_REFRESH_MS = 5_000;
 
 export default function PairedPeersScreen() {
   const router = useRouter();
   const [peersWithStatus, setPeersWithStatus] = useState<PairedPeerStatus[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  // Track consecutive failures per peer so we don't flicker on a single missed ping
-  const failCountRef = useRef<Record<string, number>>({});
 
-  const checkPeersHealth = useCallback(async () => {
-    setIsRefreshing(true);
-    const saved = await getPairedPeers();
-
-    const checked = await Promise.all(
-      saved.map(async (p): Promise<PairedPeerStatus> => {
-        try {
-          const res = await fetch(`http://${p.ip}:${p.port}/health`, {
-            method: "GET",
-            signal: AbortSignal.timeout(3000),
-          });
-          if (res.ok) {
-            failCountRef.current[p.id] = 0;
-            return { ...p, isOnline: true };
-          }
-        } catch {
-          // fall through
-        }
-        // Increment failure counter — only go offline after 2 consecutive misses
-        failCountRef.current[p.id] = (failCountRef.current[p.id] ?? 0) + 1;
-        const isOnline = failCountRef.current[p.id] < 2;
-        return { ...p, isOnline };
-      }),
-    );
-
-    setPeersWithStatus(checked);
-    setIsRefreshing(false);
+  const load = useCallback(async () => {
+    setPeersWithStatus(await getPeerPresence());
   }, []);
 
+  // Presence is maintained by the background heartbeat. This screen only
+  // reads it -- it no longer sends any requests of its own.
   useFocusEffect(
     useCallback(() => {
-      checkPeersHealth();
-      const interval = setInterval(checkPeersHealth, 15_000);
-      return () => clearInterval(interval);
-    }, [checkPeersHealth]),
+      load();
+      const unsubscribe = subscribePresence(() => {
+        load();
+      });
+      const timer = setInterval(load, LOCAL_REFRESH_MS);
+      return () => {
+        unsubscribe();
+        clearInterval(timer);
+      };
+    }, [load]),
   );
+
+  /** Targeted re-find of offline peers only -- never a subnet sweep. */
+  const refreshOffline = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const offline = peersWithStatus.filter((p) => !p.isOnline);
+      await Promise.all(offline.map((p) => rescanPeer(p.id)));
+      await load();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [peersWithStatus, load]);
 
   const handleOpenSandbox = (peer: PairedPeerStatus) => {
     router.push({
@@ -83,7 +85,7 @@ export default function PairedPeersScreen() {
             <Text style={styles.title}>Paired Peers</Text>
             <Pressable
               style={styles.refreshBtn}
-              onPress={checkPeersHealth}
+              onPress={refreshOffline}
               disabled={isRefreshing}
             >
               <Text style={styles.refreshText}>
