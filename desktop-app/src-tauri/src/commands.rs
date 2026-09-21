@@ -84,21 +84,13 @@ pub async fn start_server(
     app: tauri::AppHandle,
     state: State<'_, CliState>,
 ) -> Result<(), String> {
-    // Drop the read guard BEFORE any .await to satisfy Send bounds.
-    let cloned = state
-        .device_store
-        .read()
-        .map_err(|e| e.to_string())?
-        .clone();
-    // Guard is dropped here — safe to await below.
-
     let app_state = Arc::new(AppState {
         settings: state.settings.clone(),
         device_id: state.device_id.clone(),
         identity_key: state.identity_key.clone(),
         app_handle: Some(app),
         auth: Arc::new(AuthState {
-            store: std::sync::RwLock::new(cloned),
+            store: state.device_store.clone(),
             enabled: true,
         }),
     });

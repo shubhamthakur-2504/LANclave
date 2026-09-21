@@ -139,10 +139,16 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, Stri
         .timeout(Duration::from_millis(1500))
         .build()
         .unwrap_or_default();
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(20));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(40));
+
+    let mut subnets_to_scan = std::collections::HashSet::new();
 
     if let Ok(gateway) = default_net::get_default_gateway() {
         let gw_ip = gateway.ip_addr.to_string();
+        if let std::net::IpAddr::V4(gw_v4) = gateway.ip_addr {
+            let oct = gw_v4.octets();
+            subnets_to_scan.insert([oct[0], oct[1], oct[2]]);
+        }
         let client_clone = client.clone();
         let sem_clone = semaphore.clone();
         probe_tasks.push(tokio::spawn(async move {
@@ -150,22 +156,25 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, Stri
         }));
     }
 
-    if let Ok(interface) = default_net::get_default_interface() {
-        if let Some(ipv4) = interface.ipv4.first() {
+    let interfaces = default_net::get_interfaces();
+    for interface in interfaces {
+        for ipv4 in interface.ipv4 {
             let ip: Ipv4Addr = ipv4.addr;
-            if ipv4.prefix_len == 24 {
-                let octets = ip.octets();
-                for i in 1..=254 {
-                    let test_ip = format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], i);
-                    if test_ip != ip.to_string() {
-                        let client_clone = client.clone();
-                        let sem_clone = semaphore.clone();
-                        probe_tasks.push(tokio::spawn(async move {
-                            probe_ip(client_clone, &test_ip, sem_clone).await
-                        }));
-                    }
-                }
+            if !ip.is_loopback() && !ip.is_link_local() {
+                let oct = ip.octets();
+                subnets_to_scan.insert([oct[0], oct[1], oct[2]]);
             }
+        }
+    }
+
+    for [o0, o1, o2] in subnets_to_scan {
+        for i in 1..=254 {
+            let test_ip = format!("{o0}.{o1}.{o2}.{i}");
+            let client_clone = client.clone();
+            let sem_clone = semaphore.clone();
+            probe_tasks.push(tokio::spawn(async move {
+                probe_ip(client_clone, &test_ip, sem_clone).await
+            }));
         }
     }
 

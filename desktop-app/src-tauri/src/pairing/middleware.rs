@@ -17,7 +17,7 @@ use std::time::SystemTime;
 /// **write-rare** (only when a new device is paired).  `RwLock` allows
 /// multiple concurrent readers.
 pub struct AuthState {
-    pub store: RwLock<DeviceStore>,
+    pub store: std::sync::Arc<RwLock<DeviceStore>>,
     /// Set to `false` to skip all auth checks (unit tests).
     pub enabled: bool,
 }
@@ -25,7 +25,7 @@ pub struct AuthState {
 impl AuthState {
     pub fn new() -> Self {
         Self {
-            store: RwLock::new(DeviceStore::new()),
+            store: std::sync::Arc::new(RwLock::new(DeviceStore::new())),
             enabled: true,
         }
     }
@@ -33,7 +33,7 @@ impl AuthState {
     /// Create an auth‑disabled state for testing.
     pub fn disabled() -> Self {
         Self {
-            store: RwLock::new(DeviceStore::new()),
+            store: std::sync::Arc::new(RwLock::new(DeviceStore::new())),
             enabled: false,
         }
     }

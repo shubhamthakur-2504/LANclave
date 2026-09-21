@@ -198,19 +198,27 @@ export function usePeerDiscovery(): DiscoveredPeer[] {
         const ipInfo = await Network.getIpAddressAsync();
         const myIp = ipInfo; // e.g. "10.123.104.69" (laptop) or "192.168.43.1" (phone)
 
-        if (!myIp || myIp === "0.0.0.0" || myIp === "127.0.0.1") return;
+        let targetIps: string[] = [];
+        if (myIp && myIp !== "0.0.0.0" && myIp !== "127.0.0.1") {
+          targetIps.push(myIp);
+        }
+        // If the phone is hosting a hotspot, its Wi-Fi STA IP might be 0.0.0.0 or cellular,
+        // while the AP interface for connected clients is 192.168.43.1
+        if (!targetIps.some((ip) => ip.startsWith("192.168.43."))) {
+          targetIps.push("192.168.43.1");
+        }
 
-        console.log(`[lanclave/subnet] Scanning subnet: ${subnetPrefix(myIp)}0/24`);
+        for (const ip of targetIps) {
+          const found = await probeSubnet(
+            ip,
+            myDeviceIdRef.current,
+            abortController.signal,
+          );
 
-        const found = await probeSubnet(
-          myIp,
-          myDeviceIdRef.current,
-          abortController.signal,
-        );
-
-        if (!isCancelled) {
-          for (const peer of found) {
-            addPeer(peer);
+          if (!isCancelled) {
+            for (const peer of found) {
+              addPeer(peer);
+            }
           }
         }
       } catch (err) {

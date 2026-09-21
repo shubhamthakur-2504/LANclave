@@ -68,10 +68,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refreshServerStatus();
+    api
+      .isServerRunning()
+      .then(async (running) => {
+        if (!running) {
+          try {
+            await api.startServer();
+            setServerRunning(true);
+          } catch {
+            // ignore
+          }
+        } else {
+          setServerRunning(true);
+        }
+      })
+      .catch(() => {});
+
     refreshPeers();
     refreshFiles();
-  }, [refreshServerStatus, refreshPeers, refreshFiles]);
+  }, [refreshPeers, refreshFiles]);
 
   useEffect(() => {
     const id = setInterval(() => {

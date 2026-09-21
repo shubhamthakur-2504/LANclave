@@ -58,8 +58,8 @@ class NativeServer(
 
             try {
                 val payload = "$reqDeviceId:$reqTimestamp".toByteArray(Charsets.UTF_8)
-                val signatureBytes = hexStringToByteArray(reqSignature)
-                val pubKeyBytes = hexStringToByteArray(reqDeviceId)
+                val signatureBytes = android.util.Base64.decode(reqSignature, android.util.Base64.DEFAULT)
+                val pubKeyBytes = android.util.Base64.decode(reqDeviceId, android.util.Base64.DEFAULT)
 
                 val x509Prefix = byteArrayOf(
                     0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00

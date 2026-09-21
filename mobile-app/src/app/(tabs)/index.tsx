@@ -21,7 +21,12 @@ export default function MySandboxScreen() {
   const [serverVisible, setServerVisible] = useState(false);
 
   useEffect(() => {
-    setServerVisible(isServerRunning());
+    startServer()
+      .then(() => setServerVisible(true))
+      .catch((e) => {
+        console.warn("[auto-start] Server start error:", e);
+        setServerVisible(isServerRunning());
+      });
   }, []);
 
   const toggleServer = async (val: boolean) => {
