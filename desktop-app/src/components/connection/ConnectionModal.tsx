@@ -158,7 +158,7 @@ export default function ConnectionModal({
             <>
               {initialAddr ? (
                 <>
-                  <div className="mx-auto mt-5 flex h-16 w-16 items-center justify-center rounded-full bg-action/20 text-xl font-bold text-action">
+                  <div className="mx-auto mt-5 flex h-16 w-16 items-center justify-center rounded-full bg-surface-active text-xl font-bold text-content-muted">
                     {initialAddr[0]?.toUpperCase() ?? "?"}
                   </div>
                   <p className="mt-3 text-sm text-content-muted">{initialAddr}</p>

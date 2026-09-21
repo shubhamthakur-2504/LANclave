@@ -58,7 +58,7 @@ export function SettingsPage() {
   return (
     <div className="flex-1 p-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-action mb-2">Settings</h1>
+        <h1 className="text-3xl font-bold text-content mb-2">Settings</h1>
         <p className="text-content-muted">Configure your LANclave preferences</p>
       </div>
 

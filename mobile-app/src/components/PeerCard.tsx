@@ -1,5 +1,9 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import Animated, { FadeIn, FadeOut, Layout } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeOut,
+  LinearTransition,
+} from "react-native-reanimated";
 import { DiscoveredPeer } from "@/hooks/use-peer-discovery";
 import { C, idColor, short } from "@/constants/colors";
 import { Icon } from "@/components/Icon";
@@ -33,7 +37,7 @@ export function PeerCard({
     <Animated.View
       entering={FadeIn.duration(220)}
       exiting={FadeOut.duration(160)}
-      layout={Layout.duration(200)}
+      layout={LinearTransition.duration(200)}
       style={[styles.card, isSelected && styles.cardSelected]}
     >
       {/* Avatar: name initial where there is one, device glyph otherwise, on a

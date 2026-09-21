@@ -40,7 +40,7 @@ function PeerActivity({ transfers }: { transfers: Transfer[] }) {
 
   return (
     <div className="mt-1.5">
-      <div className="flex items-center justify-between text-[11px] text-action">
+      <div className="flex items-center justify-between text-[11px] text-content-muted">
         <span>
           {transfers.length} transfer{transfers.length > 1 ? "s" : ""}
         </span>
@@ -194,7 +194,7 @@ function SectionHeading({
     <div className="flex items-center gap-2 border-b border-border bg-surface px-5 py-2">
       <span
         className={`text-[10px] font-semibold uppercase tracking-widest ${
-          tone === "ok" ? "text-ok" : "text-action"
+          tone === "ok" ? "text-ok" : "text-content-faint"
         }`}
       >
         {label}
