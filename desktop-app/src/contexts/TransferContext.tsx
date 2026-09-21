@@ -8,6 +8,8 @@ interface TransferProgressEvent {
   bytes_transferred: number;
   total_bytes: number;
   status: string;
+  /** Present only on failure. */
+  message?: string;
 }
 
 interface TransferContextState {
@@ -15,6 +17,8 @@ interface TransferContextState {
   startDownload: (peer: PeerInfo, file: FileEntry) => Promise<void>;
   startUpload: (peer: PeerInfo, localRelativePath: string, fileName: string, fileSize?: number) => Promise<void>;
   cancelTransfer: (id: string) => Promise<void>;
+  /** Re-run a failed transfer using the details recorded when it started. */
+  retryTransfer: (id: string) => Promise<void>;
 }
 
 const TransferContext = createContext<TransferContextState | null>(null);
@@ -106,7 +110,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     };
 
     const handleFailed = (event: { payload: TransferProgressEvent }) => {
-      const { id } = event.payload;
+      const { id, message } = event.payload;
       setTransfers((prev) => {
         const exists = prev.some((t) => t.id === id);
         if (!exists) {
@@ -114,7 +118,9 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
           return prev;
         }
         return prev.map((t) => 
-          t.id === id ? { ...t, status: "failed", speed: 0 } : t
+          t.id === id
+            ? { ...t, status: "failed", speed: 0, error: message }
+            : t
         );
       });
       delete speedTrackerRef.current[id];
@@ -140,6 +146,9 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         fileSize: file.size,
         peerId: peer.device_id,
         peerName: peer.device_name || peer.device_id, // Use device_name if available, else ID
+        peerAddr: peer.addr,
+        remotePath: file.name,
+        localPath: file.name,
         direction: "download",
         progress: 0,
         status: "pending",
@@ -204,6 +213,9 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         fileSize,
         peerId: peer.device_id,
         peerName: peer.device_name || peer.device_id,
+        peerAddr: peer.addr,
+        remotePath: fileName,
+        localPath: localRelativePath,
         direction: "upload",
         progress: 0,
         status: "pending",
@@ -244,8 +256,41 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     }
   }, []);
 
+  /**
+   * Retry replays the original request rather than resuming: there is no
+   * HTTP Range support yet, so a failed transfer starts over.
+   */
+  const retryTransfer = useCallback(
+    async (id: string) => {
+      const t = transfersRef.current.find((x) => x.id === id);
+      if (!t || !t.peerAddr || !t.remotePath) return;
+
+      const peer: PeerInfo = {
+        addr: t.peerAddr,
+        device_id: t.peerId,
+        device_name: t.peerName,
+        paired: true,
+      };
+
+      setTransfers((prev) => prev.filter((x) => x.id !== id));
+
+      if (t.direction === "download") {
+        await startDownload(peer, {
+          name: t.remotePath,
+          size: t.fileSize,
+          is_directory: false,
+        } as FileEntry);
+      } else {
+        await startUpload(peer, t.localPath ?? t.remotePath, t.remotePath, t.fileSize);
+      }
+    },
+    [startDownload, startUpload],
+  );
+
   return (
-    <TransferContext.Provider value={{ transfers, startDownload, startUpload, cancelTransfer }}>
+    <TransferContext.Provider
+      value={{ transfers, startDownload, startUpload, cancelTransfer, retryTransfer }}
+    >
       {children}
     </TransferContext.Provider>
   );

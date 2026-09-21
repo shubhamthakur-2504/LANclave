@@ -40,6 +40,12 @@ export interface Transfer {
   status: TransferStatus;
   speed: number;
   startedAt: string;
+  /** Why it failed, for the failure state. Absent unless status is failed. */
+  error?: string;
+  /** Kept so a failed transfer can be retried without re-picking anything. */
+  peerAddr?: string;
+  remotePath?: string;
+  localPath?: string;
 }
 
 // Connection / pairing

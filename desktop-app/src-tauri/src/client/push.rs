@@ -54,7 +54,8 @@ pub(crate) async fn push_file_with_progress(
                         bytes_transferred,
                         total_bytes,
                         status: "in_progress".to_string(),
-                    });
+                        message: None,
+});
                     last_emit = std::time::Instant::now();
                 }
                 Ok(chunk)
@@ -154,6 +155,7 @@ pub async fn push_file_to_peer_managed(
             bytes_transferred: if res.is_ok() { total_bytes } else { 0 },
             total_bytes,
             status: final_status.to_string(),
+            message: res.as_ref().err().map(|e| e.to_string()),
         }
     );
     

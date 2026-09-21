@@ -37,6 +37,11 @@ export async function rescanPeer(deviceId: string): Promise<boolean> {
   return await invoke("rescan_peer", { deviceId });
 }
 
+/** Reveal a completed download in the OS file manager. */
+export async function revealInSandbox(fileName: string): Promise<void> {
+  await invoke("reveal_in_sandbox", { fileName });
+}
+
 // ── File operations ────────────────────────────────────────────────
 
 export async function listPeerFiles(peerAddr: string): Promise<FileEntry[]> {

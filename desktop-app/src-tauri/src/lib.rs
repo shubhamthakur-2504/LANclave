@@ -75,6 +75,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(CliState {
             app_data_dir,
             sandbox_root,
@@ -110,6 +111,7 @@ pub fn run() {
             commands::discover_peers,
             commands::list_peers,
             commands::rescan_peer,
+            commands::reveal_in_sandbox,
             // File transfer
             commands::list_peer_files,
             commands::pull_file,

@@ -1,4 +1,7 @@
-import { Check, ChevronDown, Download, Loader2, Upload, X } from "lucide-react";
+import { Check, ChevronDown, Download, FolderOpen, Loader2, RotateCcw, Upload, X } from "lucide-react";
+import * as api from "../../api";
+import { useToast } from "../ui/Toast";
+import { humanizeError } from "../../lib/errors";
 import { useState } from "react";
 import type React from "react";
 import type { ReactNode } from "react";
@@ -97,7 +100,8 @@ export default function TransferListPanel({
   activeFilter,
   onFilterChange,
 }: TransferListPanelProps) {
-  const { cancelTransfer } = useTransfers();
+  const { cancelTransfer, retryTransfer } = useTransfers();
+  const toast = useToast();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const filtered =
@@ -170,6 +174,12 @@ export default function TransferListPanel({
                       </span>
                     </div>
                     
+                    {t.status === "failed" && (
+                      <p className="mt-1 truncate text-xs text-danger">
+                        {humanizeError(t.error ?? "", t.peerName).message}
+                      </p>
+                    )}
+
                     {(t.status === "in_progress" || t.status === "pending") && (
                       <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-surface-active">
                         <div
@@ -215,15 +225,41 @@ export default function TransferListPanel({
                           </button>
                         </>
                       )}
-                      {t.status === "completed" && (
-                        <button className="flex w-full items-center justify-center gap-2 rounded-lg bg-action/10 border border-action/20 px-3 py-1.5 text-xs font-medium text-action transition-colors hover:bg-action/20">
-                          Open File Location
+                      {t.status === "completed" && t.direction === "download" && (
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              await api.revealInSandbox(t.localPath ?? t.fileName);
+                            } catch (err) {
+                              toast.error(err);
+                            }
+                          }}
+                          className="flex w-full items-center justify-center gap-2 rounded-lg bg-action/10 border border-action/20 px-3 py-1.5 text-xs font-medium text-action transition-colors hover:bg-action/20"
+                        >
+                          <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
+                          Show in folder
                         </button>
                       )}
                       {t.status === "failed" && (
-                        <button className="flex w-full items-center justify-center gap-2 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active">
-                          Retry
-                        </button>
+                        <div className="w-full">
+                          {t.error && (
+                            <p className="mb-2 text-[11px] leading-snug text-content-muted">
+                              {humanizeError(t.error, t.peerName).hint ?? t.error}
+                            </p>
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              retryTransfer(t.id);
+                            }}
+                            disabled={!t.peerAddr || !t.remotePath}
+                            className="flex w-full items-center justify-center gap-2 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active disabled:opacity-40"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                            Try again
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>

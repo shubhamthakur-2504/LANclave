@@ -13,6 +13,12 @@ pub struct TransferProgressEvent {
     pub bytes_transferred: u64,
     pub total_bytes: u64,
     pub status: String,
+    /// Why a transfer failed. `None` for every other status.
+    ///
+    /// Without this the UI can say a transfer failed but not what went
+    /// wrong, which is the part a user can actually act on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// Stream a file from `peer_addr` into `local_save_path`, reporting progress
@@ -42,7 +48,8 @@ pub(crate) async fn pull_file_to_disk(
             bytes_transferred: 0,
             total_bytes: 0,
             status: "failed".to_string(),
-        });
+            message: None,
+});
         return Err(ClientError::ServerRejected(status.as_u16()));
     }
 
@@ -79,7 +86,8 @@ pub(crate) async fn pull_file_to_disk(
                     bytes_transferred,
                     total_bytes,
                     status: "failed".to_string(),
-                });
+                    message: None,
+});
                 return Err(ClientError::IoError("Transfer cancelled".into()));
             }
             chunk_result = stream.next() => {
@@ -98,18 +106,21 @@ pub(crate) async fn pull_file_to_disk(
                                 bytes_transferred,
                                 total_bytes,
                                 status: "in_progress".to_string(),
+                                message: None,
                             });
                             last_emit = std::time::Instant::now();
                         }
                     }
                     Some(Err(e)) => {
+                        let err = ClientError::HttpError(e.to_string());
                         on_event(&TransferProgressEvent {
                             id: transfer_id.to_string(),
                             bytes_transferred,
                             total_bytes,
                             status: "failed".to_string(),
+                            message: Some(err.to_string()),
                         });
-                        return Err(ClientError::HttpError(e.to_string()));
+                        return Err(err);
                     }
                     None => break,
                 }
@@ -129,6 +140,7 @@ pub(crate) async fn pull_file_to_disk(
         bytes_transferred,
         total_bytes,
         status: "completed".to_string(),
+        message: None,
     });
 
     Ok(())

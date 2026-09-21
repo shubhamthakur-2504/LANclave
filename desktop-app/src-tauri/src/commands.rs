@@ -219,6 +219,30 @@ fn persist_scan_addrs(state: &State<'_, CliState>, peers: &[PeerInfo]) {
     }
 }
 
+/// Reveal a sandbox file in the OS file manager.
+///
+/// Gives a completed transfer somewhere to go (U2.2). The name is resolved
+/// inside the sandbox, so it cannot be used to point at arbitrary paths.
+#[tauri::command]
+pub fn reveal_in_sandbox(
+    app: tauri::AppHandle,
+    state: State<'_, CliState>,
+    file_name: String,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let sandbox_root = {
+        let settings = state.settings.read().map_err(|e| e.to_string())?;
+        PathBuf::from(&settings.sandbox_path)
+    };
+    let path = crate::sandbox::verify_sandboxed_path(&sandbox_root, &file_name)
+        .map_err(|_| "that file is not inside the sandbox".to_string())?;
+
+    app.opener()
+        .reveal_item_in_dir(&path)
+        .map_err(|e| e.to_string())
+}
+
 /// Paired peers with their current presence, read straight from the in-memory
 /// table. Costs nothing: no mDNS, no probes, no subnet sweep.
 #[tauri::command]
