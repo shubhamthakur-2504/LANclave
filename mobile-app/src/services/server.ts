@@ -11,17 +11,24 @@ const PORT = 8377;
 function startWatchdog(): void {
   stopWatchdog();
   watchdogTimer = setInterval(async () => {
-    if (!serverDesiredOn) return; 
+    if (!serverDesiredOn) return;
+    if (Platform.OS !== 'android') return;
 
     try {
+      // Only act when the server has actually died. Previously this called
+      // startServer() unconditionally every 10s, and startServer rebuilt the
+      // server every time, so the listening socket was rebound every 10
+      // seconds for the lifetime of the app.
+      if (ExpoNativeServerModule.isRunning()) return;
+
+      console.warn("[watchdog] Server not running - restarting");
+
       const identity = await getOrCreateDeviceIdentity();
       const settings = await getSettings();
       const peers = await getPairedPeers();
       const pairedDevices = peers.map(p => p.id);
-      
-      if (Platform.OS === 'android') {
-        ExpoNativeServerModule.startServer(PORT, identity.deviceId, settings.displayName, settings.sandboxPath, pairedDevices);
-      }
+
+      ExpoNativeServerModule.startServer(PORT, identity.deviceId, settings.displayName, settings.sandboxPath, pairedDevices);
     } catch (err: unknown) {
       console.warn("[watchdog] Restart failed:", err);
     }
