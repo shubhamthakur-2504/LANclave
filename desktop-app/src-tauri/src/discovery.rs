@@ -122,6 +122,16 @@ pub fn start_mdns_broadcast(device_id: &str, device_name: &str) -> Arc<AtomicBoo
 /// The function blocks for up to `timeout_secs` seconds, collecting
 /// `ServiceResolved` events.  Pass `0` for a single quick scan.
 pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, String)>, String> {
+    // A full sweep takes many seconds. Without this guard a caller firing on a
+    // timer stacked sweeps on top of each other: more overlap meant more socket
+    // contention, which made each sweep slower, which caused still more overlap.
+    // Callers are expected to keep their previous peer list when this returns Err.
+    static SCAN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _scan_guard = match SCAN_LOCK.try_lock() {
+        Ok(g) => g,
+        Err(_) => return Err("a peer scan is already in progress".to_string()),
+    };
+
     let mdns = shared_daemon()?;
 
     let receiver = mdns
@@ -163,10 +173,10 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, Stri
     let mut probe_tasks = Vec::new();
 
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(1500))
+        .timeout(Duration::from_millis(600))
         .build()
         .unwrap_or_default();
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(40));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
 
     let mut subnets_to_scan = std::collections::HashSet::new();
 
