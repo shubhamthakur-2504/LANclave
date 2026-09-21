@@ -72,7 +72,7 @@ export function PeerCard({
             {isSelected
               ? hasError
                 ? "Retry Pair"
-                : "Connected ✓"
+                : "Connected"
               : "Pair & Connect"}
           </Text>
         )}

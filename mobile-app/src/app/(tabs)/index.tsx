@@ -14,6 +14,7 @@ import { LocalFileRow } from "@/components/LocalFileRow";
 import { C } from "@/constants/colors";
 import { useSandboxFiles } from "@/hooks/use-sandbox-files";
 import { startServer, stopServer, isServerRunning } from "@/services/server";
+import { Icon } from "@/components/Icon";
 import { useState, useEffect } from "react";
 
 export default function MySandboxScreen() {
@@ -92,7 +93,7 @@ export default function MySandboxScreen() {
           ListEmptyComponent={
             filesLoading ? null : (
               <View style={styles.empty}>
-                <Text style={styles.emptyIcon}>📦</Text>
+                <Icon name="sandbox" size={40} color={C.contentFaint} />
                 <Text style={styles.emptyTitle}>Your sandbox is empty</Text>
                 <Text style={styles.emptyHint}>
                   Tap the + button below to pick photos or documents to store securely on this device.

@@ -23,6 +23,7 @@ import {
   getPairingFingerprintForPeer,
 } from "@/services/pairing";
 import { getSettings } from "@/services/settings";
+import { Icon } from "@/components/Icon";
 import * as Network from "expo-network";
 
 export default function ScanScreen() {
@@ -180,7 +181,7 @@ export default function ScanScreen() {
         <View style={styles.content}>
           {peers.length === 0 ? (
             <View style={styles.empty}>
-              <Text style={styles.emptyIcon}>📡</Text>
+              <Icon name="scan" size={40} color={C.contentFaint} />
               <Text style={styles.emptyTitle}>
                 {isScanning ? "Scanning local network…" : "No devices found"}
               </Text>

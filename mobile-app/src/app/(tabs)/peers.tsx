@@ -147,9 +147,14 @@ export default function PairedPeersScreen() {
               accessibilityLabel="Look for offline devices again"
               hitSlop={8}
             >
-              <Text style={styles.refreshText}>
-                {isRefreshing ? "Checking…" : "🔄 Refresh"}
-              </Text>
+              {isRefreshing ? (
+                <Text style={styles.refreshText}>Checking…</Text>
+              ) : (
+                <View style={styles.refreshInner}>
+                  <Icon name="refresh" size={14} color={C.action} />
+                  <Text style={styles.refreshText}>Refresh</Text>
+                </View>
+              )}
             </Pressable>
           </View>
           <Text style={styles.subtitle}>
@@ -347,6 +352,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   refreshText: { fontSize: 11, fontWeight: "600", color: C.action },
+  refreshInner: { flexDirection: "row", alignItems: "center", gap: 6 },
 
   divider: {
     height: 1,

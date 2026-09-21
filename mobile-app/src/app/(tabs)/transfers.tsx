@@ -10,6 +10,7 @@ import {
   Pressable,
 } from "react-native";
 import type { Transfer } from "@/contexts/TransferContext";
+import { Icon } from "@/components/Icon";
 
 function formatSize(bytes: number): string {
   if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
@@ -54,7 +55,7 @@ export default function TransfersScreen() {
           contentContainerStyle={styles.content}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Text style={styles.emptyIcon}>🔄</Text>
+              <Icon name="transfers" size={40} color={C.contentFaint} />
               <Text style={styles.emptyTitle}>No active transfers</Text>
               <Text style={styles.emptyHint}>
                 Start a download from a peer's sandbox to see it here.

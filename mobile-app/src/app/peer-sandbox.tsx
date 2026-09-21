@@ -15,6 +15,7 @@ import { C } from "@/constants/colors";
 import { useRemotePeer } from "@/hooks/use-remote-peer";
 import { useSandboxFiles } from "@/hooks/use-sandbox-files";
 import { useTransfers } from "@/contexts/TransferContext";
+import { Icon } from "@/components/Icon";
 
 import * as DocumentPicker from "expo-document-picker";
 
@@ -69,7 +70,10 @@ export default function PeerSandboxScreen() {
                 style={styles.refreshBtn}
                 onPress={handleSendFile}
               >
-                <Text style={styles.refreshText}>📤 Send</Text>
+                <View style={styles.btnInner}>
+                  <Icon name="upload" size={14} color={C.action} />
+                  <Text style={styles.refreshText}>Send</Text>
+                </View>
               </Pressable>
               <Pressable
                 style={styles.refreshBtn}
@@ -77,7 +81,7 @@ export default function PeerSandboxScreen() {
                 disabled={isFetching}
               >
                 <Text style={styles.refreshText}>
-                  {isFetching ? "Syncing…" : "🔄 Sync"}
+                  {isFetching ? "Syncing…" : "Sync"}
                 </Text>
               </Pressable>
             </View>
@@ -133,7 +137,7 @@ export default function PeerSandboxScreen() {
           ListEmptyComponent={
             isFetching ? null : (
               <View style={styles.empty}>
-                <Text style={styles.emptyIcon}>📂</Text>
+                <Icon name="folder" size={40} color={C.contentFaint} />
                 <Text style={styles.emptyTitle}>Remote sandbox is empty</Text>
                 <Text style={styles.emptyHint}>
                   No files available on this peer device yet.
@@ -175,6 +179,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   refreshText: { fontSize: 12, fontWeight: "600", color: C.action },
+  btnInner: { flexDirection: "row", alignItems: "center", gap: 6 },
 
   title: { fontSize: 24, fontWeight: "700", color: C.content },
   subtitle: { marginTop: 2, fontSize: 12, color: C.contentMuted },
