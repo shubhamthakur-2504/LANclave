@@ -2,7 +2,7 @@ use mdns_sd::{DaemonEvent, ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 use serde::Deserialize;
@@ -15,6 +15,29 @@ struct HealthResponse {
 }
 
 const SERVICE_TYPE: &str = "_lanclave-portal._tcp.local.";
+
+/// Process-wide mDNS daemon.
+///
+/// `ServiceDaemon` spawns a background thread that owns multicast sockets on
+/// every interface, and `mdns-sd` implements no `Drop` for it — the thread
+/// only exits on an explicit `shutdown()`. Creating one per call therefore
+/// leaked a thread plus its sockets on every invocation, and each leaked
+/// daemon kept re-querying the network forever. One shared daemon for the
+/// lifetime of the process removes that entire class of leak.
+fn shared_daemon() -> Result<&'static ServiceDaemon, String> {
+    static DAEMON: OnceLock<Option<ServiceDaemon>> = OnceLock::new();
+
+    DAEMON
+        .get_or_init(|| match ServiceDaemon::new() {
+            Ok(d) => Some(d),
+            Err(e) => {
+                eprintln!("[lanclave] Failed to create shared mDNS daemon: {e}");
+                None
+            }
+        })
+        .as_ref()
+        .ok_or_else(|| "shared mDNS daemon unavailable".to_string())
+}
 
 /// Starts an mDNS service broadcaster on a background thread and keeps it
 /// alive for the lifetime of the process (or until the returned shutdown
@@ -30,10 +53,10 @@ pub fn start_mdns_broadcast(device_id: &str, device_name: &str) -> Arc<AtomicBoo
         let device_id = device_id.to_owned();
         let device_name = device_name.to_owned();
         move || {
-            let mdns = match ServiceDaemon::new() {
+            let mdns = match shared_daemon() {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("[lanclave] Failed to create mDNS daemon: {e}");
+                    eprintln!("[lanclave] {e}");
                     return;
                 }
             };
@@ -99,7 +122,7 @@ pub fn start_mdns_broadcast(device_id: &str, device_name: &str) -> Arc<AtomicBoo
 /// The function blocks for up to `timeout_secs` seconds, collecting
 /// `ServiceResolved` events.  Pass `0` for a single quick scan.
 pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, String)>, String> {
-    let mdns = ServiceDaemon::new().map_err(|e| format!("mDNS daemon: {e}"))?;
+    let mdns = shared_daemon()?;
 
     let receiver = mdns
         .browse(SERVICE_TYPE)
@@ -130,6 +153,10 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, Stri
             _ => {} // timeout / channel closed
         }
     }
+
+    // Release this browse so the shared daemon does not accumulate a
+    // retransmission schedule for every call we ever made.
+    let _ = mdns.stop_browse(SERVICE_TYPE);
 
     // Active Subnet & Gateway Probe Fallback
     // Because hotspots drop mDNS, we query the gateway instantly, then scan the local /24 subnet.
