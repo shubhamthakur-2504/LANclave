@@ -58,7 +58,7 @@ export default function TransfersScreen() {
               <Icon name="transfers" size={40} color={C.contentFaint} />
               <Text style={styles.emptyTitle}>No active transfers</Text>
               <Text style={styles.emptyHint}>
-                Start a download from a peer's sandbox to see it here.
+                Start a download from a peer&apos;s sandbox to see it here.
               </Text>
             </View>
           }

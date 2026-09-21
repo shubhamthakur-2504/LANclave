@@ -87,7 +87,7 @@ export default function PeerSandboxScreen() {
             </View>
           </View>
 
-          <Text style={styles.title}>{name}'s Sandbox</Text>
+          <Text style={styles.title}>{name}&apos;s Sandbox</Text>
           <Text style={styles.subtitle}>
             {ip}:{port} • Connected & Authenticated
           </Text>
