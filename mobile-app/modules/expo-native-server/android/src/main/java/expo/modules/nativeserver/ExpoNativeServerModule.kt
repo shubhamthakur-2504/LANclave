@@ -46,6 +46,11 @@ class ExpoNativeServerModule : Module() {
       server?.isAlive == true
     }
 
+    /** Inbound presence recorded by the server. Local read, no network. */
+    Function("getPresence") {
+      PresenceRegistry.snapshot()
+    }
+
     Function("stopServer") {
       server?.stop()
       server = null

@@ -29,7 +29,7 @@ class NativeServer(
         val uri = session.uri
         val method = session.method
 
-        if (method != Method.GET && method != Method.PUT) {
+        if (method != Method.GET && method != Method.PUT && method != Method.POST) {
             return newFixedLengthResponse(Response.Status.METHOD_NOT_ALLOWED, MIME_PLAINTEXT, "Method Not Allowed")
         }
 
@@ -78,6 +78,9 @@ class NativeServer(
             } catch (e: Exception) {
                 return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Invalid signature format")
             }
+
+            // Verified request from a paired peer: that is a liveness signal.
+            PresenceRegistry.markSeen(reqDeviceId, session.remoteIpAddress)
         }
 
         try {
@@ -89,6 +92,14 @@ class NativeServer(
                     json.put("device_id", deviceId)
                     json.put("device_name", deviceName)
                     return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
+                }
+                uri == "/api/presence/hello" && method == Method.POST -> {
+                    return handlePresenceHello(session)
+                }
+                uri == "/api/presence/bye" && method == Method.POST -> {
+                    val peerId = session.headers["x-lanclave-device-id"]
+                    if (peerId != null) PresenceRegistry.markOffline(peerId)
+                    return newFixedLengthResponse(Response.Status.OK, "application/json", "{\"status\":\"ok\"}")
                 }
                 uri == "/api/sandbox/files" -> {
                     val filesArray = JSONArray()
@@ -164,6 +175,40 @@ class NativeServer(
         } catch (e: Exception) {
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, e.message ?: "Unknown error")
         }
+    }
+
+    /**
+     * A peer announcing it is online. Identity comes from the verified auth
+     * headers and the address from the TCP connection; the body only supplies
+     * a display name and port. The reply carries our own details so a single
+     * round trip informs both sides.
+     */
+    private fun handlePresenceHello(session: IHTTPSession): Response {
+        val peerId = session.headers["x-lanclave-device-id"]
+            ?: return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Missing device id")
+
+        var peerName: String? = null
+        var peerPort: Int? = null
+        try {
+            val files = HashMap<String, String>()
+            session.parseBody(files)
+            val raw = files["postData"]
+            if (!raw.isNullOrBlank()) {
+                val body = JSONObject(raw)
+                peerName = body.optString("device_name").takeIf { it.isNotBlank() }
+                peerPort = body.optInt("port", 0).takeIf { it > 0 }
+            }
+        } catch (_: Exception) {
+            // A malformed body still counts as contact; only the name/port are lost.
+        }
+
+        PresenceRegistry.markSeen(peerId, session.remoteIpAddress, peerPort, peerName)
+
+        val ack = JSONObject()
+        ack.put("status", "ok")
+        ack.put("device_id", deviceId)
+        ack.put("device_name", deviceName)
+        return newFixedLengthResponse(Response.Status.OK, "application/json", ack.toString())
     }
 
     private fun handlePutFile(session: IHTTPSession, pathParam: String): Response {
