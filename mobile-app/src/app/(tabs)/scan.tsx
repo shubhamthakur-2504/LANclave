@@ -158,6 +158,11 @@ export default function ScanScreen() {
             <Pressable
               onPress={scan}
               disabled={isScanning}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isScanning ? "Scanning for devices" : "Scan for devices"
+              }
+              hitSlop={8}
               style={[styles.scanBtn, isScanning && styles.scanBtnDisabled]}
             >
               {isScanning ? (
@@ -230,8 +235,9 @@ const styles = StyleSheet.create({
   headerText: { flex: 1 },
   scanBtn: {
     minWidth: 72,
+    minHeight: 44,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: C.border,

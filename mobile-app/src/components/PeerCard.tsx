@@ -61,6 +61,8 @@ export function PeerCard({
           pressed && styles.btnPressed,
         ]}
         onPress={() => onConnect(peer)}
+        accessibilityRole="button"
+        accessibilityLabel={`Pair with ${peer.name}`}
         disabled={isFetching}
       >
         {isSelected && isFetching ? (

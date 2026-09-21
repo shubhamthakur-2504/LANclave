@@ -143,6 +143,9 @@ export default function PairedPeersScreen() {
               style={styles.refreshBtn}
               onPress={refreshOffline}
               disabled={isRefreshing}
+              accessibilityRole="button"
+              accessibilityLabel="Look for offline devices again"
+              hitSlop={8}
             >
               <Text style={styles.refreshText}>
                 {isRefreshing ? "Checking…" : "🔄 Refresh"}
@@ -249,6 +252,12 @@ export default function PairedPeersScreen() {
                       sendingTo === item.id && styles.btnDisabled,
                     ]}
                     disabled={sendingTo !== null}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      shares.length > 0
+                        ? `Send ${shares.length} file${shares.length === 1 ? "" : "s"} to ${item.name}`
+                        : `Open ${item.name}'s sandbox`
+                    }
                     onPress={() =>
                       shares.length > 0
                         ? handleSendShares(item)
@@ -332,8 +341,10 @@ const styles = StyleSheet.create({
   refreshBtn: {
     backgroundColor: C.borderStrong,
     borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
+    paddingHorizontal: 14,
+    // 44pt minimum touch target (U4.5).
+    minHeight: 44,
+    justifyContent: "center",
   },
   refreshText: { fontSize: 11, fontWeight: "600", color: C.action },
 

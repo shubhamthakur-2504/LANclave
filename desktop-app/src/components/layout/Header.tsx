@@ -1,4 +1,6 @@
+import { Monitor, Moon, Sun } from "lucide-react";
 import { useTransfers } from "../../contexts/TransferContext";
+import { useTheme } from "../../lib/useTheme";
 
 interface HeaderProps {
   /** Real server state — see the note on honesty below. */
@@ -24,6 +26,7 @@ function status(serverRunning: boolean, serverBusy: boolean) {
 
 export default function Header({ serverRunning, serverBusy }: HeaderProps) {
   const { transfers } = useTransfers();
+  const { preference, cycle } = useTheme();
   const state = status(serverRunning, serverBusy);
 
   // A global transfer indicator, visible from every page (U2.2). Nobody
@@ -46,6 +49,21 @@ export default function Header({ serverRunning, serverBusy }: HeaderProps) {
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={cycle}
+            title={`Theme: ${preference}`}
+            aria-label={`Theme: ${preference}. Click to change.`}
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-border-strong text-content-muted transition-colors hover:bg-surface-active hover:text-content"
+          >
+            {preference === "light" ? (
+              <Sun className="h-4 w-4" aria-hidden="true" />
+            ) : preference === "dark" ? (
+              <Moon className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Monitor className="h-4 w-4" aria-hidden="true" />
+            )}
+          </button>
           {active.length > 0 && (
             <span className="text-[11px] text-content-muted" aria-live="polite">
               {active.length} transfer{active.length > 1 ? "s" : ""} ·{" "}

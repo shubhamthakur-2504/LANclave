@@ -42,7 +42,22 @@ export default function PeersPage({
       
       <div className="flex-1 overflow-hidden">
         {peers.length === 0 ? (
-          <EmptyState message={isScanning ? "Scanning network..." : "No peers found - tap Scan to search"} />
+          <EmptyState
+            kind="peers"
+            message={isScanning ? "Scanning the network…" : undefined}
+            hint={isScanning ? "Checking every address on this network." : undefined}
+            action={
+              !isScanning && onScan ? (
+                <button
+                  type="button"
+                  onClick={onScan}
+                  className="rounded-md bg-action px-4 py-2 text-xs font-medium text-on-action transition-colors hover:bg-action-hover"
+                >
+                  Scan for devices
+                </button>
+              ) : undefined
+            }
+          />
         ) : (
           <PeersListPanel
             peers={peers}

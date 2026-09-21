@@ -1,5 +1,6 @@
 import { Check, ChevronDown, Download, FolderOpen, Loader2, RotateCcw, Upload, X } from "lucide-react";
 import * as api from "../../api";
+import EmptyState from "../ui/EmptyState";
 import { useToast } from "../ui/Toast";
 import { humanizeError } from "../../lib/errors";
 import { useState } from "react";
@@ -138,9 +139,13 @@ export default function TransferListPanel({
       {/* Transfer list */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {filtered.length === 0 ? (
-          <div className="p-8 text-center text-xs text-content-faint">
-            No transfers
-          </div>
+          <EmptyState
+            kind="transfers"
+            message={
+              activeFilter === "all" ? undefined : `No ${activeFilter} transfers`
+            }
+            hint={activeFilter === "all" ? undefined : " "}
+          />
         ) : (
           filtered.map((t) => {
             const isExpanded = t.id === expandedId;

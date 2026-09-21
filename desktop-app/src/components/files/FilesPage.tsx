@@ -28,7 +28,7 @@ export default function FilesPage({ files, isDropping = false }: FilesPageProps)
             Drop files to add them to your sandbox
           </div>
         ) : files.length === 0 ? (
-          <EmptyState message="Your local sandbox is empty" />
+          <EmptyState kind="files" />
         ) : (
           <FileListPanel files={files} />
         )}

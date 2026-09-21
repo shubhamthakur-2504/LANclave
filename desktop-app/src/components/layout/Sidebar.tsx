@@ -32,8 +32,11 @@ export default function Sidebar({
   onStopServer,
   serverBusy,
 }: SidebarProps) {
+  // Below the `lg` breakpoint the master-detail layout has no room for
+  // labels, so the sidebar collapses to icons rather than squeezing the
+  // content pane (U4.2).
   return (
-    <aside className="flex w-56 flex-col border-r border-border bg-surface-raised">
+    <aside className="flex w-14 flex-col border-r border-border bg-surface-raised lg:w-56">
       <nav className="flex-1 space-y-1 px-3 py-4">
         {navItems.map((item) => {
           const isActive = activePage === item.id;
@@ -41,7 +44,9 @@ export default function Sidebar({
             <button
               key={item.id}
               onClick={() => onNavigate(item.id)}
-              className={`relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+              title={item.label}
+              aria-label={item.label}
+              className={`relative flex w-full items-center justify-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:justify-start ${
                 isActive
                   ? "bg-action/10 text-action"
                   : "text-content-muted hover:bg-surface-active hover:text-content"
@@ -55,7 +60,7 @@ export default function Sidebar({
                 strokeWidth={1.75}
                 aria-hidden="true"
               />
-              {item.label}
+              <span className="hidden lg:inline">{item.label}</span>
             </button>
           );
         })}
@@ -67,19 +72,21 @@ export default function Sidebar({
           <button
             onClick={onStopServer}
             disabled={serverBusy}
-            className="flex w-full items-center gap-3 rounded-lg border border-danger-border px-3 py-2.5 text-sm font-medium text-danger transition-colors hover:bg-danger-bg disabled:opacity-40"
+            title="Stop Server"
+            className="flex w-full items-center justify-center gap-3 rounded-lg border border-danger-border px-3 py-2.5 lg:justify-start text-sm font-medium text-danger transition-colors hover:bg-danger-bg disabled:opacity-40"
           >
-            <Power className="h-4 w-4" aria-hidden="true" />
-            Stop Server
+            <Power className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className="hidden lg:inline">Stop Server</span>
           </button>
         ) : (
           <button
             onClick={onStartServer}
             disabled={serverBusy}
-            className="flex w-full items-center gap-3 rounded-lg border border-ok-border px-3 py-2.5 text-sm font-medium text-ok transition-colors hover:bg-ok-bg disabled:opacity-40"
+            title="Start Server"
+            className="flex w-full items-center justify-center gap-3 rounded-lg border border-ok-border px-3 py-2.5 lg:justify-start text-sm font-medium text-ok transition-colors hover:bg-ok-bg disabled:opacity-40"
           >
-            <Power className="h-4 w-4" aria-hidden="true" />
-            Start Server
+            <Power className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className="hidden lg:inline">Start Server</span>
           </button>
         )}
       </div>

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "desktop-app",
+  "productName": "LANclave",
   "version": "0.1.0",
   "identifier": "tech.shubhamcodes.lanclave.desktop",
   "build": {
@@ -12,9 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "desktop-app",
+        "title": "LANclave",
         "width": 1200,
-        "height": 800
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 520,
+        "resizable": true
       }
     ],
     "security": {
