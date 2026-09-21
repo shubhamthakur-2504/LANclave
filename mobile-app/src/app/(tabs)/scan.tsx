@@ -31,6 +31,8 @@ export default function ScanScreen() {
 
   // Keep a live set of paired IDs so we can filter them out of the scan list
   const [pairedIds, setPairedIds] = useState<Set<string>>(new Set());
+  /** Our own name, so the pairing sheet can show both ends of the pair. */
+  const [selfName, setSelfName] = useState("This phone");
 
   // Refresh paired IDs every time this screen gains focus
   useFocusEffect(
@@ -38,6 +40,9 @@ export default function ScanScreen() {
       getPairedPeers().then((saved) =>
         setPairedIds(new Set(saved.map((p) => p.id)))
       );
+      getSettings()
+        .then((s) => setSelfName(s.displayName || "This phone"))
+        .catch(() => {});
     }, []),
   );
 
@@ -52,6 +57,7 @@ export default function ScanScreen() {
     null,
   );
   const [isPairingSubmitting, setIsPairingSubmitting] = useState(false);
+  const [pairingSucceeded, setPairingSucceeded] = useState(false);
 
   /**
    * Called when user taps "Pair & Connect" on a discovered peer.
@@ -115,11 +121,21 @@ export default function ScanScreen() {
       // Refresh paired IDs so this device disappears from the scan list immediately
       const saved = await getPairedPeers();
       setPairedIds(new Set(saved.map((p) => p.id)));
-      setPairingTarget(null);
-      // Navigate to the Paired Peers tab
-      router.replace("/peers" as any);
+
+      // Let the success state land before leaving: this is the payoff for the
+      // only friction in the product, and it confirms WHICH device paired.
+      setPairingSucceeded(true);
+      setTimeout(() => {
+        setPairingTarget(null);
+        setPairingSucceeded(false);
+        router.replace("/peers" as any);
+      }, 1200);
     } catch (err) {
       console.warn("[scan] pairing confirmation failed:", err);
+      Alert.alert(
+        "Pairing failed",
+        "Could not save this device. Check both devices are still on the same network and try again.",
+      );
     } finally {
       setIsPairingSubmitting(false);
     }
@@ -195,6 +211,8 @@ export default function ScanScreen() {
         peerIp={pairingTarget?.ip ?? ""}
         fingerprint={pairingFingerprint}
         isSubmitting={isPairingSubmitting}
+        succeeded={pairingSucceeded}
+        selfName={selfName}
         onClose={() => setPairingTarget(null)}
         onConfirm={handleConfirmPairing}
       />

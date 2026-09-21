@@ -1,6 +1,19 @@
-import { Check, X } from "lucide-react";
+import { Check, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import * as api from "../../api";
+
+/**
+ * Group the six digits as `428 106`.
+ *
+ * Two groups of three is markedly easier to read aloud and compare against
+ * another screen than one run of six, and comparing is the entire job of this
+ * screen.
+ */
+function groupFingerprint(fp: string): string {
+  const digits = fp.replace(/\s+/g, "");
+  if (digits.length !== 6) return fp;
+  return `${digits.slice(0, 3)} ${digits.slice(3)}`;
+}
 
 interface ConnectionModalProps {
   isOpen: boolean;
@@ -202,32 +215,59 @@ export default function ConnectionModal({
 
           {fingerprint && !confirmed && (
             <>
-              <div className="mx-auto mt-6 flex w-fit items-center justify-center gap-3 rounded-xl border border-action/20 bg-action/10 px-6 py-4">
-                <span className="font-mono text-4xl font-bold tracking-[0.15em] text-action">
-                  {fingerprint}
+              {/*
+                * The security ceremony. This is the one moment the user must
+                * genuinely stop and compare something, so the digits are the
+                * largest thing on screen and the two devices are named side
+                * by side to make it obvious what is being paired.
+                */}
+              <div className="mt-5 flex items-center justify-center gap-3 text-xs">
+                <span className="max-w-[9rem] truncate font-medium text-content">
+                  This device
+                </span>
+                <ShieldCheck
+                  className="h-4 w-4 shrink-0 text-content-faint"
+                  aria-hidden="true"
+                />
+                <span className="max-w-[9rem] truncate font-medium text-content">
+                  {initialDeviceName || targetAddr || "Other device"}
                 </span>
               </div>
-              <p className="mt-3 text-xs text-content-faint">
-                Compare this code with the peer's screen. If they match, pairing
-                is safe.
+
+              <div className="mx-auto mt-4 w-fit rounded-xl border border-action/20 bg-action/10 px-8 py-5">
+                <span className="font-mono text-5xl font-bold tracking-[0.2em] text-action tabular-nums">
+                  {groupFingerprint(fingerprint)}
+                </span>
+              </div>
+
+              <p className="mx-auto mt-4 max-w-[19rem] text-sm leading-relaxed text-content">
+                Only confirm if the same six digits appear on the other device.
+              </p>
+              <p className="mt-1.5 text-xs text-content-faint">
+                If they differ, reject — someone else may be trying to pair.
               </p>
 
-              {error && <p className="mt-2 text-sm text-danger">{error}</p>}
+              {error && <p className="mt-3 text-sm text-danger">{error}</p>}
 
+              {/*
+                * Equal weight on purpose. A pairing dialog where confirm is
+                * the big blue button trains people to click it without
+                * reading, which defeats the fingerprint entirely.
+                */}
               <div className="mt-6 flex gap-3">
                 <button
                   onClick={onClose}
                   disabled={loading}
-                  className="flex-1 rounded-lg border border-danger-border px-4 py-2.5 text-sm font-medium text-danger transition-colors hover:bg-danger-bg disabled:opacity-40"
+                  className="flex-1 rounded-lg border border-danger-border bg-danger-bg/40 px-4 py-2.5 text-sm font-semibold text-danger transition-colors hover:bg-danger-bg disabled:opacity-40"
                 >
-                  Reject
+                  They don't match
                 </button>
                 <button
                   onClick={handleAccept}
                   disabled={loading}
-                  className="flex-1 rounded-lg bg-action px-4 py-2.5 text-sm font-medium text-on-action transition-colors hover:bg-action-hover disabled:opacity-40"
+                  className="flex-1 rounded-lg border border-ok-border bg-ok/10 px-4 py-2.5 text-sm font-semibold text-ok transition-colors hover:bg-ok/20 disabled:opacity-40"
                 >
-                  {loading ? "Confirming…" : "Accept"}
+                  {loading ? "Confirming…" : "They match"}
                 </button>
               </div>
             </>
@@ -235,11 +275,15 @@ export default function ConnectionModal({
 
           {confirmed && (
             <>
-              <div className="mx-auto mt-6 flex h-16 w-16 items-center justify-center rounded-full bg-ok/20">
-                <Check className="h-8 w-8 text-ok" strokeWidth={2} aria-hidden="true" />
+              {/* The payoff for the only friction in the product. */}
+              <div className="mx-auto mt-6 flex h-16 w-16 animate-[ping_0.6s_ease-out_1] items-center justify-center rounded-full bg-ok/20">
+                <Check className="h-8 w-8 text-ok" strokeWidth={2.5} aria-hidden="true" />
               </div>
-              <p className="mt-4 text-sm text-ok">
-                This device is now paired.
+              <p className="mt-4 text-base font-semibold text-content">
+                Paired with {initialDeviceName || targetAddr || "this device"}
+              </p>
+              <p className="mt-1 text-xs text-content-muted">
+                You can now browse and send files between these two devices.
               </p>
             </>
           )}
