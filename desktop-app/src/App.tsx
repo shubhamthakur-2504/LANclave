@@ -26,6 +26,8 @@ export default function App() {
 
   const [viewingPeer, setViewingPeer] = useState<PeerInfo | null>(null);
   const peerFailsRef = useRef<Record<string, number>>({});
+  const [isScanning, setIsScanning] = useState(false);
+  const scanInFlightRef = useRef(false);
 
   const refreshServerStatus = useCallback(async () => {
     try {
@@ -36,6 +38,11 @@ export default function App() {
   }, []);
 
   const refreshPeers = useCallback(async () => {
+    // Discovery is a full subnet sweep: expensive, and never run on a timer.
+    // Guard here too so rapid clicks cannot stack sweeps.
+    if (scanInFlightRef.current) return;
+    scanInFlightRef.current = true;
+    setIsScanning(true);
     try {
       const livePeers = await api.discoverPeers();
       
@@ -55,7 +62,10 @@ export default function App() {
         });
       });
     } catch {
-      // silent
+      // Scan failed or was already running -- keep the previous peer list.
+    } finally {
+      scanInFlightRef.current = false;
+      setIsScanning(false);
     }
   }, []);
 
@@ -88,13 +98,14 @@ export default function App() {
     refreshFiles();
   }, [refreshPeers, refreshFiles]);
 
+  // Only the local sandbox listing is polled. Peer discovery is user-driven --
+  // see the Scan button on the Peers page.
   useEffect(() => {
     const id = setInterval(() => {
-      refreshPeers();
       refreshFiles();
     }, 5000);
     return () => clearInterval(id);
-  }, [refreshPeers, refreshFiles]);
+  }, [refreshFiles]);
 
   // Listen for pairing requests initiated by mobile peers
   useEffect(() => {
@@ -173,6 +184,8 @@ export default function App() {
         return (
           <PeersPage
             peers={peers}
+            isScanning={isScanning}
+            onScan={refreshPeers}
             onOpenConnection={(peer) => {
               setPairPeer(peer);
               setIsConnectModalOpen(true);
