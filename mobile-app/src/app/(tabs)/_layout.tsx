@@ -1,6 +1,7 @@
 import { Tabs } from "expo-router";
-import { StyleSheet, Text } from "react-native";
+import { StyleSheet } from "react-native";
 import { C } from "@/constants/colors";
+import { Icon } from "@/components/Icon";
 
 export default function TabsLayout() {
   return (
@@ -18,7 +19,7 @@ export default function TabsLayout() {
         options={{
           title: "My Sandbox",
           tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 18, color }}>📦</Text>
+            <Icon name="sandbox" size={22} color={color} />
           ),
         }}
       />
@@ -27,7 +28,7 @@ export default function TabsLayout() {
         options={{
           title: "Paired Peers",
           tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 18, color }}>🤝</Text>
+            <Icon name="peers" size={22} color={color} />
           ),
         }}
       />
@@ -36,7 +37,7 @@ export default function TabsLayout() {
         options={{
           title: "Scan & Pair",
           tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 18, color }}>📡</Text>
+            <Icon name="scan" size={22} color={color} />
           ),
         }}
       />
@@ -45,7 +46,7 @@ export default function TabsLayout() {
         options={{
           title: "Transfers",
           tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 18, color }}>🔄</Text>
+            <Icon name="transfers" size={22} color={color} />
           ),
         }}
       />
@@ -54,7 +55,7 @@ export default function TabsLayout() {
         options={{
           title: "Settings",
           tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 18, color }}>⚙️</Text>
+            <Icon name="settings" size={22} color={color} />
           ),
         }}
       />

@@ -78,7 +78,7 @@ function PeerRow({
           <button
             onClick={onBrowseFiles}
             disabled={!isOnline}
-            className="rounded-lg bg-action px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-action-hover disabled:opacity-50"
+            className="rounded-lg bg-action px-4 py-1.5 text-xs font-medium text-on-action transition-colors hover:bg-action-hover disabled:opacity-50"
           >
             Browse Files
           </button>

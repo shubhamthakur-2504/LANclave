@@ -131,18 +131,6 @@ export function short(s: string, max = 16): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`;
 }
 
-/**
- * @deprecated Emoji file icons, kept only so this commit stands alone.
- * Replaced by the real extension map in `@/constants/file-kind` (U0.3).
- */
-export function fileIcon(name: string): string {
-  const ext = name.split(".").pop();
-  if (ext === "jpg" || ext === "png") return "🖼";
-  if (ext === "pdf") return "📄";
-  if (ext === "m4a") return "🎙";
-  if (ext === "txt") return "📝";
-  return "📁";
-}
 
 /**
  * Deterministic colour for a device, derived from its id.

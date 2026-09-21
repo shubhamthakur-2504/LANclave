@@ -1,3 +1,4 @@
+import { Check, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import * as api from "../../api";
 
@@ -116,19 +117,7 @@ export default function ConnectionModal({
             onClick={onClose}
             className="flex h-6 w-6 items-center justify-center rounded-full text-content-faint transition-colors hover:bg-surface-active hover:text-content"
           >
-            <svg
-              className="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M6 18 18 6M6 6l12 12"
-              />
-            </svg>
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
 
@@ -183,7 +172,7 @@ export default function ConnectionModal({
                 <button
                   onClick={handleInitiate}
                   disabled={loading}
-                  className="flex-1 rounded-lg bg-action px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-action-hover disabled:opacity-40"
+                  className="flex-1 rounded-lg bg-action px-4 py-2.5 text-sm font-medium text-on-action transition-colors hover:bg-action-hover disabled:opacity-40"
                 >
                   {loading ? "Connecting…" : "Connect"}
                 </button>
@@ -216,7 +205,7 @@ export default function ConnectionModal({
                 <button
                   onClick={handleAccept}
                   disabled={loading}
-                  className="flex-1 rounded-lg bg-action px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-action-hover disabled:opacity-40"
+                  className="flex-1 rounded-lg bg-action px-4 py-2.5 text-sm font-medium text-on-action transition-colors hover:bg-action-hover disabled:opacity-40"
                 >
                   {loading ? "Confirming…" : "Accept"}
                 </button>
@@ -227,19 +216,7 @@ export default function ConnectionModal({
           {confirmed && (
             <>
               <div className="mx-auto mt-6 flex h-16 w-16 items-center justify-center rounded-full bg-ok/20">
-                <svg
-                  className="h-8 w-8 text-ok"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="m4.5 12.75 6 6 9-13.5"
-                  />
-                </svg>
+                <Check className="h-8 w-8 text-ok" strokeWidth={2} aria-hidden="true" />
               </div>
               <p className="mt-4 text-sm text-ok">
                 This device is now paired.

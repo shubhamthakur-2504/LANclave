@@ -49,7 +49,7 @@ export function SettingsPage() {
 
   if (!settings) {
     return (
-      <div className="flex-1 p-6 flex items-center justify-center text-[var(--color-text-second)]">
+      <div className="flex-1 p-6 flex items-center justify-center text-content-muted">
         Loading settings...
       </div>
     );
@@ -58,21 +58,21 @@ export function SettingsPage() {
   return (
     <div className="flex-1 p-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-[var(--color-accent)] mb-2">Settings</h1>
-        <p className="text-[var(--color-text-second)]">Configure your LANclave preferences</p>
+        <h1 className="text-3xl font-bold text-action mb-2">Settings</h1>
+        <p className="text-content-muted">Configure your LANclave preferences</p>
       </div>
 
       <div className="max-w-2xl space-y-8">
         <section>
-          <label className="block text-lg font-semibold text-[var(--color-text-primary)] mb-1">
+          <label className="block text-lg font-semibold text-content mb-1">
             Display Name
           </label>
-          <p className="text-sm text-[var(--color-text-second)] mb-3">
+          <p className="text-sm text-content-muted mb-3">
             This name will be shown to other devices on the network.
           </p>
           <input
             type="text"
-            className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-3 text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)] transition-colors"
+            className="w-full bg-surface-inset border border-border rounded-xl px-4 py-3 text-content focus:outline-none focus:border-action transition-colors"
             value={settings.display_name}
             onChange={(e) => setSettings({ ...settings, display_name: e.target.value })}
             onBlur={() => handleSave(settings)}
@@ -81,10 +81,10 @@ export function SettingsPage() {
         </section>
 
         <section>
-          <label className="block text-lg font-semibold text-[var(--color-text-primary)] mb-1">
+          <label className="block text-lg font-semibold text-content mb-1">
             Sandbox Location
           </label>
-          <p className="text-sm text-[var(--color-text-second)] mb-3">
+          <p className="text-sm text-content-muted mb-3">
             The folder where LANclave stores and serves your files. 
             Changing this will update what other devices can see.
           </p>
@@ -93,13 +93,13 @@ export function SettingsPage() {
             <input
               type="text"
               readOnly
-              className="flex-1 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-xl px-4 py-3 text-[var(--color-text-second)] focus:outline-none"
+              className="flex-1 bg-surface-raised border border-border rounded-xl px-4 py-3 text-content-muted focus:outline-none"
               value={settings.sandbox_path}
             />
             <button
               onClick={handlePickDirectory}
               disabled={saving}
-              className="px-6 py-3 bg-[var(--color-accent)] text-white font-medium rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50 whitespace-nowrap"
+              className="px-6 py-3 bg-action text-on-action font-medium rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50 whitespace-nowrap"
             >
               Browse...
             </button>

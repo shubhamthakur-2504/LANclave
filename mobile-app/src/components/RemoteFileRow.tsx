@@ -1,5 +1,7 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { C, fileIcon, mb } from "@/constants/colors";
+import { C, mb } from "@/constants/colors";
+import { fileKind } from "@/constants/file-kind";
+import { Icon } from "@/components/Icon";
 
 export interface RemoteFileRowProps {
   name: string;
@@ -18,12 +20,13 @@ export function RemoteFileRow({
   onDownload,
 }: RemoteFileRowProps) {
   const isDownloading = progress !== undefined;
+  const kind = fileKind(name, is_directory);
 
   return (
     <View style={styles.row}>
       {/* Icon */}
       <View style={styles.iconWrap}>
-        <Text style={styles.icon}>{fileIcon(name)}</Text>
+        <Icon name={kind.icon} size={20} color={C[kind.tone]} />
       </View>
 
       {/* Name + size / progress bar */}
