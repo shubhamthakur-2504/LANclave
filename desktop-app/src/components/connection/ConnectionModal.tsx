@@ -52,6 +52,17 @@ export default function ConnectionModal({
     }
   }, [isOpen, initialFingerprint]);
 
+  // Esc closes the modal (U3.4). Registered before the early return so the
+  // hook order stays stable across renders.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const targetAddr = customAddr || initialAddr;

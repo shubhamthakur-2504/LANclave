@@ -9,6 +9,7 @@ interface PeersPageProps {
   isScanning?: boolean;
   onScan?: () => void;
   onRescanPeer?: (peer: PeerInfo) => void;
+  dropTargetId?: string | null;
 }
 
 export default function PeersPage({
@@ -18,6 +19,7 @@ export default function PeersPage({
   isScanning = false,
   onScan,
   onRescanPeer,
+  dropTargetId = null,
 }: PeersPageProps) {
   return (
     <div className="flex h-full flex-col">
@@ -47,6 +49,7 @@ export default function PeersPage({
             onConnect={onOpenConnection}
             onBrowseFiles={onBrowseFiles}
             onRescanPeer={onRescanPeer}
+            dropTargetId={dropTargetId}
           />
         )}
       </div>

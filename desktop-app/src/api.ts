@@ -37,6 +37,11 @@ export async function rescanPeer(deviceId: string): Promise<boolean> {
   return await invoke("rescan_peer", { deviceId });
 }
 
+/** Copy files from anywhere on disk into the sandbox. Returns their names. */
+export async function importFiles(paths: string[]): Promise<string[]> {
+  return await invoke("import_files", { paths });
+}
+
 /** Reveal a completed download in the OS file manager. */
 export async function revealInSandbox(fileName: string): Promise<void> {
   await invoke("reveal_in_sandbox", { fileName });

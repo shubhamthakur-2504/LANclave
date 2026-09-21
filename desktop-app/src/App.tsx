@@ -9,8 +9,9 @@ import TransfersPage from "./components/transfers/TransfersPage";
 import ConnectionModal from "./components/connection/ConnectionModal";
 import RemoteFilesPage from "./components/files/RemoteFilesPage";
 import { SettingsPage } from "./components/settings/SettingsPage";
-import { TransferProvider } from "./contexts/TransferContext";
+import { TransferProvider, useTransfers } from "./contexts/TransferContext";
 import { ToastProvider, useToast } from "./components/ui/Toast";
+import { useFileDrop } from "./lib/useFileDrop";
 import "./App.css";
 
 function AppInner() {
@@ -20,6 +21,7 @@ function AppInner() {
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [localFiles, setLocalFiles] = useState<FileEntry[]>([]);
   const toast = useToast();
+  const { startUpload } = useTransfers();
 
   // Pairing state
   const [pairPeer, setPairPeer] = useState<PeerInfo | null>(null);
@@ -88,6 +90,59 @@ function AppInner() {
       setLocalFiles([]);
     }
   }, []);
+
+  /**
+   * OS file drops (U3.1). Dropping on a peer row sends the files to that
+   * peer; dropping anywhere else adds them to the local sandbox.
+   *
+   * Tauri reports drops against the window rather than an element, so the
+   * row under the cursor is found by hit-testing the DOM.
+   */
+  const peerUnder = useCallback((pos: { x: number; y: number } | null) => {
+    if (!pos) return null;
+    const el = document.elementFromPoint(pos.x, pos.y);
+    return el?.closest<HTMLElement>("[data-peer-id]")?.dataset.peerId ?? null;
+  }, []);
+
+  const handleDrop = useCallback(
+    async (paths: string[], position: { x: number; y: number }) => {
+      const targetId = peerUnder(position);
+      try {
+        const imported = await api.importFiles(paths);
+        if (imported.length === 0) {
+          toast.info("Nothing to add", "Folders can't be dropped yet — pick files.");
+          return;
+        }
+        await refreshFiles();
+
+        const target = targetId
+          ? peers.find((p) => p.device_id === targetId)
+          : undefined;
+
+        if (target) {
+          for (const name of imported) {
+            await startUpload(target, name, name, 0);
+          }
+          toast.success(
+            `Sending ${imported.length} file${imported.length > 1 ? "s" : ""}`,
+            `To ${target.device_name || "peer"}.`,
+          );
+        } else {
+          toast.success(
+            `Added ${imported.length} file${imported.length > 1 ? "s" : ""}`,
+            "Saved to your sandbox.",
+          );
+        }
+      } catch (e) {
+        toast.error(e);
+      }
+    },
+    [peerUnder, refreshFiles, peers, startUpload, toast],
+  );
+
+  const { isDragging, position: dragPosition } = useFileDrop(handleDrop);
+  const hoveredPeerId = isDragging ? peerUnder(dragPosition) : null;
+
 
   useEffect(() => {
     api
@@ -220,6 +275,7 @@ function AppInner() {
             isScanning={isScanning}
             onScan={refreshPeers}
             onRescanPeer={rescanPeer}
+            dropTargetId={hoveredPeerId}
             onOpenConnection={(peer) => {
               setPairPeer(peer);
               setIsConnectModalOpen(true);
@@ -228,7 +284,7 @@ function AppInner() {
           />
         );
       case "files":
-        return <FilesPage files={localFiles} />;
+        return <FilesPage files={localFiles} isDropping={isDragging && !hoveredPeerId} />;
       case "transfers":
         return <TransfersPage />; // removed transfers={[]} 
       case "settings":
@@ -237,7 +293,6 @@ function AppInner() {
   })();
 
   return (
-    <TransferProvider>
       <div className="flex h-screen flex-col bg-surface text-content">
         <Header serverRunning={serverRunning} serverBusy={serverBusy} />
         <div className="flex flex-1 overflow-hidden">
@@ -269,7 +324,6 @@ function AppInner() {
           onPaired={handlePaired}
         />
       </div>
-    </TransferProvider>
   );
 }
 
@@ -279,7 +333,9 @@ function AppInner() {
 export default function App() {
   return (
     <ToastProvider>
-      <AppInner />
+      <TransferProvider>
+        <AppInner />
+      </TransferProvider>
     </ToastProvider>
   );
 }

@@ -112,6 +112,7 @@ pub fn run() {
             commands::list_peers,
             commands::rescan_peer,
             commands::reveal_in_sandbox,
+            commands::import_files,
             // File transfer
             commands::list_peer_files,
             commands::pull_file,

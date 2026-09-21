@@ -9,6 +9,8 @@ interface PeersListPanelProps {
   onConnect: (peer: PeerInfo) => void;
   onBrowseFiles?: (peer: PeerInfo) => void;
   onRescanPeer?: (peer: PeerInfo) => void;
+  /** device_id of the row files are currently hovering over. */
+  dropTargetId?: string | null;
 }
 
 const KIND_ICONS = {
@@ -57,12 +59,14 @@ function PeerActivity({ transfers }: { transfers: Transfer[] }) {
 function PeerRow({
   peer,
   activity,
+  isDropTarget,
   onConnect,
   onBrowseFiles,
   onRescan,
 }: {
   peer: PeerInfo;
   activity: Transfer[];
+  isDropTarget: boolean;
   onConnect: () => void;
   onBrowseFiles: (() => void) | undefined;
   onRescan?: () => Promise<void> | void;
@@ -93,6 +97,8 @@ function PeerRow({
 
   return (
     <div
+      // Hit-tested by the window-level drop handler (U3.1).
+      data-peer-id={peer.paired && isOnline ? peer.device_id : undefined}
       role={primary ? "button" : undefined}
       tabIndex={primary ? 0 : undefined}
       onClick={primary}
@@ -108,7 +114,9 @@ function PeerRow({
       }
       className={`flex w-full items-center gap-3 border-b border-border px-5 py-3 text-left transition-colors ${
         primary ? "cursor-pointer hover:bg-surface-active" : ""
-      } ${isOnline ? "" : "opacity-60"}`}
+      } ${isOnline ? "" : "opacity-60"} ${
+        isDropTarget ? "bg-action/10 ring-1 ring-inset ring-action" : ""
+      }`}
     >
       <div
         className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
@@ -201,6 +209,7 @@ export default function PeersListPanel({
   onConnect,
   onBrowseFiles,
   onRescanPeer,
+  dropTargetId = null,
 }: PeersListPanelProps) {
   const { transfers } = useTransfers();
 
@@ -221,6 +230,7 @@ export default function PeersListPanel({
         key={peer.device_id}
         peer={peer}
         activity={activityFor(peer)}
+        isDropTarget={dropTargetId === peer.device_id}
         onConnect={() => onConnect(peer)}
         onBrowseFiles={onBrowseFiles ? () => onBrowseFiles(peer) : undefined}
         onRescan={onRescanPeer ? () => onRescanPeer(peer) : undefined}

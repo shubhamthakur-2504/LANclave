@@ -219,6 +219,82 @@ fn persist_scan_addrs(state: &State<'_, CliState>, peers: &[PeerInfo]) {
     }
 }
 
+/// Copy files from anywhere on disk into the sandbox.
+///
+/// Backs drag-and-drop (U3.1): `pick_file` only accepts paths that are
+/// already inside the sandbox, so a dropped file needs copying in first.
+/// Returns the sandbox-relative names of everything that landed.
+#[tauri::command]
+pub async fn import_files(
+    state: State<'_, CliState>,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let sandbox_root = {
+        let settings = state.settings.read().map_err(|e| e.to_string())?;
+        PathBuf::from(&settings.sandbox_path)
+    };
+    tokio::fs::create_dir_all(&sandbox_root)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut imported = Vec::new();
+
+    for raw in paths {
+        let src = PathBuf::from(&raw);
+
+        // Directories would need a recursive copy and a size warning; out of
+        // scope for a drop target, and silently skipping is better than
+        // half-copying a tree.
+        match tokio::fs::metadata(&src).await {
+            Ok(m) if m.is_file() => {}
+            _ => continue,
+        }
+
+        let Some(file_name) = src.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+
+        let dest_name = unique_sandbox_name(&sandbox_root, file_name);
+        let dest = sandbox_root.join(&dest_name);
+
+        // Copying a file onto itself would truncate it.
+        if src == dest {
+            imported.push(dest_name);
+            continue;
+        }
+
+        tokio::fs::copy(&src, &dest)
+            .await
+            .map_err(|e| format!("could not copy {file_name}: {e}"))?;
+        imported.push(dest_name);
+    }
+
+    Ok(imported)
+}
+
+/// Find a free name, turning `notes.txt` into `notes (2).txt` on collision so
+/// a drop never silently overwrites something already in the sandbox.
+fn unique_sandbox_name(root: &std::path::Path, file_name: &str) -> String {
+    if !root.join(file_name).exists() {
+        return file_name.to_string();
+    }
+
+    let path = std::path::Path::new(file_name);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(file_name);
+    let ext = path.extension().and_then(|s| s.to_str());
+
+    for n in 2..1000 {
+        let candidate = match ext {
+            Some(e) => format!("{stem} ({n}).{e}"),
+            None => format!("{stem} ({n})"),
+        };
+        if !root.join(&candidate).exists() {
+            return candidate;
+        }
+    }
+    file_name.to_string()
+}
+
 /// Reveal a sandbox file in the OS file manager.
 ///
 /// Gives a completed transfer somewhere to go (U2.2). The name is resolved
