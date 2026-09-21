@@ -12,6 +12,21 @@ struct HealthResponse {
     app: String,
     device_id: String,
     device_name: String,
+    #[serde(default)]
+    device_type: Option<String>,
+}
+
+/// A peer found by mDNS or by probing.
+///
+/// This replaced a bare `(String, String, String)` tuple: a fourth field made
+/// the positional version genuinely hard to read at the call sites.
+#[derive(Debug, Clone)]
+pub struct DiscoveredPeer {
+    /// `ip:port`.
+    pub addr: String,
+    pub device_id: String,
+    pub device_name: String,
+    pub device_type: Option<String>,
 }
 
 const SERVICE_TYPE: &str = "_lanclave-portal._tcp.local.";
@@ -64,6 +79,7 @@ pub fn start_mdns_broadcast(device_id: &str, device_name: &str) -> Arc<AtomicBoo
             let mut props = HashMap::new();
             props.insert("version".to_string(), "1.0.0".to_string());
             props.insert("node_type".to_string(), "desktop".to_string());
+            props.insert("device_type".to_string(), crate::presence::DEVICE_TYPE.to_string());
             props.insert("device_id".to_string(), device_id);
             props.insert("device_name".to_string(), device_name);
 
@@ -121,7 +137,7 @@ pub fn start_mdns_broadcast(device_id: &str, device_name: &str) -> Arc<AtomicBoo
 ///
 /// The function blocks for up to `timeout_secs` seconds, collecting
 /// `ServiceResolved` events.  Pass `0` for a single quick scan.
-pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, String)>, String> {
+pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<DiscoveredPeer>, String> {
     // A full sweep takes many seconds. Without this guard a caller firing on a
     // timer stacked sweeps on top of each other: more overlap meant more socket
     // contention, which made each sweep slower, which caused still more overlap.
@@ -145,7 +161,7 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, Stri
         Duration::from_millis(timeout_secs * 1000)
     };
     let start = std::time::Instant::now();
-    let mut peers: Vec<(String, String, String)> = Vec::new();
+    let mut peers: Vec<DiscoveredPeer> = Vec::new();
 
     loop {
         let remaining = deadline.saturating_sub(start.elapsed());
@@ -155,7 +171,7 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, Stri
         match receiver.recv_timeout(remaining) {
             Ok(ServiceEvent::ServiceResolved(info)) => {
                 if let Some(entry) = parse_peer(&*info) {
-                    if !peers.iter().any(|(_, id, _)| id == &entry.1) {
+                    if !peers.iter().any(|p| p.device_id == entry.device_id) {
                         peers.push(entry);
                     }
                 }
@@ -218,7 +234,7 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, Stri
     // Await all probe tasks and merge with mDNS results
     for task in probe_tasks {
         if let Ok(Some(peer)) = task.await {
-            if !peers.iter().any(|(_, id, _)| id == &peer.1) {
+            if !peers.iter().any(|p| p.device_id == peer.device_id) {
                 peers.push(peer);
             }
         }
@@ -247,9 +263,9 @@ pub async fn resolve_peer_addr(device_id: &str) -> Option<String> {
         }
         match receiver.recv_timeout(remaining) {
             Ok(ServiceEvent::ServiceResolved(info)) => {
-                if let Some((addr, id, _)) = parse_peer(&*info) {
-                    if id == device_id {
-                        found = Some(addr);
+                if let Some(peer) = parse_peer(&*info) {
+                    if peer.device_id == device_id {
+                        found = Some(peer.addr);
                         break;
                     }
                 }
@@ -262,7 +278,7 @@ pub async fn resolve_peer_addr(device_id: &str) -> Option<String> {
     found
 }
 
-async fn probe_ip(client: reqwest::Client, ip: &str, semaphore: Arc<tokio::sync::Semaphore>) -> Option<(String, String, String)> {
+async fn probe_ip(client: reqwest::Client, ip: &str, semaphore: Arc<tokio::sync::Semaphore>) -> Option<DiscoveredPeer> {
     let _permit = semaphore.acquire().await.ok()?;
     let url = format!("http://{ip}:8377/health");
     
@@ -270,16 +286,20 @@ async fn probe_ip(client: reqwest::Client, ip: &str, semaphore: Arc<tokio::sync:
     if res.status().is_success() || res.status() == 401 {
         if let Ok(body) = res.json::<HealthResponse>().await {
             if body.app == "lanclave" {
-                let addr = format!("{ip}:8377");
-                return Some((addr, body.device_id, body.device_name));
+                return Some(DiscoveredPeer {
+                    addr: format!("{ip}:8377"),
+                    device_id: body.device_id,
+                    device_name: body.device_name,
+                    device_type: body.device_type,
+                });
             }
         }
     }
     None
 }
 
-/// Extract `(socket_addr, device_id, device_name)` from a resolved mDNS service.
-fn parse_peer(info: &mdns_sd::ResolvedService) -> Option<(String, String, String)> {
+/// Extract a peer from a resolved mDNS service.
+fn parse_peer(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer> {
     // Build the socket address from the first resolved IP + port.
     let ip = info.get_addresses().iter().next()?;
     let addr = format!("{ip}:{}", info.get_port());
@@ -289,6 +309,16 @@ fn parse_peer(info: &mdns_sd::ResolvedService) -> Option<(String, String, String
     let device_name = info.get_property_val_str("device_name")
         .map(|s| s.to_owned())
         .unwrap_or_else(|| "Unknown Device".to_string());
+    // `node_type` is what older builds advertise; accept either.
+    let device_type = info
+        .get_property_val_str("device_type")
+        .or_else(|| info.get_property_val_str("node_type"))
+        .map(|s| s.to_owned());
 
-    Some((addr, device_id, device_name))
+    Some(DiscoveredPeer {
+        addr,
+        device_id,
+        device_name,
+        device_type,
+    })
 }

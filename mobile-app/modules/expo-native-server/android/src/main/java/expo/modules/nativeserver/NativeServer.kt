@@ -84,6 +84,8 @@ class NativeServer(
                     json.put("app", "lanclave")
                     json.put("device_id", deviceId)
                     json.put("device_name", deviceName)
+                    // Lets peers show a phone glyph rather than a generic dot.
+                    json.put("device_type", "phone")
                     return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
                 }
                 uri == "/api/presence/hello" && method == Method.POST -> {

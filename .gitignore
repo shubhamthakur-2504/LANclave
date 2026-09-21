@@ -72,3 +72,5 @@ identity.key
 .claude
 AGENTS.md
 CLAUDE.md
+# Gradle build cache inside the local native module
+mobile-app/modules/expo-native-server/android/.gradle/

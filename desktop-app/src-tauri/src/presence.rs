@@ -40,6 +40,9 @@ pub const MAX_HEARTBEAT_FAILS: u32 = 2;
 
 pub const SERVER_PORT: u16 = 8377;
 
+/// What we advertise ourselves as over `/health`.
+pub const DEVICE_TYPE: &str = "laptop";
+
 pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -270,6 +273,19 @@ impl PresenceContext {
         }
     }
 
+    /// Record what kind of device a peer says it is, so the UI can show a
+    /// laptop/phone glyph even while the peer is offline.
+    fn remember_kind(&self, device_id: &str, kind: Option<String>) {
+        let Some(kind) = kind else { return };
+        if let Ok(mut store) = self.device_store.write() {
+            if let Some(dev) = store.devices.get_mut(device_id) {
+                if dev.device_type.as_deref() != Some(kind.as_str()) {
+                    dev.device_type = Some(kind);
+                }
+            }
+        }
+    }
+
     /// One `/health` probe. Confirms identity before trusting the result --
     /// a stale address may now belong to an entirely different device.
     async fn probe(&self, device_id: &str, addr: &str) -> bool {
@@ -300,9 +316,15 @@ impl PresenceContext {
             .get("device_name")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let kind = body
+            .get("device_type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         self.presence
             .mark_seen(device_id, name, Some(addr.to_string()));
         self.remember_addr(device_id, addr);
+        self.remember_kind(device_id, kind);
         true
     }
 

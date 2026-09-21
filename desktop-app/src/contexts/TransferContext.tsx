@@ -138,6 +138,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         id: tempId,
         fileName: file.name,
         fileSize: file.size,
+        peerId: peer.device_id,
         peerName: peer.device_name || peer.device_id, // Use device_name if available, else ID
         direction: "download",
         progress: 0,
@@ -201,6 +202,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         id: tempId,
         fileName,
         fileSize,
+        peerId: peer.device_id,
         peerName: peer.device_name || peer.device_id,
         direction: "upload",
         progress: 0,

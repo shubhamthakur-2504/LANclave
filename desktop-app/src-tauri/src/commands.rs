@@ -66,6 +66,8 @@ pub struct PeerInfo {
     pub addr: String,
     pub device_id: String,
     pub device_name: Option<String>,
+    /// "laptop" | "phone" | ... as reported by the peer over `/health`.
+    pub device_type: Option<String>,
     pub paired: bool,
 }
 
@@ -128,11 +130,11 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
 
     let store = state.device_store.read().map_err(|e| e.to_string())?;
 
-    // Build a map of live device_id -> (addr, device_name) for quick lookup
-    let mut live_map: std::collections::HashMap<String, (String, String)> = live
+    // Build a map of live device_id -> peer for quick lookup
+    let mut live_map: std::collections::HashMap<String, crate::discovery::DiscoveredPeer> = live
         .into_iter()
-        .filter(|(_, id, _)| id != &state.device_id)
-        .map(|(addr, id, name)| (id, (addr, name)))
+        .filter(|p| p.device_id != state.device_id)
+        .map(|p| (p.device_id.clone(), p))
         .collect();
 
     // Start with all stored paired peers (they always appear in the list)
@@ -141,12 +143,21 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
         .values()
         .filter(|d| d.device_id != state.device_id)
         .map(|d| {
-            // Use live addr if we found it, otherwise leave addr empty (peer is offline)
-            let (addr, live_name) = live_map.remove(&d.device_id).unwrap_or_default();
+            // Use live details if we found them, otherwise leave addr empty
+            // (the peer is offline).
+            let live = live_map.remove(&d.device_id);
             PeerInfo {
-                addr,
+                addr: live.as_ref().map(|p| p.addr.clone()).unwrap_or_default(),
                 device_id: d.device_id.clone(),
-                device_name: if live_name.is_empty() { d.device_name.clone() } else { Some(live_name) },
+                device_name: live
+                    .as_ref()
+                    .map(|p| p.device_name.clone())
+                    .filter(|n| !n.is_empty())
+                    .or_else(|| d.device_name.clone()),
+                device_type: live
+                    .as_ref()
+                    .and_then(|p| p.device_type.clone())
+                    .or_else(|| d.device_type.clone()),
                 paired: true,
             }
         })
@@ -165,11 +176,12 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
     }
 
     // Add any live-discovered peers that are NOT already in the paired store
-    for (id, (addr, name)) in live_map {
+    for (id, p) in live_map {
         peers.push(PeerInfo {
-            addr,
+            addr: p.addr,
             device_id: id,
-            device_name: Some(name),
+            device_name: Some(p.device_name),
+            device_type: p.device_type,
             paired: false,
         });
     }
@@ -194,6 +206,10 @@ fn persist_scan_addrs(state: &State<'_, CliState>, peers: &[PeerInfo]) {
         if let Some(dev) = store.devices.get_mut(&peer.device_id) {
             if dev.last_addr.as_ref() != Some(&peer.addr) {
                 dev.last_addr = Some(peer.addr.clone());
+                dirty = true;
+            }
+            if peer.device_type.is_some() && dev.device_type != peer.device_type {
+                dev.device_type = peer.device_type.clone();
                 dirty = true;
             }
         }
@@ -230,6 +246,7 @@ pub fn list_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>, String> {
                     .as_ref()
                     .and_then(|p| p.device_name.clone())
                     .or_else(|| d.device_name.clone()),
+                device_type: d.device_type.clone(),
                 paired: true,
             }
         })

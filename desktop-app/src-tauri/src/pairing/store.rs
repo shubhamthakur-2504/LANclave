@@ -19,6 +19,9 @@ pub struct PairedDevice {
     /// Human-readable name of the device.
     #[serde(default)]
     pub device_name: Option<String>,
+    /// "laptop" | "phone" | ... as reported by the peer over `/health`.
+    #[serde(default)]
+    pub device_type: Option<String>,
     /// Last address this peer was successfully reached on, as `ip:port`.
     ///
     /// Lets presence resume after a restart without running a subnet sweep.
@@ -91,6 +94,7 @@ impl DeviceStore {
                 public_key_b64,
                 paired_at: iso_timestamp_now(),
                 device_name,
+                device_type: None,
                 last_addr: None,
             },
         );

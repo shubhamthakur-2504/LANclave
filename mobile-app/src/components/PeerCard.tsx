@@ -1,6 +1,8 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { DiscoveredPeer } from "@/hooks/use-peer-discovery";
-import { C, short } from "@/constants/colors";
+import { C, idColor, short } from "@/constants/colors";
+import { Icon } from "@/components/Icon";
+import { deviceKind, initialForDevice, KIND_ICON } from "@/constants/device";
 
 export interface PeerCardProps {
   peer: DiscoveredPeer;
@@ -17,13 +19,20 @@ export function PeerCard({
   hasError,
   onConnect,
 }: PeerCardProps) {
+  const tint = idColor(peer.id);
+  const initial = initialForDevice(peer.name);
+  const kind = deviceKind(undefined, peer.name);
+
   return (
     <View style={[styles.card, isSelected && styles.cardSelected]}>
-      {/* Avatar */}
-      <View style={styles.avatar}>
-        <Text style={styles.avatarLetter}>
-          {peer.name[0]?.toUpperCase() ?? "?"}
-        </Text>
+      {/* Avatar: name initial where there is one, device glyph otherwise, on a
+          colour derived from the device id so a peer looks the same every time. */}
+      <View style={[styles.avatar, { backgroundColor: `${tint}22` }]}>
+        {initial ? (
+          <Text style={[styles.avatarLetter, { color: tint }]}>{initial}</Text>
+        ) : (
+          <Icon name={KIND_ICON[kind]} size={22} color={tint} />
+        )}
       </View>
 
       {/* Identity */}
@@ -44,7 +53,7 @@ export function PeerCard({
         disabled={isFetching}
       >
         {isSelected && isFetching ? (
-          <ActivityIndicator size="small" color="#FFFFFF" />
+          <ActivityIndicator size="small" color={C.onAction} />
         ) : (
           <Text style={styles.btnText}>
             {isSelected
@@ -96,5 +105,5 @@ const styles = StyleSheet.create({
   btnActive: { backgroundColor: C.actionPressed },
   btnError: { backgroundColor: C.dangerBorder },
   btnPressed: { opacity: 0.75 },
-  btnText: { fontSize: 12, fontWeight: "700", color: "#FFFFFF" },
+  btnText: { fontSize: 12, fontWeight: "700", color: C.onAction },
 });

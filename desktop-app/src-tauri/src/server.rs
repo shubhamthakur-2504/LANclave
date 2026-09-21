@@ -198,7 +198,10 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
                     "status": "ok",
                     "app": "lanclave",
                     "device_id": state.device_id,
-                    "device_name": display_name
+                    "device_name": display_name,
+                    // Lets peers show a laptop/phone glyph instead of a
+                    // generic dot (U2.1). One string, large change in feel.
+                    "device_type": crate::presence::DEVICE_TYPE
                 }))
             }),
         )

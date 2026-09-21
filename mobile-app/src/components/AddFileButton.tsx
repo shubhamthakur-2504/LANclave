@@ -98,7 +98,7 @@ export function AddFileButton({ onFileAdded }: AddFileButtonProps) {
         accessibilityRole="button"
       >
         {isBusy ? (
-          <ActivityIndicator color="#FFFFFF" size="small" />
+          <ActivityIndicator color={C.onAction} size="small" />
         ) : (
           <Text style={styles.fabIcon}>+</Text>
         )}
@@ -153,7 +153,7 @@ const styles = StyleSheet.create({
   },
   fabIcon: {
     fontSize: 28,
-    color: "#FFFFFF",
+    color: C.onAction,
     fontWeight: "300",
     lineHeight: 30,
   },

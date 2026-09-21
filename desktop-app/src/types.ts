@@ -32,6 +32,8 @@ export interface Transfer {
   id: string;
   fileName: string;
   fileSize: number;
+  /** device_id of the other end, so a transfer can be tied to a peer row. */
+  peerId: string;
   peerName: string;
   direction: TransferDirection;
   progress: number;

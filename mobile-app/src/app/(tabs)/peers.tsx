@@ -10,7 +10,9 @@ import {
   View,
 } from "react-native";
 
-import { C, short } from "@/constants/colors";
+import { C, idColor, short } from "@/constants/colors";
+import { Icon } from "@/components/Icon";
+import { deviceKind, initialForDevice, KIND_ICON } from "@/constants/device";
 import {
   getPeerPresence,
   PeerPresence,
@@ -107,13 +109,27 @@ export default function PairedPeersScreen() {
           keyExtractor={(p) => p.id}
           contentContainerStyle={styles.content}
           renderItem={({ item }) => (
-            <View style={styles.card}>
+            <View style={[styles.card, !item.isOnline && styles.cardOffline]}>
               <View style={styles.cardHeader}>
-                {/* Avatar */}
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>
-                    {item.name[0]?.toUpperCase() ?? "P"}
-                  </Text>
+                {/* Avatar: initial, or a device glyph, on the peer's own
+                    identity colour (stable across launches). */}
+                <View
+                  style={[
+                    styles.avatar,
+                    { backgroundColor: `${idColor(item.id)}22` },
+                  ]}
+                >
+                  {initialForDevice(item.name) ? (
+                    <Text style={[styles.avatarText, { color: idColor(item.id) }]}>
+                      {initialForDevice(item.name)}
+                    </Text>
+                  ) : (
+                    <Icon
+                      name={KIND_ICON[deviceKind(undefined, item.name)]}
+                      size={20}
+                      color={idColor(item.id)}
+                    />
+                  )}
                 </View>
 
                 {/* Identity */}
@@ -158,7 +174,8 @@ export default function PairedPeersScreen() {
                     ]}
                     onPress={() => handleOpenSandbox(item)}
                   >
-                    <Text style={styles.openBtnText}>Open Sandbox 📂</Text>
+                    <Icon name="folder" size={16} color={C.onAction} />
+                    <Text style={styles.openBtnText}>Open sandbox</Text>
                   </Pressable>
                 ) : (
                   <Text style={styles.offlineHint}>
@@ -171,7 +188,7 @@ export default function PairedPeersScreen() {
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Text style={styles.emptyIcon}>🤝</Text>
+              <Icon name="peers" size={40} color={C.contentFaint} />
               <Text style={styles.emptyTitle}>No paired peers yet</Text>
               <Text style={styles.emptyHint}>
                 Go to the <Text style={styles.bold}>Scan & Pair</Text> tab to discover and confirm 6-digit security codes with nearby devices.
@@ -186,6 +203,7 @@ export default function PairedPeersScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.surface },
+  cardOffline: { opacity: 0.6 },
   safe: { flex: 1 },
 
   // Header
@@ -275,12 +293,15 @@ const styles = StyleSheet.create({
   // Action row
   actionRow: { marginTop: 14 },
   openBtn: {
+    flexDirection: "row",
+    gap: 8,
     borderRadius: 10,
     backgroundColor: C.action,
-    paddingVertical: 10,
+    paddingVertical: 12,
     alignItems: "center",
+    justifyContent: "center",
   },
-  openBtnText: { fontSize: 13, fontWeight: "700", color: "#FFFFFF" },
+  openBtnText: { fontSize: 13, fontWeight: "700", color: C.onAction },
   btnPressed: { opacity: 0.75 },
   offlineHint: {
     fontSize: 11,
