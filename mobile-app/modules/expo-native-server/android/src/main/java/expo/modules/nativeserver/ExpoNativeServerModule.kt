@@ -46,6 +46,62 @@ class ExpoNativeServerModule : Module() {
       server?.isAlive == true
     }
 
+    /**
+     * URIs handed to us by Android's share sheet (U3.2).
+     *
+     * Returns the EXTRA_STREAM of an ACTION_SEND / ACTION_SEND_MULTIPLE
+     * intent, then clears the intent so the same share is not replayed every
+     * time the app is foregrounded. Content URIs are returned as-is: the
+     * uploader reads content:// directly, so nothing needs copying first.
+     */
+    Function("consumeSharedUris") {
+      val activity = appContext.currentActivity
+      val intent = activity?.intent
+      val action = intent?.action
+
+      if (intent == null ||
+        (action != android.content.Intent.ACTION_SEND &&
+          action != android.content.Intent.ACTION_SEND_MULTIPLE)
+      ) {
+        return@Function emptyList<String>()
+      }
+
+      val uris = when (action) {
+        android.content.Intent.ACTION_SEND -> {
+          val uri = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra(
+              android.content.Intent.EXTRA_STREAM,
+              android.net.Uri::class.java,
+            )
+          } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
+          }
+          listOfNotNull(uri)
+        }
+        else -> {
+          val list = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableArrayListExtra(
+              android.content.Intent.EXTRA_STREAM,
+              android.net.Uri::class.java,
+            )
+          } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableArrayListExtra<android.net.Uri>(
+              android.content.Intent.EXTRA_STREAM,
+            )
+          }
+          list ?: emptyList()
+        }
+      }
+
+      // Consume it: a share should be handled once, not on every resume.
+      intent.action = android.content.Intent.ACTION_MAIN
+      intent.removeExtra(android.content.Intent.EXTRA_STREAM)
+
+      uris.map { it.toString() }
+    }
+
     /** Inbound presence recorded by the server. Local read, no network. */
     Function("getPresence") {
       PresenceRegistry.snapshot()

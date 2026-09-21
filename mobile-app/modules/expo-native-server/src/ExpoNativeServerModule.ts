@@ -14,6 +14,8 @@ declare class ExpoNativeServerModule extends NativeModule {
   startServer(port: number, deviceId: string, deviceName: string, sandboxPath: string, pairedDevices: string[]): boolean;
   isRunning(): boolean;
   getPresence(): NativePresenceEntry[];
+  /** URIs from an Android share intent; consumed on read. */
+  consumeSharedUris(): string[];
   stopServer(): void;
   updatePairedDevices(devices: string[]): void;
 }

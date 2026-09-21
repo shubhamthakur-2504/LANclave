@@ -1,4 +1,5 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import Animated, { FadeIn, FadeOut, Layout } from "react-native-reanimated";
 import { DiscoveredPeer } from "@/hooks/use-peer-discovery";
 import { C, idColor, short } from "@/constants/colors";
 import { Icon } from "@/components/Icon";
@@ -24,7 +25,17 @@ export function PeerCard({
   const kind = deviceKind(undefined, peer.name);
 
   return (
-    <View style={[styles.card, isSelected && styles.cardSelected]}>
+    /*
+     * A peer appearing is a state change worth noticing — it is what makes
+     * discovery feel like discovery rather than a refresh loop. Motion is
+     * kept to arrival, departure and reflow; nothing decorative.
+     */
+    <Animated.View
+      entering={FadeIn.duration(220)}
+      exiting={FadeOut.duration(160)}
+      layout={Layout.duration(200)}
+      style={[styles.card, isSelected && styles.cardSelected]}
+    >
       {/* Avatar: name initial where there is one, device glyph otherwise, on a
           colour derived from the device id so a peer looks the same every time. */}
       <View style={[styles.avatar, { backgroundColor: `${tint}22` }]}>
@@ -64,7 +75,7 @@ export function PeerCard({
           </Text>
         )}
       </Pressable>
-    </View>
+    </Animated.View>
   );
 }
 

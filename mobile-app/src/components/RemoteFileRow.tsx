@@ -1,4 +1,10 @@
+import { useEffect } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { C, mb } from "@/constants/colors";
 import { fileKind } from "@/constants/file-kind";
 import { Icon } from "@/components/Icon";
@@ -22,6 +28,16 @@ export function RemoteFileRow({
   const isDownloading = progress !== undefined;
   const kind = fileKind(name, is_directory);
 
+  // Progress arrives in ~100ms steps; easing between them reads as motion
+  // rather than a bar that snaps (U3.3).
+  const width = useSharedValue(0);
+  useEffect(() => {
+    width.value = withTiming(progress ?? 0, { duration: 220 });
+  }, [progress, width]);
+  const progressStyle = useAnimatedStyle(() => ({
+    width: `${width.value}%`,
+  }));
+
   return (
     <View style={styles.row}>
       {/* Icon */}
@@ -36,13 +52,7 @@ export function RemoteFileRow({
         </Text>
         {isDownloading ? (
           <View style={styles.progressTrack}>
-            <View
-              style={[
-                styles.progressFill,
-                // cast needed — RN StyleSheet doesn't accept template strings
-                { width: `${progress}%` as any },
-              ]}
-            />
+            <Animated.View style={[styles.progressFill, progressStyle]} />
           </View>
         ) : (
           <Text style={styles.sub}>

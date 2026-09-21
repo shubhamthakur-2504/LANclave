@@ -1,6 +1,8 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   SafeAreaView,
@@ -13,6 +15,14 @@ import {
 import { C, idColor, short } from "@/constants/colors";
 import { Icon } from "@/components/Icon";
 import { deviceKind, initialForDevice, KIND_ICON } from "@/constants/device";
+import {
+  clearPendingShares,
+  collectIncomingShares,
+  getPendingShares,
+  PendingShare,
+  subscribeShares,
+} from "@/services/share";
+import { uploadRemoteFile } from "@/services/peer-api";
 import {
   getPeerPresence,
   PeerPresence,
@@ -32,6 +42,9 @@ export default function PairedPeersScreen() {
   const router = useRouter();
   const [peersWithStatus, setPeersWithStatus] = useState<PairedPeerStatus[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  /** Files handed to us by the share sheet, waiting for a destination (U3.2). */
+  const [shares, setShares] = useState<PendingShare[]>([]);
+  const [sendingTo, setSendingTo] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setPeersWithStatus(await getPeerPresence());
@@ -39,6 +52,15 @@ export default function PairedPeersScreen() {
 
   // Presence is maintained by the background heartbeat. This screen only
   // reads it -- it no longer sends any requests of its own.
+  // A share can arrive while the app is already open, so check on focus.
+  useFocusEffect(
+    useCallback(() => {
+      setShares(collectIncomingShares());
+      const unsubShares = subscribeShares(() => setShares([...getPendingShares()]));
+      return unsubShares;
+    }, []),
+  );
+
   useFocusEffect(
     useCallback(() => {
       load();
@@ -64,6 +86,38 @@ export default function PairedPeersScreen() {
       setIsRefreshing(false);
     }
   }, [peersWithStatus, load]);
+
+  /** Send everything pending to this peer, then clear the queue. */
+  const handleSendShares = useCallback(
+    async (peer: PairedPeerStatus) => {
+      if (shares.length === 0) return;
+      setSendingTo(peer.id);
+      const addr = `${peer.ip}:${peer.port}`;
+      let sent = 0;
+
+      try {
+        for (const share of shares) {
+          await uploadRemoteFile(addr, share.uri, share.name);
+          sent += 1;
+        }
+        clearPendingShares();
+        setShares([]);
+        Alert.alert(
+          "Sent",
+          `${sent} file${sent === 1 ? "" : "s"} sent to ${peer.name}.`,
+        );
+      } catch (err) {
+        Alert.alert(
+          "Couldn't send",
+          `Sent ${sent} of ${shares.length}. Check ${peer.name} is still reachable and try again.`,
+        );
+        console.warn("[share] upload failed:", err);
+      } finally {
+        setSendingTo(null);
+      }
+    },
+    [shares],
+  );
 
   const handleOpenSandbox = (peer: PairedPeerStatus) => {
     router.push({
@@ -99,6 +153,27 @@ export default function PairedPeersScreen() {
             Saved devices with confirmed security keys
           </Text>
         </View>
+
+        {shares.length > 0 && (
+          <View style={styles.shareBanner}>
+            <Icon name="send" size={18} color={C.action} />
+            <Text style={styles.shareText} numberOfLines={2}>
+              Choose a device to send{" "}
+              <Text style={styles.shareStrong}>
+                {shares.length === 1 ? shares[0].name : `${shares.length} files`}
+              </Text>
+            </Text>
+            <Pressable
+              onPress={() => {
+                clearPendingShares();
+                setShares([]);
+              }}
+              accessibilityLabel="Cancel sending"
+            >
+              <Icon name="close" size={18} color={C.contentFaint} />
+            </Pressable>
+          </View>
+        )}
 
         <View style={styles.divider} />
 
@@ -171,11 +246,29 @@ export default function PairedPeersScreen() {
                     style={({ pressed }) => [
                       styles.openBtn,
                       pressed && styles.btnPressed,
+                      sendingTo === item.id && styles.btnDisabled,
                     ]}
-                    onPress={() => handleOpenSandbox(item)}
+                    disabled={sendingTo !== null}
+                    onPress={() =>
+                      shares.length > 0
+                        ? handleSendShares(item)
+                        : handleOpenSandbox(item)
+                    }
                   >
-                    <Icon name="folder" size={16} color={C.onAction} />
-                    <Text style={styles.openBtnText}>Open sandbox</Text>
+                    {sendingTo === item.id ? (
+                      <ActivityIndicator size="small" color={C.onAction} />
+                    ) : (
+                      <>
+                        <Icon
+                          name={shares.length > 0 ? "send" : "folder"}
+                          size={16}
+                          color={C.onAction}
+                        />
+                        <Text style={styles.openBtnText}>
+                          {shares.length > 0 ? "Send here" : "Open sandbox"}
+                        </Text>
+                      </>
+                    )}
                   </Pressable>
                 ) : (
                   <Text style={styles.offlineHint}>
@@ -204,6 +297,22 @@ export default function PairedPeersScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.surface },
   cardOffline: { opacity: 0.6 },
+  btnDisabled: { opacity: 0.6 },
+  shareBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginHorizontal: 20,
+    marginBottom: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.action,
+    backgroundColor: C.surfaceRaised,
+  },
+  shareText: { flex: 1, fontSize: 13, color: C.contentMuted, lineHeight: 18 },
+  shareStrong: { color: C.content, fontWeight: "700" },
   safe: { flex: 1 },
 
   // Header
