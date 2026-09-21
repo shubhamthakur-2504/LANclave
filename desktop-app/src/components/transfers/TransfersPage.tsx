@@ -9,7 +9,7 @@ export default function TransfersPage() {
 
   return (
     <div className="flex h-full w-full">
-      <div className="flex-1 border-r border-slate-800">
+      <div className="flex-1 border-r border-border">
         <TransferListPanel
           transfers={transfers}
           activeFilter={activeFilter}

@@ -19,7 +19,7 @@ const filters: { key: TransferFilter; label: string }[] = [
 
 function iconForTransfer(direction: "upload" | "download"): ReactNode {
   return (
-    <svg className="h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <svg className="h-5 w-5 text-content-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       {direction === "upload" ? (
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
       ) : (
@@ -63,7 +63,7 @@ function statusBadge(status: Transfer["status"]): React.ReactNode {
   switch (status) {
     case "completed":
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
+        <span className="inline-flex items-center gap-1 rounded-full bg-ok/10 px-2 py-0.5 text-[11px] font-medium text-ok">
           <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
           </svg>
@@ -72,7 +72,7 @@ function statusBadge(status: Transfer["status"]): React.ReactNode {
       );
     case "failed":
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-red-400/10 px-2 py-0.5 text-[11px] font-medium text-red-400">
+        <span className="inline-flex items-center gap-1 rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger">
           <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
           </svg>
@@ -81,7 +81,7 @@ function statusBadge(status: Transfer["status"]): React.ReactNode {
       );
     case "in_progress":
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-sky-400/10 px-2 py-0.5 text-[11px] font-medium text-sky-400">
+        <span className="inline-flex items-center gap-1 rounded-full bg-action/10 px-2 py-0.5 text-[11px] font-medium text-action">
           <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z" />
@@ -91,7 +91,7 @@ function statusBadge(status: Transfer["status"]): React.ReactNode {
       );
     case "pending":
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-slate-400/10 px-2 py-0.5 text-[11px] font-medium text-slate-400">
+        <span className="inline-flex items-center gap-1 rounded-full bg-content-muted/10 px-2 py-0.5 text-[11px] font-medium text-content-muted">
           Pending
         </span>
       );
@@ -116,20 +116,20 @@ export default function TransferListPanel({
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="border-b border-slate-800 px-5 py-3">
-        <h2 className="text-sm font-semibold text-slate-200">Transfers</h2>
+      <div className="border-b border-border px-5 py-3">
+        <h2 className="text-sm font-semibold text-content">Transfers</h2>
       </div>
 
       {/* Filter tabs */}
-      <div className="flex gap-4 border-b border-slate-800 px-5 py-2">
+      <div className="flex gap-4 border-b border-border px-5 py-2">
         {filters.map((f) => (
           <button
             key={f.key}
             onClick={() => onFilterChange(f.key)}
             className={`text-xs font-medium transition-colors ${
               activeFilter === f.key
-                ? "text-sky-400"
-                : "text-slate-500 hover:text-slate-300"
+                ? "text-action"
+                : "text-content-faint hover:text-content"
             }`}
           >
             {f.label}
@@ -140,7 +140,7 @@ export default function TransferListPanel({
       {/* Transfer list */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {filtered.length === 0 ? (
-          <div className="p-8 text-center text-xs text-slate-600">
+          <div className="p-8 text-center text-xs text-content-faint">
             No transfers
           </div>
         ) : (
@@ -151,7 +151,7 @@ export default function TransferListPanel({
             return (
               <div 
                 key={t.id}
-                className="rounded-xl border border-slate-800/60 bg-slate-900/40 overflow-hidden transition-colors hover:border-slate-700/60"
+                className="rounded-xl border border-border bg-surface-raised overflow-hidden transition-colors hover:border-border-strong"
               >
                 {/* Header row (clickable) */}
                 <button
@@ -161,12 +161,12 @@ export default function TransferListPanel({
                   <span className="shrink-0">{iconForTransfer(t.direction)}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm font-medium text-slate-200">
+                      <span className="truncate text-sm font-medium text-content">
                         {t.fileName}
                       </span>
                       {statusBadge(t.status)}
                     </div>
-                    <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+                    <div className="mt-1 flex items-center justify-between text-xs text-content-faint">
                       <span className="truncate">
                         {t.direction === "upload" ? "To" : "From"} {t.peerName.length > 20 ? `${t.peerName.substring(0, 8)}...` : t.peerName}
                       </span>
@@ -177,9 +177,9 @@ export default function TransferListPanel({
                     </div>
                     
                     {(t.status === "in_progress" || t.status === "pending") && (
-                      <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-slate-800">
+                      <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-surface-active">
                         <div
-                          className="h-full rounded-full bg-sky-400 transition-all duration-300"
+                          className="h-full rounded-full bg-action transition-all duration-300"
                           style={{ width: `${percent}%` }}
                         />
                       </div>
@@ -187,7 +187,7 @@ export default function TransferListPanel({
                   </div>
                   
                   {/* Expand icon */}
-                  <div className="shrink-0 text-slate-500 pl-2">
+                  <div className="shrink-0 text-content-faint pl-2">
                     <svg
                       className={`h-4 w-4 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
                       fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
@@ -199,40 +199,40 @@ export default function TransferListPanel({
 
                 {/* Expanded Details */}
                 {isExpanded && (
-                  <div className="border-t border-slate-800/60 bg-slate-900/80 px-4 py-3">
+                  <div className="border-t border-border bg-surface-raised px-4 py-3">
                     <div className="grid grid-cols-2 gap-y-2 text-xs">
-                      <div className="text-slate-500">Speed</div>
-                      <div className="text-slate-300 text-right">{formatSpeed(t.speed) || "—"}</div>
+                      <div className="text-content-faint">Speed</div>
+                      <div className="text-content text-right">{formatSpeed(t.speed) || "—"}</div>
                       
-                      <div className="text-slate-500">Time Remaining</div>
-                      <div className="text-slate-300 text-right">{calcEta(t)}</div>
+                      <div className="text-content-faint">Time Remaining</div>
+                      <div className="text-content text-right">{calcEta(t)}</div>
                       
-                      <div className="text-slate-500">Started</div>
-                      <div className="text-slate-300 text-right">{formatTime(t.startedAt)}</div>
+                      <div className="text-content-faint">Started</div>
+                      <div className="text-content text-right">{formatTime(t.startedAt)}</div>
                     </div>
                     
                     {/* Actions */}
                     <div className="mt-4 flex gap-2">
                       {t.status === "in_progress" && (
                         <>
-                          <button disabled className="flex-1 rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-500 transition-colors opacity-50 cursor-not-allowed" title="Pause requires HTTP Range support">
+                          <button disabled className="flex-1 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content-faint transition-colors opacity-50 cursor-not-allowed" title="Pause requires HTTP Range support">
                             Pause
                           </button>
                           <button 
                             onClick={(e) => { e.stopPropagation(); cancelTransfer(t.id); }}
-                            className="flex-1 rounded-lg border border-red-800/50 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-950/30"
+                            className="flex-1 rounded-lg border border-danger-border px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger-bg"
                           >
                             Cancel
                           </button>
                         </>
                       )}
                       {t.status === "completed" && (
-                        <button className="flex w-full items-center justify-center gap-2 rounded-lg bg-sky-500/10 border border-sky-500/20 px-3 py-1.5 text-xs font-medium text-sky-400 transition-colors hover:bg-sky-500/20">
+                        <button className="flex w-full items-center justify-center gap-2 rounded-lg bg-action/10 border border-action/20 px-3 py-1.5 text-xs font-medium text-action transition-colors hover:bg-action/20">
                           Open File Location
                         </button>
                       )}
                       {t.status === "failed" && (
-                        <button className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800">
+                        <button className="flex w-full items-center justify-center gap-2 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active">
                           Retry
                         </button>
                       )}

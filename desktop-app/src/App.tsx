@@ -235,7 +235,7 @@ export default function App() {
 
   return (
     <TransferProvider>
-      <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
+      <div className="flex h-screen flex-col bg-surface text-content">
         <Header />
         <div className="flex flex-1 overflow-hidden">
           <Sidebar
@@ -251,7 +251,7 @@ export default function App() {
           />
           <main className="flex-1 overflow-hidden">
             {error && (
-              <div className="mx-4 mt-2 rounded-lg bg-red-950/50 px-4 py-2 text-xs text-red-200">
+              <div className="mx-4 mt-2 rounded-lg bg-danger-bg px-4 py-2 text-xs text-danger">
                 {error}
               </div>
             )}

@@ -1,1 +1,124 @@
 @import "tailwindcss";
+
+/*
+ * Semantic design tokens.
+ *
+ * Names describe ROLE, not colour, and they mirror the mobile token file
+ * (mobile-app/src/constants/colors.ts) one-for-one. Sharing a vocabulary is
+ * what lets a component move between the two apps almost verbatim.
+ *
+ * `action` is THE accent. It marks things you can act on and nothing else --
+ * using `text-action` forces the question "is this actually interactive?",
+ * which is how the accent keeps meaning something. Headings and decorative
+ * icons use `content` / `content-muted`.
+ */
+@theme {
+  --color-surface: #080c14; /* app background          */
+  --color-surface-raised: #0f1520; /* cards, panels, rows     */
+  --color-surface-inset: #070d18; /* wells, tracks, inputs   */
+  --color-surface-active: #141e30; /* selected / hovered row  */
+
+  --color-border: #1e2a3f;
+  --color-border-strong: #2a3a58;
+
+  --color-content: #e8edf5; /* primary text            */
+  --color-content-muted: #94a3b8; /* secondary text          */
+  --color-content-faint: #7c8ca4; /* labels, timestamps      */
+
+  --color-action: #0ea5e9; /* THE accent -- interactive only */
+  --color-action-hover: #38bdf8;
+  --color-action-pressed: #0369a1;
+  --color-on-action: #04121f; /* text on an action fill  */
+
+  --color-ok: #34d399;
+  --color-ok-bg: #052e16;
+  --color-ok-border: #064e3b;
+
+  --color-warn: #fbbf24;
+
+  --color-danger: #f87171;
+  --color-danger-bg: #1a0c0c;
+  --color-danger-border: #5b1a1a;
+}
+
+/*
+ * Light mode (U4).
+ *
+ * Only possible as one block like this because every component references
+ * semantic tokens rather than raw palette names. `data-theme` lets the user
+ * override the OS preference; the media query is the default.
+ */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --color-surface: #f6f8fc;
+    --color-surface-raised: #ffffff;
+    --color-surface-inset: #edf1f7;
+    --color-surface-active: #e2e9f3;
+
+    --color-border: #d8e0ec;
+    --color-border-strong: #b6c3d6;
+
+    --color-content: #0b1729;
+    --color-content-muted: #4a5a70;
+    --color-content-faint: #64748b;
+
+    --color-action: #0284c7;
+    --color-action-hover: #0369a1;
+    --color-action-pressed: #075985;
+    --color-on-action: #ffffff;
+
+    --color-ok: #047857;
+    --color-ok-bg: #ecfdf5;
+    --color-ok-border: #a7f3d0;
+
+    --color-warn: #b45309;
+
+    --color-danger: #b91c1c;
+    --color-danger-bg: #fef2f2;
+    --color-danger-border: #fecaca;
+  }
+}
+
+:root[data-theme="light"] {
+  --color-surface: #f6f8fc;
+  --color-surface-raised: #ffffff;
+  --color-surface-inset: #edf1f7;
+  --color-surface-active: #e2e9f3;
+
+  --color-border: #d8e0ec;
+  --color-border-strong: #b6c3d6;
+
+  --color-content: #0b1729;
+  --color-content-muted: #4a5a70;
+  --color-content-faint: #64748b;
+
+  --color-action: #0284c7;
+  --color-action-hover: #0369a1;
+  --color-action-pressed: #075985;
+  --color-on-action: #ffffff;
+
+  --color-ok: #047857;
+  --color-ok-bg: #ecfdf5;
+  --color-ok-border: #a7f3d0;
+
+  --color-warn: #b45309;
+
+  --color-danger: #b91c1c;
+  --color-danger-bg: #fef2f2;
+  --color-danger-border: #fecaca;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  background-color: var(--color-surface);
+  color: var(--color-content);
+}
+
+/* Visible keyboard focus everywhere (U3.4). Pointer clicks stay unringed. */
+:focus-visible {
+  outline: 2px solid var(--color-action-hover);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

@@ -11,7 +11,7 @@ interface FileListPanelProps {
 function iconForFile(file: FileEntry): ReactNode {
   if (file.is_directory) {
     return (
-      <svg className="h-5 w-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <svg className="h-5 w-5 text-warn" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
       </svg>
     );
@@ -20,14 +20,14 @@ function iconForFile(file: FileEntry): ReactNode {
   switch (ext) {
     case "pdf":
       return (
-        <svg className="h-5 w-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <svg className="h-5 w-5 text-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
         </svg>
       );
     case "mp4":
     case "mov":
       return (
-        <svg className="h-5 w-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <svg className="h-5 w-5 text-ok" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
         </svg>
       );
@@ -42,7 +42,7 @@ function iconForFile(file: FileEntry): ReactNode {
       );
     default:
       return (
-        <svg className="h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <svg className="h-5 w-5 text-content-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
         </svg>
       );
@@ -70,8 +70,8 @@ export default function FileListPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3">
-        <h2 className="text-sm font-semibold text-slate-200">Files</h2>
+      <div className="flex items-center justify-between border-b border-border px-5 py-3">
+        <h2 className="text-sm font-semibold text-content">Files</h2>
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -81,13 +81,13 @@ export default function FileListPanel({
             <div
               key={file.name}
               onClick={() => onSelect?.(file.name)}
-              className={`flex w-full items-center gap-3 border-b border-slate-800/50 px-5 py-3 text-left transition-colors ${onSelect ? 'cursor-pointer hover:bg-slate-800/30' : 'hover:bg-slate-800/10'}`}
+              className={`flex w-full items-center gap-3 border-b border-border px-5 py-3 text-left transition-colors ${onSelect ? 'cursor-pointer hover:bg-surface-active' : 'hover:bg-surface-active'}`}
             >
               <span className="shrink-0">{iconForFile(file)}</span>
               <div className="flex-1 min-w-0">
-                <p className="truncate text-sm text-slate-200">{file.name}</p>
+                <p className="truncate text-sm text-content">{file.name}</p>
               </div>
-              <span className="shrink-0 text-xs text-slate-500 mr-2">
+              <span className="shrink-0 text-xs text-content-faint mr-2">
                 {formatSize(file.size)}
               </span>
               {onDownload && !file.is_directory && (
@@ -97,7 +97,7 @@ export default function FileListPanel({
                     onDownload(file.name);
                   }}
                   disabled={isDownloading || downloadingName !== null}
-                  className="p-1.5 rounded-lg hover:bg-sky-500/20 text-sky-400 disabled:opacity-50 transition-colors"
+                  className="p-1.5 rounded-lg hover:bg-action/20 text-action disabled:opacity-50 transition-colors"
                   title="Download"
                 >
                   {isDownloading ? (

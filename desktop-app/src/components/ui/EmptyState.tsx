@@ -7,9 +7,9 @@ export default function EmptyState({
 }: EmptyStateProps) {
   return (
     <div className="flex h-full flex-col items-center justify-center text-center px-6">
-      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-slate-700/50 bg-slate-800/30">
+      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-border-strong bg-surface-active">
         <svg
-          className="h-8 w-8 text-slate-500"
+          className="h-8 w-8 text-content-faint"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -27,7 +27,7 @@ export default function EmptyState({
           />
         </svg>
       </div>
-      <p className="text-sm text-slate-500">{message}</p>
+      <p className="text-sm text-content-faint">{message}</p>
     </div>
   );
 }

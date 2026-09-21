@@ -110,11 +110,11 @@ export default function ConnectionModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-2xl border border-slate-700/50 bg-slate-900 shadow-2xl shadow-sky-500/5">
+      <div className="w-full max-w-sm rounded-2xl border border-border-strong bg-surface-raised shadow-2xl shadow-action/5">
         <div className="flex justify-end px-4 pt-4">
           <button
             onClick={onClose}
-            className="flex h-6 w-6 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-300"
+            className="flex h-6 w-6 items-center justify-center rounded-full text-content-faint transition-colors hover:bg-surface-active hover:text-content"
           >
             <svg
               className="h-4 w-4"
@@ -133,7 +133,7 @@ export default function ConnectionModal({
         </div>
 
         <div className="px-8 pb-8 pt-2 text-center">
-          <h2 className="text-lg font-semibold text-slate-100">
+          <h2 className="text-lg font-semibold text-content">
             {confirmed
               ? "Paired Successfully"
               : fingerprint
@@ -145,14 +145,14 @@ export default function ConnectionModal({
             <>
               {initialAddr ? (
                 <>
-                  <div className="mx-auto mt-5 flex h-16 w-16 items-center justify-center rounded-full bg-sky-500/20 text-xl font-bold text-sky-400">
+                  <div className="mx-auto mt-5 flex h-16 w-16 items-center justify-center rounded-full bg-action/20 text-xl font-bold text-action">
                     {initialAddr[0]?.toUpperCase() ?? "?"}
                   </div>
-                  <p className="mt-3 text-sm text-slate-400">{initialAddr}</p>
+                  <p className="mt-3 text-sm text-content-muted">{initialAddr}</p>
                 </>
               ) : (
                 <div className="mt-4 text-left">
-                  <label className="text-xs font-medium text-slate-400">
+                  <label className="text-xs font-medium text-content-muted">
                     Enter Peer IP Address
                   </label>
                   <input
@@ -160,30 +160,30 @@ export default function ConnectionModal({
                     placeholder="e.g. 192.168.43.1:8377"
                     value={customAddr}
                     onChange={(e) => setCustomAddr(e.target.value)}
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500"
+                    className="mt-1.5 w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-content outline-none focus:border-action"
                   />
                 </div>
               )}
 
               {loading && (
-                <p className="mt-4 text-sm text-slate-500">
+                <p className="mt-4 text-sm text-content-faint">
                   Connecting to peer…
                 </p>
               )}
 
-              {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+              {error && <p className="mt-4 text-sm text-danger">{error}</p>}
 
               <div className="mt-6 flex gap-3">
                 <button
                   onClick={onClose}
-                  className="flex-1 rounded-lg border border-slate-700 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800"
+                  className="flex-1 rounded-lg border border-border-strong px-4 py-2.5 text-sm font-medium text-content transition-colors hover:bg-surface-active"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleInitiate}
                   disabled={loading}
-                  className="flex-1 rounded-lg bg-sky-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-sky-400 disabled:opacity-40"
+                  className="flex-1 rounded-lg bg-action px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-action-hover disabled:opacity-40"
                 >
                   {loading ? "Connecting…" : "Connect"}
                 </button>
@@ -193,30 +193,30 @@ export default function ConnectionModal({
 
           {fingerprint && !confirmed && (
             <>
-              <div className="mx-auto mt-6 flex w-fit items-center justify-center gap-3 rounded-xl border border-sky-500/20 bg-sky-950/30 px-6 py-4">
-                <span className="font-mono text-4xl font-bold tracking-[0.15em] text-sky-400">
+              <div className="mx-auto mt-6 flex w-fit items-center justify-center gap-3 rounded-xl border border-action/20 bg-action/10 px-6 py-4">
+                <span className="font-mono text-4xl font-bold tracking-[0.15em] text-action">
                   {fingerprint}
                 </span>
               </div>
-              <p className="mt-3 text-xs text-slate-500">
+              <p className="mt-3 text-xs text-content-faint">
                 Compare this code with the peer's screen. If they match, pairing
                 is safe.
               </p>
 
-              {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
+              {error && <p className="mt-2 text-sm text-danger">{error}</p>}
 
               <div className="mt-6 flex gap-3">
                 <button
                   onClick={onClose}
                   disabled={loading}
-                  className="flex-1 rounded-lg border border-red-800/50 px-4 py-2.5 text-sm font-medium text-red-400 transition-colors hover:bg-red-950/30 disabled:opacity-40"
+                  className="flex-1 rounded-lg border border-danger-border px-4 py-2.5 text-sm font-medium text-danger transition-colors hover:bg-danger-bg disabled:opacity-40"
                 >
                   Reject
                 </button>
                 <button
                   onClick={handleAccept}
                   disabled={loading}
-                  className="flex-1 rounded-lg bg-sky-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-sky-400 disabled:opacity-40"
+                  className="flex-1 rounded-lg bg-action px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-action-hover disabled:opacity-40"
                 >
                   {loading ? "Confirming…" : "Accept"}
                 </button>
@@ -226,9 +226,9 @@ export default function ConnectionModal({
 
           {confirmed && (
             <>
-              <div className="mx-auto mt-6 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20">
+              <div className="mx-auto mt-6 flex h-16 w-16 items-center justify-center rounded-full bg-ok/20">
                 <svg
-                  className="h-8 w-8 text-emerald-400"
+                  className="h-8 w-8 text-ok"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -241,7 +241,7 @@ export default function ConnectionModal({
                   />
                 </svg>
               </div>
-              <p className="mt-4 text-sm text-emerald-400">
+              <p className="mt-4 text-sm text-ok">
                 This device is now paired.
               </p>
             </>

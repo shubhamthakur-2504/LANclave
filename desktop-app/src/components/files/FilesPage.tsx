@@ -9,10 +9,10 @@ interface FilesPageProps {
 export default function FilesPage({ files }: FilesPageProps) {
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-4 border-b border-slate-800 bg-slate-900/50 px-6 py-4">
+      <div className="flex items-center gap-4 border-b border-border bg-surface-raised px-6 py-4">
         <div>
-          <h2 className="text-lg font-semibold text-slate-100">Local Sandbox</h2>
-          <p className="text-xs text-slate-400">Files stored on this computer</p>
+          <h2 className="text-lg font-semibold text-content">Local Sandbox</h2>
+          <p className="text-xs text-content-muted">Files stored on this computer</p>
         </div>
       </div>
       
