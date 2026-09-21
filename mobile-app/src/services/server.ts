@@ -3,6 +3,7 @@ import { getOrCreateDeviceIdentity } from "./identity";
 import { getSettings } from "./settings";
 import { getPairedPeers } from "./pairing";
 import { Platform } from "react-native";
+import { startPresence, stopPresence } from "./presence";
 
 let serverDesiredOn = false; // tracks user intent: should the server be running?
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
@@ -63,11 +64,15 @@ export async function startServer(): Promise<void> {
   }
 
   startWatchdog();
+  // Announce to paired peers and start the per-peer heartbeat.
+  startPresence();
 }
 
 export function stopServer(): void {
   serverDesiredOn = false;
   stopWatchdog();
+  // Best-effort bye so peers show us offline immediately.
+  stopPresence().catch(() => {});
   if (Platform.OS === 'android') {
     ExpoNativeServerModule.stopServer();
   }

@@ -93,6 +93,24 @@ export async function savePairedPeer(peer: { id: string; name: string; ip: strin
   updateNativeServerPairedDevices().catch(err => console.error("Failed to update native server pairings", err));
 }
 
+/**
+ * Record a paired peer's current address. Hotspot DHCP leases rotate, so the
+ * address saved at pairing time goes stale; presence calls this whenever it
+ * reaches a peer somewhere new. No-op if nothing changed.
+ */
+export async function updatePairedPeerAddress(
+  peerId: string,
+  ip: string,
+  port: number,
+): Promise<void> {
+  const list = await getPairedPeers();
+  const peer = list.find((p) => p.id === peerId);
+  if (!peer || (peer.ip === ip && peer.port === port)) return;
+  peer.ip = ip;
+  peer.port = port;
+  await SecureStore.setItemAsync(PAIRED_PEERS_KEY, JSON.stringify(list));
+}
+
 /** Check if a peer ID is already paired */
 export async function isPeerPaired(peerId: string): Promise<boolean> {
   const list = await getPairedPeers();
