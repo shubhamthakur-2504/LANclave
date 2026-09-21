@@ -138,7 +138,11 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}) {
  */
 async function probe(peer: PairedPeerRecord, a: Addr): Promise<boolean> {
   try {
-    const res = await fetchWithTimeout(`http://${a.ip}:${a.port}/health`);
+    // Signed so the peer can count this heartbeat as contact from us (and
+    // learn our current address). /health still answers unsigned probes.
+    const res = await fetchWithTimeout(`http://${a.ip}:${a.port}/health`, {
+      headers: await getAuthHeaders(),
+    });
     if (!res.ok) return false;
     const body = await res.json();
     if (body?.app !== "lanclave" || body?.device_id !== peer.id) return false;

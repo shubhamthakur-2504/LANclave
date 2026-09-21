@@ -8,8 +8,9 @@
 //! Three signals feed the same `last_seen` timestamp:
 //!
 //! 1. An outbound heartbeat to each paired peer's known address.
-//! 2. Any authenticated inbound request from that peer — free, and since both
-//!    sides heartbeat, each side hears from the other without extra traffic.
+//! 2. Any authenticated inbound request from that peer, including its signed
+//!    heartbeat to our `/health` -- so each side also hears from the other
+//!    without extra traffic, and learns the other's current address.
 //! 3. Explicit `hello` / `bye` announcements.
 //!
 //! `hello`/`bye` only make transitions instant. They can never be the source
@@ -273,7 +274,17 @@ impl PresenceContext {
     /// a stale address may now belong to an entirely different device.
     async fn probe(&self, device_id: &str, addr: &str) -> bool {
         let url = format!("http://{addr}/health");
-        let Ok(res) = CLIENT.get(&url).send().await else {
+        // Signed so the peer can count this heartbeat as contact from us and
+        // learn our current address. /health still answers unsigned probes.
+        let (ts, sig) = self.sign_headers();
+        let Ok(res) = CLIENT
+            .get(&url)
+            .header(HEADER_DEVICE_ID, &self.device_id)
+            .header(HEADER_TIMESTAMP, ts)
+            .header(HEADER_SIGNATURE, sig)
+            .send()
+            .await
+        else {
             return false;
         };
         let Ok(body) = res.json::<serde_json::Value>().await else {

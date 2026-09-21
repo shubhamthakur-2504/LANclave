@@ -56,31 +56,24 @@ class NativeServer(
                 return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Timestamp expired")
             }
 
-            try {
-                val payload = "$reqDeviceId:$reqTimestamp".toByteArray(Charsets.UTF_8)
-                val signatureBytes = android.util.Base64.decode(reqSignature, android.util.Base64.DEFAULT)
-                val pubKeyBytes = android.util.Base64.decode(reqDeviceId, android.util.Base64.DEFAULT)
-
-                val x509Prefix = byteArrayOf(
-                    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00
-                )
-                val x509Bytes = x509Prefix + pubKeyBytes
-                val spec = java.security.spec.X509EncodedKeySpec(x509Bytes)
-                val factory = java.security.KeyFactory.getInstance("Ed25519")
-                val publicKey = factory.generatePublic(spec)
-
-                val verifier = java.security.Signature.getInstance("Ed25519")
-                verifier.initVerify(publicKey)
-                verifier.update(payload)
-                if (!verifier.verify(signatureBytes)) {
-                    return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Invalid signature")
-                }
+            val valid = try {
+                verifyEd25519(reqDeviceId, reqTimestamp, reqSignature)
             } catch (e: Exception) {
                 return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Invalid signature format")
+            }
+            if (!valid) {
+                return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Invalid signature")
             }
 
             // Verified request from a paired peer: that is a liveness signal.
             PresenceRegistry.markSeen(reqDeviceId, session.remoteIpAddress)
+        } else {
+            // /health stays open for discovery, but a paired peer's heartbeat
+            // arrives signed. Record it as contact when the signature checks
+            // out -- that is how this side learns a peer's new address after
+            // a DHCP lease change. Never rejects: bad or missing headers just
+            // mean an ordinary anonymous probe.
+            recordSignedHealthProbe(session)
         }
 
         try {
@@ -175,6 +168,37 @@ class NativeServer(
         } catch (e: Exception) {
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, e.message ?: "Unknown error")
         }
+    }
+
+    /** Ed25519 check of "deviceId:timestamp". Throws on malformed input. */
+    private fun verifyEd25519(deviceId: String, timestamp: String, signature: String): Boolean {
+        val payload = "$deviceId:$timestamp".toByteArray(Charsets.UTF_8)
+        val signatureBytes = android.util.Base64.decode(signature, android.util.Base64.DEFAULT)
+        val pubKeyBytes = android.util.Base64.decode(deviceId, android.util.Base64.DEFAULT)
+
+        val x509Prefix = byteArrayOf(
+            0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00
+        )
+        val spec = java.security.spec.X509EncodedKeySpec(x509Prefix + pubKeyBytes)
+        val publicKey = java.security.KeyFactory.getInstance("Ed25519").generatePublic(spec)
+
+        val verifier = java.security.Signature.getInstance("Ed25519")
+        verifier.initVerify(publicKey)
+        verifier.update(payload)
+        return verifier.verify(signatureBytes)
+    }
+
+    private fun recordSignedHealthProbe(session: IHTTPSession) {
+        val id = session.headers["x-lanclave-device-id"] ?: return
+        val ts = session.headers["x-lanclave-timestamp"] ?: return
+        val sig = session.headers["x-lanclave-signature"] ?: return
+        if (!pairedDevices.contains(id)) return
+
+        val tsSecs = ts.toLongOrNull() ?: return
+        if (kotlin.math.abs(System.currentTimeMillis() / 1000 - tsSecs) > 30) return
+
+        val ok = try { verifyEd25519(id, ts, sig) } catch (_: Exception) { false }
+        if (ok) PresenceRegistry.markSeen(id, session.remoteIpAddress)
     }
 
     /**

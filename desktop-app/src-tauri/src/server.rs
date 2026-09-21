@@ -123,6 +123,34 @@ async fn presence_bye_handler(
     Ok(axum::Json(serde_json::json!({ "status": "ok" })))
 }
 
+/// `/health` stays open for discovery, but a paired peer's heartbeat arrives
+/// signed. Record it as contact when the signature verifies -- that is how
+/// this side learns a peer's new address after a DHCP lease change. Never
+/// rejects: missing or bad headers just mean an ordinary anonymous probe.
+fn record_signed_health_probe(
+    state: &AppState,
+    remote: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: &axum::http::HeaderMap,
+) {
+    if !headers.contains_key(crate::pairing::HEADER_SIGNATURE) {
+        return;
+    }
+    let Ok(device_id) = crate::pairing::check_request(&state.auth, headers) else {
+        return;
+    };
+    if device_id.is_empty() {
+        return; // auth disabled (tests): no identity to attribute
+    }
+    let was_online = state.presence.is_online(&device_id);
+    let addr = remote.map(|axum::Extension(ci)| {
+        format!("{}:{}", ci.0.ip(), crate::presence::SERVER_PORT)
+    });
+    state.presence.mark_seen(&device_id, None, addr);
+    if !was_online {
+        notify_presence(state);
+    }
+}
+
 fn notify_presence(state: &AppState) {
     if let Some(app) = &state.app_handle {
         use tauri::Emitter;
@@ -155,7 +183,11 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
         )
         .route(
             "/health",
-            axum::routing::get(|axum::extract::State(state): axum::extract::State<Arc<AppState>>| async move {
+            axum::routing::get(|axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+                                remote: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+                                headers: axum::http::HeaderMap| async move {
+                record_signed_health_probe(&state, remote, &headers);
+
                 let display_name = state
                     .settings
                     .read()
