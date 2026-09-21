@@ -104,14 +104,14 @@ export default function SettingsScreen() {
   if (!settings) {
     return (
       <View style={[styles.root, { justifyContent: "center", alignItems: "center" }]}>
-        <ActivityIndicator color={C.accent} />
+        <ActivityIndicator color={C.action} />
       </View>
     );
   }
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
       <SafeAreaView style={styles.safe}>
         {/* Header */}
         <View style={styles.header}>
@@ -130,7 +130,7 @@ export default function SettingsScreen() {
               style={styles.input}
               value={localDisplayName}
               onChangeText={setLocalDisplayName}
-              placeholderTextColor={C.textMuted}
+              placeholderTextColor={C.contentFaint}
               placeholder="e.g. My Phone"
             />
             {isNameDirty && (
@@ -193,16 +193,16 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.bg },
+  root: { flex: 1, backgroundColor: C.surface },
   safe: { flex: 1 },
   header: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14 },
   title: {
     fontSize: 26,
     fontWeight: "700",
-    color: C.accent,
+    color: C.action,
     letterSpacing: -0.5,
   },
-  subtitle: { fontSize: 13, color: C.textSecond, marginTop: 4 },
+  subtitle: { fontSize: 13, color: C.contentMuted, marginTop: 4 },
   divider: {
     height: 1,
     backgroundColor: C.border,
@@ -219,27 +219,27 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 16,
     fontWeight: "600",
-    color: C.textPrimary,
+    color: C.content,
     marginBottom: 4,
   },
   hint: {
     fontSize: 13,
-    color: C.textSecond,
+    color: C.contentMuted,
     marginBottom: 12,
     lineHeight: 18,
   },
   input: {
-    backgroundColor: C.surface,
+    backgroundColor: C.surfaceRaised,
     borderWidth: 1,
     borderColor: C.borderStrong,
     borderRadius: 12,
-    color: C.textPrimary,
+    color: C.content,
     paddingHorizontal: 16,
     paddingVertical: 12,
     fontSize: 16,
   },
   pathCard: {
-    backgroundColor: C.surfaceRaised,
+    backgroundColor: C.surfaceActive,
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
@@ -247,13 +247,13 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   pathCardTitle: {
-    color: C.textPrimary,
+    color: C.content,
     fontWeight: "600",
     fontSize: 15,
     marginBottom: 4,
   },
   pathCardUri: {
-    color: C.textMuted,
+    color: C.contentFaint,
     fontSize: 11,
   },
   btnRow: {
@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   btnPrimary: {
-    backgroundColor: C.accent,
+    backgroundColor: C.action,
   },
   btnTextPrimary: {
     color: "#fff",
@@ -276,12 +276,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   btnSecondary: {
-    backgroundColor: C.surface,
+    backgroundColor: C.surfaceRaised,
     borderWidth: 1,
     borderColor: C.borderStrong,
   },
   btnTextSecondary: {
-    color: C.textPrimary,
+    color: C.content,
     fontWeight: "600",
     fontSize: 14,
   },

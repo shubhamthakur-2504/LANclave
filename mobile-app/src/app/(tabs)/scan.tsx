@@ -127,7 +127,7 @@ export default function ScanScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
 
       <SafeAreaView style={styles.safe}>
         {/* Header */}
@@ -145,7 +145,7 @@ export default function ScanScreen() {
               style={[styles.scanBtn, isScanning && styles.scanBtnDisabled]}
             >
               {isScanning ? (
-                <ActivityIndicator size="small" color={C.accent} />
+                <ActivityIndicator size="small" color={C.action} />
               ) : (
                 <Text style={styles.scanBtnText}>Scan</Text>
               )}
@@ -203,7 +203,7 @@ export default function ScanScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.bg },
+  root: { flex: 1, backgroundColor: C.surface },
   safe: { flex: 1 },
 
   // Header
@@ -221,14 +221,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   scanBtnDisabled: { opacity: 0.5 },
-  scanBtnText: { color: C.accent, fontSize: 13, fontWeight: "600" },
+  scanBtnText: { color: C.action, fontSize: 13, fontWeight: "600" },
   title: {
     fontSize: 26,
     fontWeight: "700",
-    color: C.accent,
+    color: C.action,
     letterSpacing: -0.5,
   },
-  subtitle: { marginTop: 4, fontSize: 13, color: C.textSecond },
+  subtitle: { marginTop: 4, fontSize: 13, color: C.contentMuted },
 
   divider: {
     height: 1,
@@ -248,7 +248,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: C.border,
-    backgroundColor: C.surface,
+    backgroundColor: C.surfaceRaised,
     paddingVertical: 36,
     paddingHorizontal: 20,
     marginTop: 20,
@@ -257,12 +257,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 15,
     fontWeight: "600",
-    color: C.textPrimary,
+    color: C.content,
     marginBottom: 6,
   },
   emptyHint: {
     fontSize: 12,
-    color: C.textSecond,
+    color: C.contentMuted,
     textAlign: "center",
     lineHeight: 18,
   },

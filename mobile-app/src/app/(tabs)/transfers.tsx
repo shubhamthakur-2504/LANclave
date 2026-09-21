@@ -38,7 +38,7 @@ export default function TransfersScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
       <SafeAreaView style={styles.safe}>
         {/* Header */}
         <View style={styles.header}>
@@ -128,7 +128,7 @@ export default function TransfersScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.bg },
+  root: { flex: 1, backgroundColor: C.surface },
   safe: { flex: 1 },
 
   // Header
@@ -136,10 +136,10 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 26,
     fontWeight: "700",
-    color: C.accent,
+    color: C.action,
     letterSpacing: -0.5,
   },
-  subtitle: { marginTop: 4, fontSize: 13, color: C.textSecond },
+  subtitle: { marginTop: 4, fontSize: 13, color: C.contentMuted },
 
   divider: {
     height: 1,
@@ -151,7 +151,7 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 40 },
 
   card: {
-    backgroundColor: C.surface,
+    backgroundColor: C.surfaceRaised,
     borderWidth: 1,
     borderColor: C.border,
     borderRadius: 16,
@@ -167,28 +167,28 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontWeight: '600',
-    color: C.textPrimary,
+    color: C.content,
   },
   statusBadge: {
     fontSize: 10,
     fontWeight: '700',
-    color: C.accent,
+    color: C.action,
     backgroundColor: C.borderStrong,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
   },
   statusCompleted: {
-    color: C.online,
-    backgroundColor: C.onlineBg,
+    color: C.ok,
+    backgroundColor: C.okBg,
   },
   statusFailed: {
-    color: C.errorText,
-    backgroundColor: C.errorBg,
+    color: C.danger,
+    backgroundColor: C.dangerBg,
   },
   peerInfo: {
     fontSize: 12,
-    color: C.textSecond,
+    color: C.contentMuted,
     marginTop: 4,
   },
   
@@ -203,11 +203,11 @@ const styles = StyleSheet.create({
   },
   progressText: {
     fontSize: 12,
-    color: C.textPrimary,
+    color: C.content,
   },
   speedText: {
     fontSize: 12,
-    color: C.textMuted,
+    color: C.contentFaint,
   },
   progressBarBg: {
     height: 6,
@@ -217,7 +217,7 @@ const styles = StyleSheet.create({
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: C.accent,
+    backgroundColor: C.action,
     borderRadius: 3,
   },
   
@@ -231,15 +231,15 @@ const styles = StyleSheet.create({
   cancelBtn: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: C.errorBg,
+    backgroundColor: C.dangerBg,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: C.errorBorder,
+    borderColor: C.dangerBorder,
   },
   cancelText: {
     fontSize: 13,
     fontWeight: '600',
-    color: C.errorText,
+    color: C.danger,
   },
 
   sep: { height: 12 },
@@ -250,7 +250,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: C.border,
-    backgroundColor: C.surface,
+    backgroundColor: C.surfaceRaised,
     paddingVertical: 36,
     paddingHorizontal: 20,
     marginTop: 20,
@@ -259,12 +259,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 15,
     fontWeight: "600",
-    color: C.textPrimary,
+    color: C.content,
     marginBottom: 6,
   },
   emptyHint: {
     fontSize: 12,
-    color: C.textSecond,
+    color: C.contentMuted,
     textAlign: "center",
     lineHeight: 18,
   },

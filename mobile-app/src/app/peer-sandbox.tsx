@@ -52,7 +52,7 @@ export default function PeerSandboxScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
 
       <SafeAreaView style={styles.safe}>
         {/* Header with Back Button */}
@@ -107,7 +107,7 @@ export default function PeerSandboxScreen() {
           ListHeaderComponent={
             isFetching ? (
               <View style={styles.loading}>
-                <ActivityIndicator color={C.accent} size="small" />
+                <ActivityIndicator color={C.action} size="small" />
                 <Text style={styles.loadingText}>Fetching remote file list…</Text>
               </View>
             ) : null
@@ -148,7 +148,7 @@ export default function PeerSandboxScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.bg },
+  root: { flex: 1, backgroundColor: C.surface },
   safe: { flex: 1 },
 
   // Header
@@ -160,24 +160,24 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   backBtn: {
-    backgroundColor: C.surfaceRaised,
+    backgroundColor: C.surfaceActive,
     borderWidth: 1,
     borderColor: C.borderStrong,
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
-  backText: { fontSize: 13, fontWeight: "600", color: C.accent },
+  backText: { fontSize: 13, fontWeight: "600", color: C.action },
   refreshBtn: {
     backgroundColor: C.borderStrong,
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
-  refreshText: { fontSize: 12, fontWeight: "600", color: C.accent },
+  refreshText: { fontSize: 12, fontWeight: "600", color: C.action },
 
-  title: { fontSize: 24, fontWeight: "700", color: C.textPrimary },
-  subtitle: { marginTop: 2, fontSize: 12, color: C.textSecond },
+  title: { fontSize: 24, fontWeight: "700", color: C.content },
+  subtitle: { marginTop: 2, fontSize: 12, color: C.contentMuted },
 
   divider: {
     height: 1,
@@ -192,14 +192,14 @@ const styles = StyleSheet.create({
   errorBanner: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: C.errorBorder,
-    backgroundColor: C.errorBg,
+    borderColor: C.dangerBorder,
+    backgroundColor: C.dangerBg,
     paddingHorizontal: 14,
     paddingVertical: 10,
     marginHorizontal: 20,
     marginTop: 12,
   },
-  errorText: { fontSize: 12, color: C.errorText, lineHeight: 18 },
+  errorText: { fontSize: 12, color: C.danger, lineHeight: 18 },
 
   // Loading
   loading: {
@@ -208,7 +208,7 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 20,
   },
-  loadingText: { fontSize: 13, color: C.textMuted },
+  loadingText: { fontSize: 13, color: C.contentFaint },
 
   // Empty State
   empty: {
@@ -217,7 +217,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: C.border,
-    backgroundColor: C.surface,
+    backgroundColor: C.surfaceRaised,
     paddingVertical: 36,
     paddingHorizontal: 20,
     marginTop: 20,
@@ -226,12 +226,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 15,
     fontWeight: "600",
-    color: C.textPrimary,
+    color: C.content,
     marginBottom: 6,
   },
   emptyHint: {
     fontSize: 12,
-    color: C.textSecond,
+    color: C.contentMuted,
     textAlign: "center",
     lineHeight: 18,
   },

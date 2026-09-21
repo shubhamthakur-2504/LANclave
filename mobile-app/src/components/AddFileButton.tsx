@@ -24,9 +24,9 @@ import { C } from "@/constants/colors";
 
 // ─── Local token overrides (error colours not in shared palette) ──────────────
 const ERR = {
-  bg:     C.errorBg,
-  border: C.errorBorder,
-  text:   C.errorText,
+  bg:     C.dangerBg,
+  border: C.dangerBorder,
+  text:   C.danger,
 } as const;
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -139,13 +139,13 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: C.accentBtn,
+    backgroundColor: C.action,
     alignItems: "center",
     justifyContent: "center",
     elevation: 8,
   },
   fabPressed: {
-    backgroundColor: C.accentBtnDim,
+    backgroundColor: C.actionPressed,
     transform: [{ scale: 0.95 }],
   },
   fabBusy: {

@@ -45,7 +45,7 @@ export default function MySandboxScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
 
       <SafeAreaView style={styles.safe}>
         {/* Header */}
@@ -63,8 +63,8 @@ export default function MySandboxScreen() {
                <Switch 
                   value={serverVisible} 
                   onValueChange={toggleServer} 
-                  trackColor={{ false: C.borderStrong, true: C.accent }}
-                  thumbColor={C.textPrimary}
+                  trackColor={{ false: C.borderStrong, true: C.action }}
+                  thumbColor={C.content}
                   style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
                />
             </View>
@@ -82,7 +82,7 @@ export default function MySandboxScreen() {
           ListHeaderComponent={
             filesLoading ? (
               <View style={styles.loading}>
-                <ActivityIndicator color={C.accent} size="small" />
+                <ActivityIndicator color={C.action} size="small" />
                 <Text style={styles.loadingText}>Loading files…</Text>
               </View>
             ) : null
@@ -109,7 +109,7 @@ export default function MySandboxScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.bg },
+  root: { flex: 1, backgroundColor: C.surface },
   safe: { flex: 1 },
 
   // Header
@@ -122,7 +122,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 26,
     fontWeight: "700",
-    color: C.accent,
+    color: C.action,
     letterSpacing: -0.5,
   },
   headerRow2: {
@@ -138,12 +138,12 @@ const styles = StyleSheet.create({
   },
   toggleLabel: {
     fontSize: 12,
-    color: C.textSecond,
+    color: C.contentMuted,
     fontWeight: "600",
   },
-  subtitle: { fontSize: 13, color: C.textSecond },
+  subtitle: { fontSize: 13, color: C.contentMuted },
   badge: {
-    backgroundColor: C.surfaceRaised,
+    backgroundColor: C.surfaceActive,
     borderWidth: 1,
     borderColor: C.borderStrong,
     borderRadius: 20,
@@ -153,7 +153,7 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 11,
     fontWeight: "600",
-    color: C.textPrimary,
+    color: C.content,
   },
 
   divider: {
@@ -172,7 +172,7 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 20,
   },
-  loadingText: { fontSize: 13, color: C.textMuted },
+  loadingText: { fontSize: 13, color: C.contentFaint },
 
   // Empty state
   empty: {
@@ -181,7 +181,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: C.border,
-    backgroundColor: C.surface,
+    backgroundColor: C.surfaceRaised,
     paddingVertical: 36,
     paddingHorizontal: 20,
     marginTop: 20,
@@ -190,12 +190,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 15,
     fontWeight: "600",
-    color: C.textPrimary,
+    color: C.content,
     marginBottom: 6,
   },
   emptyHint: {
     fontSize: 12,
-    color: C.textSecond,
+    color: C.contentMuted,
     textAlign: "center",
     lineHeight: 18,
   },

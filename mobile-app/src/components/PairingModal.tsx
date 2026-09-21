@@ -41,7 +41,7 @@ export function PairingModal({
             {fingerprint ? (
               <Text style={styles.codeText}>{fingerprint}</Text>
             ) : (
-              <ActivityIndicator color={C.accent} size="small" />
+              <ActivityIndicator color={C.action} size="small" />
             )}
           </View>
 
@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 360,
     borderRadius: 20,
-    backgroundColor: C.surface,
+    backgroundColor: C.surfaceRaised,
     borderWidth: 1,
     borderColor: C.borderStrong,
     padding: 24,
@@ -109,17 +109,17 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: "700",
-    color: C.textPrimary,
+    color: C.content,
     marginBottom: 6,
   },
   subtitle: {
     fontSize: 13,
-    color: C.textSecond,
+    color: C.contentMuted,
     textAlign: "center",
     marginBottom: 20,
   },
   highlight: {
-    color: C.textPrimary,
+    color: C.content,
     fontWeight: "600",
   },
 
@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: "#0C1F38",
     borderWidth: 1,
-    borderColor: C.accent,
+    borderColor: C.action,
     paddingVertical: 16,
     alignItems: "center",
     justifyContent: "center",
@@ -139,13 +139,13 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: "700",
     letterSpacing: 8,
-    color: C.accent,
+    color: C.action,
     fontFamily: "monospace",
   },
 
   instruction: {
     fontSize: 12,
-    color: C.textSecond,
+    color: C.contentMuted,
     textAlign: "center",
     lineHeight: 18,
     marginBottom: 24,
@@ -154,7 +154,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   boldText: {
-    color: C.textPrimary,
+    color: C.content,
     fontWeight: "600",
   },
 
@@ -171,17 +171,17 @@ const styles = StyleSheet.create({
     borderColor: C.borderStrong,
     paddingVertical: 12,
     alignItems: "center",
-    backgroundColor: C.bg,
+    backgroundColor: C.surface,
   },
   cancelText: {
     fontSize: 13,
     fontWeight: "600",
-    color: C.textSecond,
+    color: C.contentMuted,
   },
   confirmBtn: {
     flex: 1.4,
     borderRadius: 12,
-    backgroundColor: C.accentBtn,
+    backgroundColor: C.action,
     paddingVertical: 12,
     alignItems: "center",
   },

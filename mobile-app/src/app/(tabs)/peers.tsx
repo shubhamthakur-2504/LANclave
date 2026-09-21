@@ -76,7 +76,7 @@ export default function PairedPeersScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
 
       <SafeAreaView style={styles.safe}>
         {/* Header */}
@@ -185,7 +185,7 @@ export default function PairedPeersScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.bg },
+  root: { flex: 1, backgroundColor: C.surface },
   safe: { flex: 1 },
 
   // Header
@@ -198,17 +198,17 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 26,
     fontWeight: "700",
-    color: C.accent,
+    color: C.action,
     letterSpacing: -0.5,
   },
-  subtitle: { marginTop: 4, fontSize: 13, color: C.textSecond },
+  subtitle: { marginTop: 4, fontSize: 13, color: C.contentMuted },
   refreshBtn: {
     backgroundColor: C.borderStrong,
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 5,
   },
-  refreshText: { fontSize: 11, fontWeight: "600", color: C.accent },
+  refreshText: { fontSize: 11, fontWeight: "600", color: C.action },
 
   divider: {
     height: 1,
@@ -224,7 +224,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: C.border,
-    backgroundColor: C.surface,
+    backgroundColor: C.surfaceRaised,
     padding: 16,
   },
   cardHeader: {
@@ -242,10 +242,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { fontSize: 16, fontWeight: "700", color: C.accent },
+  avatarText: { fontSize: 16, fontWeight: "700", color: C.action },
   info: { flex: 1 },
-  name: { fontSize: 15, fontWeight: "600", color: C.textPrimary },
-  ip: { marginTop: 2, fontSize: 12, color: C.textSecond },
+  name: { fontSize: 15, fontWeight: "600", color: C.content },
+  ip: { marginTop: 2, fontSize: 12, color: C.contentMuted },
 
   // Status badges
   statusBadge: {
@@ -258,25 +258,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   onlineBadge: {
-    backgroundColor: C.onlineBg,
-    borderColor: C.onlineBorder,
+    backgroundColor: C.okBg,
+    borderColor: C.okBorder,
   },
   offlineBadge: {
-    backgroundColor: C.errorBg,
-    borderColor: C.errorBorder,
+    backgroundColor: C.dangerBg,
+    borderColor: C.dangerBorder,
   },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
-  onlineDot: { backgroundColor: C.online },
-  offlineDot: { backgroundColor: C.errorText },
+  onlineDot: { backgroundColor: C.ok },
+  offlineDot: { backgroundColor: C.danger },
   statusText: { fontSize: 11, fontWeight: "600" },
-  onlineText: { color: C.online },
-  offlineText: { color: C.errorText },
+  onlineText: { color: C.ok },
+  offlineText: { color: C.danger },
 
   // Action row
   actionRow: { marginTop: 14 },
   openBtn: {
     borderRadius: 10,
-    backgroundColor: C.accentBtn,
+    backgroundColor: C.action,
     paddingVertical: 10,
     alignItems: "center",
   },
@@ -284,7 +284,7 @@ const styles = StyleSheet.create({
   btnPressed: { opacity: 0.75 },
   offlineHint: {
     fontSize: 11,
-    color: C.textMuted,
+    color: C.contentFaint,
     fontStyle: "italic",
     textAlign: "center",
   },
@@ -296,7 +296,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: C.border,
-    backgroundColor: C.surface,
+    backgroundColor: C.surfaceRaised,
     paddingVertical: 36,
     paddingHorizontal: 20,
     marginTop: 20,
@@ -305,16 +305,16 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 15,
     fontWeight: "600",
-    color: C.textPrimary,
+    color: C.content,
     marginBottom: 6,
   },
   emptyHint: {
     fontSize: 12,
-    color: C.textSecond,
+    color: C.contentMuted,
     textAlign: "center",
     lineHeight: 18,
   },
-  bold: { color: C.accent, fontWeight: "600" },
+  bold: { color: C.action, fontWeight: "600" },
 
   sep: { height: 12 },
 });

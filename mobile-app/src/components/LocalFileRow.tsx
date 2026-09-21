@@ -31,7 +31,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: C.border,
-    backgroundColor: C.surface,
+    backgroundColor: C.surfaceRaised,
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
@@ -46,6 +46,6 @@ const styles = StyleSheet.create({
   },
   icon: { fontSize: 18 },
   meta: { flex: 1 },
-  name: { fontSize: 14, fontWeight: "600", color: C.textPrimary },
-  sub: { marginTop: 2, fontSize: 11, color: C.textSecond },
+  name: { fontSize: 14, fontWeight: "600", color: C.content },
+  sub: { marginTop: 2, fontSize: 11, color: C.contentMuted },
 });
