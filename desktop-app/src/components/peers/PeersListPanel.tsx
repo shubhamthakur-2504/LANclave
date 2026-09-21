@@ -1,9 +1,11 @@
+import { useState } from "react";
 import type { PeerInfo } from "../../types";
 
 interface PeersListPanelProps {
   peers: PeerInfo[];
   onConnect: (peer: PeerInfo) => void;
   onBrowseFiles?: (peer: PeerInfo) => void;
+  onRescanPeer?: (peer: PeerInfo) => void;
 }
 
 function shortId(full: string): string {
@@ -15,12 +17,25 @@ function PeerRow({
   peer,
   onConnect,
   onBrowseFiles,
+  onRescan,
 }: {
   peer: PeerInfo;
   onConnect: () => void;
   onBrowseFiles: (() => void) | undefined;
+  onRescan?: () => Promise<void> | void;
 }) {
   const isOnline = peer.addr !== "";
+  const [retrying, setRetrying] = useState(false);
+
+  const handleRescan = async () => {
+    if (!onRescan || retrying) return;
+    setRetrying(true);
+    try {
+      await onRescan();
+    } finally {
+      setRetrying(false);
+    }
+  };
   return (
     <div className="flex w-full items-center gap-3 border-b border-slate-800/50 px-5 py-3 text-left transition-colors hover:bg-slate-800/10">
       <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-500/20 text-sm font-semibold text-sky-400">
@@ -50,6 +65,15 @@ function PeerRow({
       
       {/* Actions */}
       <div className="shrink-0 flex gap-2">
+        {peer.paired && !isOnline && onRescan && (
+          <button
+            onClick={handleRescan}
+            disabled={retrying}
+            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-700 disabled:opacity-50"
+          >
+            {retrying ? "Finding..." : "Retry"}
+          </button>
+        )}
         {peer.paired ? (
           <button
             onClick={onBrowseFiles}
@@ -76,6 +100,7 @@ export default function PeersListPanel({
   peers,
   onConnect,
   onBrowseFiles,
+  onRescanPeer,
 }: PeersListPanelProps) {
   const paired = peers.filter((p) => p.paired);
   const nearby = peers.filter((p) => !p.paired);
@@ -97,6 +122,7 @@ export default function PeersListPanel({
                 peer={peer}
                 onConnect={() => onConnect(peer)}
                 onBrowseFiles={() => onBrowseFiles?.(peer)}
+                onRescan={onRescanPeer ? () => onRescanPeer(peer) : undefined}
               />
             ))}
           </>

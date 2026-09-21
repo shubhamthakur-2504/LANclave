@@ -22,8 +22,19 @@ export async function isServerRunning(): Promise<boolean> {
 
 // ── Peer discovery ─────────────────────────────────────────────────
 
+/** Full subnet sweep. Expensive -- only ever run on an explicit user action. */
 export async function discoverPeers(): Promise<PeerInfo[]> {
   return await invoke("discover_peers");
+}
+
+/** Paired peers with live presence. Reads local state; no network traffic. */
+export async function listPeers(): Promise<PeerInfo[]> {
+  return await invoke("list_peers");
+}
+
+/** Re-resolve one quiet peer via mDNS / its last address. Returns reachability. */
+export async function rescanPeer(deviceId: string): Promise<boolean> {
+  return await invoke("rescan_peer", { deviceId });
 }
 
 // ── File operations ────────────────────────────────────────────────

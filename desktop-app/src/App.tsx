@@ -25,7 +25,9 @@ export default function App() {
   const [pairFingerprint, setPairFingerprint] = useState<string | null>(null);
 
   const [viewingPeer, setViewingPeer] = useState<PeerInfo | null>(null);
-  const peerFailsRef = useRef<Record<string, number>>({});
+  // Unpaired devices from the most recent manual scan. Paired peers come from
+  // presence instead, so they stay current without any scanning.
+  const nearbyRef = useRef<PeerInfo[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const scanInFlightRef = useRef(false);
 
@@ -37,37 +39,46 @@ export default function App() {
     }
   }, []);
 
+  /** Rebuild the list from presence (paired) + last scan (nearby). No network. */
+  const loadPeers = useCallback(async () => {
+    try {
+      const paired = await api.listPeers();
+      const pairedIds = new Set(paired.map((p) => p.device_id));
+      const nearby = nearbyRef.current.filter((p) => !pairedIds.has(p.device_id));
+      setPeers([...paired, ...nearby]);
+    } catch {
+      // keep the previous list
+    }
+  }, []);
+
+  /** Manual discovery: one full subnet sweep, guarded against re-entry. */
   const refreshPeers = useCallback(async () => {
-    // Discovery is a full subnet sweep: expensive, and never run on a timer.
-    // Guard here too so rapid clicks cannot stack sweeps.
     if (scanInFlightRef.current) return;
     scanInFlightRef.current = true;
     setIsScanning(true);
     try {
-      const livePeers = await api.discoverPeers();
-      
-      setPeers((prevPeers) => {
-        const fails = peerFailsRef.current;
-        return livePeers.map(peer => {
-          const prev = prevPeers.find(p => p.device_id === peer.device_id);
-          if (!peer.addr && prev?.addr) {
-            fails[peer.device_id] = (fails[peer.device_id] || 0) + 1;
-            if (fails[peer.device_id] < 3) {
-              return { ...peer, addr: prev.addr };
-            }
-          } else if (peer.addr) {
-            fails[peer.device_id] = 0;
-          }
-          return peer;
-        });
-      });
+      const found = await api.discoverPeers();
+      nearbyRef.current = found.filter((p) => !p.paired && p.addr);
     } catch {
-      // Scan failed or was already running -- keep the previous peer list.
+      // Scan failed or was already running -- keep what we had.
     } finally {
       scanInFlightRef.current = false;
       setIsScanning(false);
+      await loadPeers();
     }
-  }, []);
+  }, [loadPeers]);
+
+  const rescanPeer = useCallback(
+    async (peer: PeerInfo) => {
+      try {
+        await api.rescanPeer(peer.device_id);
+      } catch {
+        // fall through to reload
+      }
+      await loadPeers();
+    },
+    [loadPeers],
+  );
 
   const refreshFiles = useCallback(async () => {
     try {
@@ -94,9 +105,28 @@ export default function App() {
       })
       .catch(() => {});
 
-    refreshPeers();
+    // Paired peers come from presence -- no sweep needed at launch.
+    loadPeers();
     refreshFiles();
-  }, [refreshPeers, refreshFiles]);
+  }, [loadPeers, refreshFiles]);
+
+  // The backend emits this whenever a peer comes online or goes offline
+  // (heartbeat, hello, bye), so the list updates without polling.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) => listen("presence-changed", () => loadPeers()))
+      .then((un) => {
+        if (disposed) un();
+        else unlisten = un;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, [loadPeers]);
 
   // Only the local sandbox listing is polled. Peer discovery is user-driven --
   // see the Scan button on the Peers page.
@@ -186,6 +216,7 @@ export default function App() {
             peers={peers}
             isScanning={isScanning}
             onScan={refreshPeers}
+            onRescanPeer={rescanPeer}
             onOpenConnection={(peer) => {
               setPairPeer(peer);
               setIsConnectModalOpen(true);
