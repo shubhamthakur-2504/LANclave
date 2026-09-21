@@ -38,6 +38,7 @@ async fn start_server(
         device_id: "test-device".to_string(),
         identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
         app_handle: None,
+        presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
         auth: Arc::new(crate::pairing::AuthState::disabled()),
     });
     let router = build_raw_router(state);

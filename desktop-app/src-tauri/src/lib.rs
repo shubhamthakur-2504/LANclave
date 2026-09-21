@@ -5,6 +5,7 @@ mod file_ops;
 mod files;
 mod fs_util;
 mod pairing;
+mod presence;
 mod sandbox;
 mod server;
 mod settings;
@@ -51,6 +52,26 @@ pub fn run() {
     ));
 
     let server_controller = Arc::new(ServerController::new());
+    let presence = Arc::new(presence::PresenceStore::new());
+
+    // Seed presence with the addresses we knew last run so paired peers can be
+    // reached without a subnet sweep.
+    if let Ok(store) = device_store.read() {
+        for dev in store.devices.values() {
+            if let Some(addr) = &dev.last_addr {
+                presence.set_addr(&dev.device_id, addr.clone());
+            }
+        }
+    }
+
+    let presence_ctx = presence::PresenceContext {
+        presence: presence.clone(),
+        device_store: device_store.clone(),
+        settings: settings.clone(),
+        device_id: device_id.clone(),
+        identity_key: identity_key.clone(),
+        app_handle: None,
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -62,8 +83,24 @@ pub fn run() {
             device_id,
             device_store,
             server_controller,
+            presence,
         })
         .manage(commands::TransferState::default())
+        .setup(move |app| {
+            let mut ctx = presence_ctx;
+            ctx.app_handle = Some(app.handle().clone());
+
+            // Announce ourselves to every paired peer, then poll them on a
+            // timer. One request per peer -- not a subnet sweep.
+            let hello_ctx = ctx.clone();
+            tauri::async_runtime::spawn(async move {
+                hello_ctx.announce_hello().await;
+            });
+            ctx.clone().spawn_heartbeat();
+
+            app.manage(ctx);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // Server lifecycle
             commands::start_server,
@@ -71,6 +108,8 @@ pub fn run() {
             commands::is_server_running,
             // Peer discovery
             commands::discover_peers,
+            commands::list_peers,
+            commands::rescan_peer,
             // File transfer
             commands::list_peer_files,
             commands::pull_file,
@@ -88,6 +127,22 @@ pub fn run() {
             // Legacy (migrate to commands eventually)
             file_ops::list_sandbox_files,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                // Best effort. A crash or a kill sends nothing, which is
+                // exactly why presence is TTL-based rather than bye-based.
+                if let Some(ctx) = app.try_state::<presence::PresenceContext>() {
+                    let ctx = ctx.inner().clone();
+                    tauri::async_runtime::block_on(async move {
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(2),
+                            ctx.announce_bye(),
+                        )
+                        .await;
+                    });
+                }
+            }
+        });
 }

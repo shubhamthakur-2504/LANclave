@@ -44,6 +44,7 @@ pub struct CliState {
     pub device_id: String,
     pub device_store: Arc<RwLock<DeviceStore>>,
     pub server_controller: Arc<ServerController>,
+    pub presence: Arc<crate::presence::PresenceStore>,
 }
 
 pub enum CancelHandle {
@@ -89,6 +90,7 @@ pub async fn start_server(
         device_id: state.device_id.clone(),
         identity_key: state.identity_key.clone(),
         app_handle: Some(app),
+        presence: state.presence.clone(),
         auth: Arc::new(AuthState {
             store: state.device_store.clone(),
             enabled: true,
@@ -150,6 +152,18 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
         })
         .collect();
 
+    // A successful probe is a liveness signal -- record it so the peer shows
+    // as online immediately instead of waiting for the next heartbeat.
+    for peer in &peers {
+        if !peer.addr.is_empty() {
+            state.presence.mark_seen(
+                &peer.device_id,
+                peer.device_name.clone(),
+                Some(peer.addr.clone()),
+            );
+        }
+    }
+
     // Add any live-discovered peers that are NOT already in the paired store
     for (id, (addr, name)) in live_map {
         peers.push(PeerInfo {
@@ -160,7 +174,111 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
         });
     }
 
+    drop(store);
+    persist_scan_addrs(&state, &peers);
+
     Ok(peers)
+}
+
+/// Write freshly discovered addresses back to the paired store so the next
+/// launch can reach these peers without scanning.
+fn persist_scan_addrs(state: &State<'_, CliState>, peers: &[PeerInfo]) {
+    let Ok(mut store) = state.device_store.write() else {
+        return;
+    };
+    let mut dirty = false;
+    for peer in peers {
+        if peer.addr.is_empty() {
+            continue;
+        }
+        if let Some(dev) = store.devices.get_mut(&peer.device_id) {
+            if dev.last_addr.as_ref() != Some(&peer.addr) {
+                dev.last_addr = Some(peer.addr.clone());
+                dirty = true;
+            }
+        }
+    }
+    if dirty {
+        let _ = store.save(&state.app_data_dir);
+    }
+}
+
+/// Paired peers with their current presence, read straight from the in-memory
+/// table. Costs nothing: no mDNS, no probes, no subnet sweep.
+#[tauri::command]
+pub fn list_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>, String> {
+    let store = state.device_store.read().map_err(|e| e.to_string())?;
+
+    Ok(store
+        .devices
+        .values()
+        .filter(|d| d.device_id != state.device_id)
+        .map(|d| {
+            let pres = state.presence.get(&d.device_id);
+            let online = pres.as_ref().map(|p| p.online).unwrap_or(false);
+            let addr = pres
+                .as_ref()
+                .and_then(|p| p.addr.clone())
+                .or_else(|| d.last_addr.clone())
+                .unwrap_or_default();
+
+            PeerInfo {
+                // An address is only meaningful while the peer is reachable.
+                addr: if online { addr } else { String::new() },
+                device_id: d.device_id.clone(),
+                device_name: pres
+                    .as_ref()
+                    .and_then(|p| p.device_name.clone())
+                    .or_else(|| d.device_name.clone()),
+                paired: true,
+            }
+        })
+        .collect())
+}
+
+/// Re-resolve one peer that has gone quiet, without sweeping the subnet.
+///
+/// Tries mDNS first, then the last known address. Covers the common hotspot
+/// case where a DHCP lease rotated and the stored address went stale.
+#[tauri::command]
+pub async fn rescan_peer(
+    state: State<'_, CliState>,
+    device_id: String,
+) -> Result<bool, String> {
+    let ctx = crate::presence::PresenceContext {
+        presence: state.presence.clone(),
+        device_store: state.device_store.clone(),
+        settings: state.settings.clone(),
+        device_id: state.device_id.clone(),
+        identity_key: state.identity_key.clone(),
+        app_handle: None,
+    };
+
+    if let Some(addr) = crate::discovery::resolve_peer_addr(&device_id).await {
+        if ctx.hello_one(&device_id, &addr).await {
+            return Ok(true);
+        }
+    }
+
+    let last = state
+        .presence
+        .addr_of(&device_id)
+        .or_else(|| {
+            state
+                .device_store
+                .read()
+                .ok()
+                .and_then(|s| s.devices.get(&device_id).and_then(|d| d.last_addr.clone()))
+        });
+
+    if let Some(addr) = last {
+        if ctx.hello_one(&device_id, &addr).await {
+            return Ok(true);
+        }
+    }
+
+    state.presence.mark_offline(&device_id);
+    Ok(false)
 }
 
 // ---------------------------------------------------------------------------

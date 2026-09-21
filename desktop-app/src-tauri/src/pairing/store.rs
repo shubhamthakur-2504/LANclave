@@ -19,6 +19,13 @@ pub struct PairedDevice {
     /// Human-readable name of the device.
     #[serde(default)]
     pub device_name: Option<String>,
+    /// Last address this peer was successfully reached on, as `ip:port`.
+    ///
+    /// Lets presence resume after a restart without running a subnet sweep.
+    /// Treated as a hint only: it goes stale whenever DHCP rotates a lease,
+    /// so every use re-confirms the peer's identity via `/health`.
+    #[serde(default)]
+    pub last_addr: Option<String>,
 }
 
 /// In-memory store of paired devices.
@@ -84,6 +91,7 @@ impl DeviceStore {
                 public_key_b64,
                 paired_at: iso_timestamp_now(),
                 device_name,
+                last_addr: None,
             },
         );
         Ok(())

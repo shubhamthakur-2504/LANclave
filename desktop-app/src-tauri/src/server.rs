@@ -18,6 +18,9 @@ pub struct AppState {
     pub device_id: String,
     pub identity_key: ed25519_dalek::SigningKey,
     pub app_handle: Option<tauri::AppHandle>,
+    /// Shared with `CliState`, so inbound requests update the same table the
+    /// heartbeat and the UI read.
+    pub presence: Arc<crate::presence::PresenceStore>,
 }
 
 #[derive(serde::Deserialize)]
@@ -65,6 +68,68 @@ async fn pairing_request_handler(
     })))
 }
 
+/// `POST /api/presence/hello` -- a peer announcing it is online.
+///
+/// The caller's identity comes from the verified auth headers, never from the
+/// body. The reply carries our own details so one round trip informs both
+/// sides.
+async fn presence_hello_handler(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    remote: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: axum::http::HeaderMap,
+    body: Option<axum::Json<crate::presence::HelloPayload>>,
+) -> Result<axum::Json<crate::presence::PresenceAck>, axum::http::StatusCode> {
+    let device_id = crate::pairing::check_request(&state.auth, &headers)
+        .map_err(|s| axum::http::StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
+
+    let payload = body.map(|axum::Json(p)| p);
+    let peer_name = payload.as_ref().map(|p| p.device_name.clone());
+    let port = payload
+        .as_ref()
+        .map(|p| p.port)
+        .unwrap_or(crate::presence::SERVER_PORT);
+
+    let addr = remote.map(|axum::Extension(ci)| format!("{}:{port}", ci.0.ip()));
+    state.presence.mark_seen(&device_id, peer_name, addr);
+    notify_presence(&state);
+
+    let display_name = state
+        .settings
+        .read()
+        .map(|s| s.display_name.clone())
+        .unwrap_or_else(|_| "Desktop Workstation".to_string());
+
+    Ok(axum::Json(crate::presence::PresenceAck {
+        status: "ok".to_string(),
+        device_id: state.device_id.clone(),
+        device_name: display_name,
+    }))
+}
+
+/// `POST /api/presence/bye` -- a peer shutting down cleanly.
+///
+/// Purely an optimisation: it turns a graceful exit into an instant offline
+/// instead of a TTL wait. Nothing depends on it arriving.
+async fn presence_bye_handler(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
+    let device_id = crate::pairing::check_request(&state.auth, &headers)
+        .map_err(|s| axum::http::StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
+
+    state.presence.mark_offline(&device_id);
+    notify_presence(&state);
+
+    Ok(axum::Json(serde_json::json!({ "status": "ok" })))
+}
+
+fn notify_presence(state: &AppState) {
+    if let Some(app) = &state.app_handle {
+        use tauri::Emitter;
+        let _ = app.emit("presence-changed", state.presence.snapshot());
+    }
+}
+
 pub fn build_router(state: Arc<AppState>) -> axum::Router {
     axum::Router::new()
         .route(
@@ -79,6 +144,14 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/pairing/request",
             axum::routing::post(pairing_request_handler),
+        )
+        .route(
+            "/api/presence/hello",
+            axum::routing::post(presence_hello_handler),
+        )
+        .route(
+            "/api/presence/bye",
+            axum::routing::post(presence_bye_handler),
         )
         .route(
             "/health",
@@ -216,7 +289,12 @@ impl ServerController {
         let router = build_router(state.clone());
 
         tokio::spawn(async move {
-            axum::serve(listener, router)
+            // Connect info lets presence learn a peer's address from the TCP
+            // connection itself, with no reliance on anything the peer claims.
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
                 .with_graceful_shutdown(async {
                     shutdown_rx.await.ok();
                 })
@@ -279,6 +357,7 @@ mod tests {
             device_id: "test-device".to_string(),
             identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
             app_handle: None,
+            presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             auth: Arc::new(AuthState::disabled()),
         })
     }

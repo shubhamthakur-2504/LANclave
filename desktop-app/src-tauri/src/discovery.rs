@@ -227,6 +227,41 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<(String, String, Stri
     Ok(peers)
 }
 
+/// Ask mDNS for one specific peer's current address.
+///
+/// Used when a heartbeat starts failing: on a phone hotspot a stored address
+/// goes stale whenever the DHCP lease rotates, and re-resolving one device is
+/// far cheaper than sweeping the subnet again.
+pub async fn resolve_peer_addr(device_id: &str) -> Option<String> {
+    let mdns = shared_daemon().ok()?;
+    let receiver = mdns.browse(SERVICE_TYPE).ok()?;
+
+    let deadline = Duration::from_millis(1500);
+    let start = std::time::Instant::now();
+    let mut found = None;
+
+    loop {
+        let remaining = deadline.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        match receiver.recv_timeout(remaining) {
+            Ok(ServiceEvent::ServiceResolved(info)) => {
+                if let Some((addr, id, _)) = parse_peer(&*info) {
+                    if id == device_id {
+                        found = Some(addr);
+                        break;
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+
+    let _ = mdns.stop_browse(SERVICE_TYPE);
+    found
+}
+
 async fn probe_ip(client: reqwest::Client, ip: &str, semaphore: Arc<tokio::sync::Semaphore>) -> Option<(String, String, String)> {
     let _permit = semaphore.acquire().await.ok()?;
     let url = format!("http://{ip}:8377/health");

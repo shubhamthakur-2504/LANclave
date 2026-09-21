@@ -92,14 +92,17 @@ const TIMESTAMP_TOLERANCE_SECS: u64 = 30;
 /// - `X-LANclave-Signature` — ed25519 signature over
 ///   `"{device_id}:{timestamp}"` using the sender's private key.
 ///
-/// Returns `Ok(())` on success, `Err(Status)` with 401 on any failure.
-/// The specific reason is logged server-side only.
+/// Returns `Ok(device_id)` for the verified caller, or `Err(Status)` with 401
+/// on any failure. The specific reason is logged server-side only.
+///
+/// The identity is returned so handlers can attribute a request to a peer --
+/// presence tracking treats any authenticated request as a liveness signal.
 pub fn check_request(
     auth: &AuthState,
     headers: &axum::http::HeaderMap,
-) -> Result<(), Status> {
+) -> Result<String, Status> {
     if !auth.enabled {
-        return Ok(());
+        return Ok(String::new());
     }
 
     // --- Extract headers --------------------------------------------------
@@ -175,7 +178,7 @@ pub fn check_request(
 
     if peer_key.verify_strict(payload.as_bytes(), &signature).is_ok() {
         drop(store);
-        Ok(())
+        Ok(device_id.to_string())
     } else {
         eprintln!("[lanclave/auth] signature verification failed for device {device_id}");
         Err(Status(401))

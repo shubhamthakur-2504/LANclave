@@ -164,6 +164,7 @@ mod tests {
             device_id: "test-device".to_string(),
             identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
             app_handle: None,
+            presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             auth: Arc::new(AuthState::new()), // enabled
         });
         let app = crate::server::build_router(state);
@@ -190,7 +191,7 @@ mod tests {
         store.add_peer(device_id.clone(), &key.verifying_key(), None).unwrap();
 
         let auth = Arc::new(AuthState {
-            store: std::sync::RwLock::new(store),
+            store: std::sync::Arc::new(std::sync::RwLock::new(store)),
             enabled: true,
         });
 
@@ -202,6 +203,7 @@ mod tests {
             device_id: "test-device".to_string(),
             identity_key: key.clone(),
             app_handle: None,
+            presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             auth,
         });
         let app = crate::server::build_router(state);
@@ -236,7 +238,7 @@ mod tests {
         store.add_peer(device_id.clone(), &key.verifying_key(), None).unwrap();
 
         let auth = Arc::new(AuthState {
-            store: std::sync::RwLock::new(store),
+            store: std::sync::Arc::new(std::sync::RwLock::new(store)),
             enabled: true,
         });
 
@@ -248,6 +250,7 @@ mod tests {
             device_id: "test-device".to_string(),
             identity_key: key.clone(),
             app_handle: None,
+            presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             auth,
         });
         let app = crate::server::build_router(state);
@@ -281,7 +284,7 @@ mod tests {
         store.add_peer(device_id.clone(), &key.verifying_key(), None).unwrap();
 
         let auth = Arc::new(AuthState {
-            store: std::sync::RwLock::new(store),
+            store: std::sync::Arc::new(std::sync::RwLock::new(store)),
             enabled: true,
         });
 
@@ -293,6 +296,7 @@ mod tests {
             device_id: "test-device".to_string(),
             identity_key: key.clone(),
             app_handle: None,
+            presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             auth,
         });
         let app = crate::server::build_router(state);
@@ -331,7 +335,7 @@ mod tests {
         // The device is intentionally NOT added to the store — only devices
         // that completed the one-time pairing confirmation may authenticate.
         let auth = Arc::new(AuthState {
-            store: std::sync::RwLock::new(DeviceStore::new()),
+            store: std::sync::Arc::new(std::sync::RwLock::new(DeviceStore::new())),
             enabled: true,
         });
 
@@ -343,6 +347,7 @@ mod tests {
             device_id: "test-device".to_string(),
             identity_key: key.clone(),
             app_handle: None,
+            presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             auth,
         });
         let app = crate::server::build_router(state);
