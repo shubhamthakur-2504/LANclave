@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Laptop, Smartphone, Tablet, HelpCircle } from "lucide-react";
+import { colorForDevice, deviceKind, initialForDevice } from "../../lib/identity";
 import type { PeerInfo } from "../../types";
 
 interface PeersListPanelProps {
@@ -8,10 +10,13 @@ interface PeersListPanelProps {
   onRescanPeer?: (peer: PeerInfo) => void;
 }
 
-function shortId(full: string): string {
-  if (full.length <= 12) return full;
-  return `${full.slice(0, 8)}…`;
-}
+const KIND_ICONS = {
+  laptop: Laptop,
+  phone: Smartphone,
+  tablet: Tablet,
+  unknown: HelpCircle,
+} as const;
+
 
 function PeerRow({
   peer,
@@ -27,6 +32,12 @@ function PeerRow({
   const isOnline = peer.addr !== "";
   const [retrying, setRetrying] = useState(false);
 
+  // Identity: name initial where there is one, device glyph otherwise, and a
+  // colour derived from the device id so a peer looks the same every time.
+  const initial = initialForDevice(peer.device_name);
+  const identityColor = colorForDevice(peer.device_id);
+  const KindIcon = KIND_ICONS[deviceKind(peer.device_type, peer.device_name)];
+
   const handleRescan = async () => {
     if (!onRescan || retrying) return;
     setRetrying(true);
@@ -38,8 +49,14 @@ function PeerRow({
   };
   return (
     <div className="flex w-full items-center gap-3 border-b border-border px-5 py-3 text-left transition-colors hover:bg-surface-active">
-      <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-action/20 text-sm font-semibold text-action">
-        {shortId(peer.device_id)[0].toUpperCase()}
+      <div
+        className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
+        style={{
+          backgroundColor: `${identityColor}22`,
+          color: identityColor,
+        }}
+      >
+        {initial ?? <KindIcon className="h-5 w-5" strokeWidth={1.75} aria-hidden="true" />}
         {/* Online dot */}
         <span
           className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-border ${

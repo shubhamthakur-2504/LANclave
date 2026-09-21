@@ -140,17 +140,37 @@ export default function ConnectionModal({
                   <p className="mt-3 text-sm text-content-muted">{initialAddr}</p>
                 </>
               ) : (
+                /*
+                 * PRD 3.1 promises no manual IP typing: devices are meant to
+                 * find each other. Kept as a debug escape hatch behind a
+                 * disclosure rather than as the primary path.
+                 */
                 <div className="mt-4 text-left">
-                  <label className="text-xs font-medium text-content-muted">
-                    Enter Peer IP Address
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 192.168.43.1:8377"
-                    value={customAddr}
-                    onChange={(e) => setCustomAddr(e.target.value)}
-                    className="mt-1.5 w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-content outline-none focus:border-action"
-                  />
+                  <p className="text-sm text-content-muted">
+                    Pick a device from the Peers list to pair with it.
+                  </p>
+                  <details className="mt-4 rounded-lg border border-border bg-surface-inset px-3 py-2">
+                    <summary className="cursor-pointer text-xs text-content-faint select-none">
+                      Connect manually
+                    </summary>
+                    <label
+                      htmlFor="manual-addr"
+                      className="mt-3 block text-xs font-medium text-content-muted"
+                    >
+                      Peer address
+                    </label>
+                    <input
+                      id="manual-addr"
+                      type="text"
+                      placeholder="e.g. 192.168.43.1:8377"
+                      value={customAddr}
+                      onChange={(e) => setCustomAddr(e.target.value)}
+                      className="mt-1.5 w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-content outline-none focus:border-action"
+                    />
+                    <p className="mt-2 text-[11px] text-content-faint">
+                      Only needed when discovery cannot see the device.
+                    </p>
+                  </details>
                 </div>
               )}
 

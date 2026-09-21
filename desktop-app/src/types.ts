@@ -9,6 +9,8 @@ export interface PeerInfo {
   addr: string;
   device_id: string;
   device_name?: string;
+  /** "laptop" | "phone" | ... — reported over /health. */
+  device_type?: string;
   paired: boolean;
 }
 

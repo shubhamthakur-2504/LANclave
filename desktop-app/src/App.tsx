@@ -10,15 +10,16 @@ import ConnectionModal from "./components/connection/ConnectionModal";
 import RemoteFilesPage from "./components/files/RemoteFilesPage";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { TransferProvider } from "./contexts/TransferContext";
+import { ToastProvider, useToast } from "./components/ui/Toast";
 import "./App.css";
 
-export default function App() {
+function AppInner() {
   const [activePage, setActivePage] = useState<PageType>("peers");
   const [serverRunning, setServerRunning] = useState(false);
   const [serverBusy, setServerBusy] = useState(false);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [localFiles, setLocalFiles] = useState<FileEntry[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   // Pairing state
   const [pairPeer, setPairPeer] = useState<PeerInfo | null>(null);
@@ -168,29 +169,31 @@ export default function App() {
 
   const handleStartServer = useCallback(async () => {
     setServerBusy(true);
-    setError(null);
     try {
       await api.startServer();
       setServerRunning(true);
+      toast.success("Server started", "Other devices on this network can reach you.");
     } catch (e: unknown) {
-      setError(String(e));
+      toast.error(e);
+      await refreshServerStatus();
     } finally {
       setServerBusy(false);
     }
-  }, []);
+  }, [toast, refreshServerStatus]);
 
   const handleStopServer = useCallback(async () => {
     setServerBusy(true);
-    setError(null);
     try {
       await api.stopServer();
       setServerRunning(false);
+      toast.info("Server stopped", "This device is no longer reachable.");
     } catch (e: unknown) {
-      setError(String(e));
+      toast.error(e);
+      await refreshServerStatus();
     } finally {
       setServerBusy(false);
     }
-  }, []);
+  }, [toast, refreshServerStatus]);
 
   const handlePaired = useCallback(() => {
     refreshPeers();
@@ -236,7 +239,7 @@ export default function App() {
   return (
     <TransferProvider>
       <div className="flex h-screen flex-col bg-surface text-content">
-        <Header />
+        <Header serverRunning={serverRunning} serverBusy={serverBusy} />
         <div className="flex flex-1 overflow-hidden">
           <Sidebar
             activePage={activePage}
@@ -250,11 +253,6 @@ export default function App() {
             serverBusy={serverBusy}
           />
           <main className="flex-1 overflow-hidden">
-            {error && (
-              <div className="mx-4 mt-2 rounded-lg bg-danger-bg px-4 py-2 text-xs text-danger">
-                {error}
-              </div>
-            )}
             {pageContent}
           </main>
         </div>
@@ -272,5 +270,16 @@ export default function App() {
         />
       </div>
     </TransferProvider>
+  );
+}
+
+/**
+ * The app proper is a child of ToastProvider so it can call useToast().
+ */
+export default function App() {
+  return (
+    <ToastProvider>
+      <AppInner />
+    </ToastProvider>
   );
 }

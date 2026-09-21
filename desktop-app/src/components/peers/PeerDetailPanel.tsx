@@ -1,4 +1,5 @@
-import { Check, ShieldCheck } from "lucide-react";
+import { Check, Laptop, ShieldCheck } from "lucide-react";
+import { colorForDevice, initialForDevice } from "../../lib/identity";
 import type { PeerInfo } from "../../types";
 import { pickFile } from "../../api";
 import { useTransfers } from "../../contexts/TransferContext";
@@ -41,8 +42,16 @@ export default function PeerDetailPanel({
     <div className="flex h-full flex-col">
       {/* Profile header */}
       <div className="flex flex-col items-center border-b border-border px-6 py-8">
-        <div className="mb-3 flex h-20 w-20 items-center justify-center rounded-full bg-action/20 text-2xl font-bold text-action">
-          {(peer.device_name?.[0] ?? peer.addr[0] ?? peer.device_id[0] ?? "?").toUpperCase()}
+        <div
+          className="mb-3 flex h-20 w-20 items-center justify-center rounded-full text-2xl font-bold"
+          style={{
+            backgroundColor: `${colorForDevice(peer.device_id)}22`,
+            color: colorForDevice(peer.device_id),
+          }}
+        >
+          {initialForDevice(peer.device_name) ?? (
+            <Laptop className="h-9 w-9" strokeWidth={1.5} aria-hidden="true" />
+          )}
         </div>
         <h3 className="text-lg font-semibold text-content">
           {peer.device_name || shortId(peer.device_id)}

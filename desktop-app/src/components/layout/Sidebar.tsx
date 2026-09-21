@@ -41,7 +41,7 @@ export default function Sidebar({
             <button
               key={item.id}
               onClick={() => onNavigate(item.id)}
-              className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+              className={`relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
                 isActive
                   ? "bg-action/10 text-action"
                   : "text-content-muted hover:bg-surface-active hover:text-content"
