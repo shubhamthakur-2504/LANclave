@@ -8,6 +8,8 @@ import {
   Text,
   View,
   Alert,
+  Pressable,
+  ActivityIndicator,
 } from "react-native";
 
 import { PeerCard } from "@/components/PeerCard";
@@ -25,7 +27,7 @@ import * as Network from "expo-network";
 
 export default function ScanScreen() {
   const router = useRouter();
-  const allDiscovered = usePeerDiscovery();
+  const { peers: allDiscovered, isScanning, scan } = usePeerDiscovery();
 
   // Keep a live set of paired IDs so we can filter them out of the scan list
   const [pairedIds, setPairedIds] = useState<Set<string>>(new Set());
@@ -130,10 +132,25 @@ export default function ScanScreen() {
       <SafeAreaView style={styles.safe}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.title}>Scan &amp; Pair</Text>
-          <Text style={styles.subtitle}>
-            Discover nearby LANclave devices on local network
-          </Text>
+          <View style={styles.headerRow}>
+            <View style={styles.headerText}>
+              <Text style={styles.title}>Scan &amp; Pair</Text>
+              <Text style={styles.subtitle}>
+                Discover nearby LANclave devices on local network
+              </Text>
+            </View>
+            <Pressable
+              onPress={scan}
+              disabled={isScanning}
+              style={[styles.scanBtn, isScanning && styles.scanBtnDisabled]}
+            >
+              {isScanning ? (
+                <ActivityIndicator size="small" color={C.accent} />
+              ) : (
+                <Text style={styles.scanBtnText}>Scan</Text>
+              )}
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.divider} />
@@ -143,10 +160,13 @@ export default function ScanScreen() {
           {peers.length === 0 ? (
             <View style={styles.empty}>
               <Text style={styles.emptyIcon}>📡</Text>
-              <Text style={styles.emptyTitle}>Scanning local network…</Text>
+              <Text style={styles.emptyTitle}>
+                {isScanning ? "Scanning local network…" : "No devices found"}
+              </Text>
               <Text style={styles.emptyHint}>
-                Make sure both devices are on the same Wi-Fi network or hotspot
-                and LANclave server is active.
+                {isScanning
+                  ? "Checking every address on this network."
+                  : "Tap Scan to search. Make sure both devices are on the same Wi-Fi network or hotspot and the LANclave server is active."}
               </Text>
             </View>
           ) : (
@@ -188,6 +208,20 @@ const styles = StyleSheet.create({
 
   // Header
   header: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14 },
+  headerRow: { flexDirection: "row", alignItems: "center" },
+  headerText: { flex: 1 },
+  scanBtn: {
+    minWidth: 72,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scanBtnDisabled: { opacity: 0.5 },
+  scanBtnText: { color: C.accent, fontSize: 13, fontWeight: "600" },
   title: {
     fontSize: 26,
     fontWeight: "700",
