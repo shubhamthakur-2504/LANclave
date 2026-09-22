@@ -1,13 +1,13 @@
 import {
   ActivityIndicator,
   FlatList,
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
   View,
   Switch,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AddFileButton } from "@/components/AddFileButton";
 import { LocalFileRow } from "@/components/LocalFileRow";
@@ -48,7 +48,7 @@ export default function MySandboxScreen() {
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.surface} />
 
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerRow}>

@@ -5,12 +5,12 @@ import {
   Alert,
   FlatList,
   Pressable,
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C, idColor, short } from "@/constants/colors";
 import { Icon } from "@/components/Icon";
@@ -134,7 +134,7 @@ export default function PairedPeersScreen() {
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.surface} />
 
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerRow}>

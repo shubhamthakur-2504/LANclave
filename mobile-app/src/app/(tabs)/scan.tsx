@@ -2,7 +2,6 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
   FlatList,
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
@@ -11,6 +10,7 @@ import {
   Pressable,
   ActivityIndicator,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { PeerCard } from "@/components/PeerCard";
 import { PairingModal } from "@/components/PairingModal";
@@ -146,7 +146,7 @@ export default function ScanScreen() {
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.surface} />
 
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerRow}>
@@ -196,6 +196,7 @@ export default function ScanScreen() {
               data={peers}
               numColumns={2}
               columnWrapperStyle={styles.columnWrapper}
+              contentContainerStyle={styles.list}
               showsVerticalScrollIndicator={false}
               keyExtractor={(p) => p.id}
               renderItem={({ item }) => (
@@ -263,6 +264,8 @@ const styles = StyleSheet.create({
   },
 
   content: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
+  // Keep the last row of cards clear of the tab bar.
+  list: { paddingBottom: 24 },
 
   columnWrapper: { gap: 12, marginBottom: 12 },
 

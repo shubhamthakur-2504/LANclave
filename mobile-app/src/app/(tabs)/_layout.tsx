@@ -1,10 +1,16 @@
 import { Tabs } from "expo-router";
 import { StyleSheet } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C } from "@/constants/colors";
 import { Icon } from "@/components/Icon";
 import { useTransfers } from "@/contexts/TransferContext";
 
 export default function TabsLayout() {
+  // Android runs edge-to-edge, so the bar would otherwise sit underneath the
+  // gesture handle. Grow it by the bottom inset instead of fighting for the
+  // same pixels.
+  const insets = useSafeAreaInsets();
+
   // A badge on the Transfers tab, so movement is visible from every screen
   // rather than only from the tab itself (U2.2).
   const { transfers } = useTransfers();
@@ -16,7 +22,10 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarStyle: styles.tabBar,
+        tabBarStyle: [
+          styles.tabBar,
+          { height: 60 + insets.bottom, paddingBottom: 8 + insets.bottom },
+        ],
         tabBarActiveTintColor: C.action,
         tabBarInactiveTintColor: C.contentFaint,
         tabBarLabelStyle: styles.label,
@@ -84,8 +93,6 @@ const styles = StyleSheet.create({
     backgroundColor: C.surfaceRaised,
     borderTopColor: C.border,
     borderTopWidth: 1,
-    height: 60,
-    paddingBottom: 8,
     paddingTop: 6,
   },
   label: {

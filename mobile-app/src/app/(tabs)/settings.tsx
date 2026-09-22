@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
@@ -10,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { StorageAccessFramework } from "expo-file-system/legacy";
 import { Paths } from "expo-file-system";
 import { C } from "@/constants/colors";
@@ -112,7 +112,7 @@ export default function SettingsScreen() {
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.surface} />
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Settings</Text>

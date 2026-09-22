@@ -3,12 +3,12 @@ import {
   ActivityIndicator,
   FlatList,
   Pressable,
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { RemoteFileRow } from "@/components/RemoteFileRow";
 import { C } from "@/constants/colors";
@@ -55,7 +55,7 @@ export default function PeerSandboxScreen() {
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.surface} />
 
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={["top", "bottom", "left", "right"]}>
         {/* Header with Back Button */}
         <View style={styles.header}>
           <View style={styles.topRow}>

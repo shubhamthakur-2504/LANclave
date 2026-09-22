@@ -2,13 +2,13 @@ import { useTransfers } from "@/contexts/TransferContext";
 import { C } from "@/constants/colors";
 import {
   FlatList,
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
   View,
   Pressable,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import type { Transfer } from "@/contexts/TransferContext";
 import { Icon } from "@/components/Icon";
 
@@ -40,7 +40,7 @@ export default function TransfersScreen() {
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.surface} />
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Transfers</Text>
