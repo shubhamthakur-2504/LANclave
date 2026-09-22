@@ -390,8 +390,12 @@ impl PresenceContext {
     }
 
     /// Background loop: poll paired peers, and re-resolve any that go quiet.
+    ///
+    /// Called from Tauri's `setup` hook, which runs on the main thread with no
+    /// Tokio runtime in scope -- so this goes through Tauri's runtime handle
+    /// rather than `tokio::spawn`, which would panic there.
     pub fn spawn_heartbeat(self) {
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             loop {
                 tokio::time::sleep(HEARTBEAT_INTERVAL).await;
 
