@@ -232,3 +232,80 @@ async fn push_file_exceeds_peer_limit_returns_413() {
         other => panic!("expected ServerRejected(413), got {other:?}"),
     }
 }
+
+// ── Wire-format tests ────────────────────────────────────────────
+
+/// Accept one connection, capture the request head, drain the body, and
+/// answer `201 Created`. Returns the head as a string.
+///
+/// The Axum server in the tests above accepts either framing, so it cannot
+/// catch a missing `Content-Length`. The phone's NanoHTTPD cannot: it reads
+/// `content-length` directly and 400s without it. So assert on the bytes.
+async fn capture_push_head(listener: tokio::net::TcpListener) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let (mut sock, _) = listener.accept().await.unwrap();
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+
+    // Read until the blank line that ends the head.
+    while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+        let n = sock.read(&mut chunk).await.unwrap();
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    let head_end = buf
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|i| i + 4)
+        .unwrap_or(buf.len());
+    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+
+    // Drain whatever else the client sends, then answer.
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), async {
+        loop {
+            match sock.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    })
+    .await;
+
+    let _ = sock
+        .write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n")
+        .await;
+    let _ = sock.flush().await;
+
+    head
+}
+
+#[tokio::test]
+async fn push_sends_content_length_not_chunked() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+
+    let src_dir = TempDir::new().unwrap();
+    let src_path = src_dir.path().join("payload.bin");
+    let payload = vec![7u8; 100_000];
+    tokio::fs::write(&src_path, &payload).await.unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let peer_addr = format!("127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let capture = tokio::spawn(capture_push_head(listener));
+
+    let _ = crate::client::push_file_to_peer(&peer_addr, &src_path, "payload.bin", &did, &key).await;
+
+    let head = capture.await.unwrap().to_ascii_lowercase();
+
+    assert!(
+        head.contains(&format!("content-length: {}", payload.len())),
+        "push must declare its length -- NanoHTTPD rejects PUTs without it. Head was:\n{head}"
+    );
+    assert!(
+        !head.contains("transfer-encoding: chunked"),
+        "push must not use chunked framing. Head was:\n{head}"
+    );
+}

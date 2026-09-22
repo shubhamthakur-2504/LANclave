@@ -67,7 +67,9 @@ pub(crate) async fn push_file_with_progress(
     let body = reqwest::Body::wrap_stream(counting_stream);
 
     // ---- 3. Send the request ---------------------------------------------
-    let status_result = transport::put_stream(peer_addr, remote_path, body, device_id, signing_key).await;
+    let status_result =
+        transport::put_stream(peer_addr, remote_path, body, total_bytes, device_id, signing_key)
+            .await;
 
     // ---- 4. Map the response ---------------------------------------------
     match status_result {

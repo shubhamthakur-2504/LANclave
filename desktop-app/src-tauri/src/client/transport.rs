@@ -46,10 +46,16 @@ pub async fn get_stream(
 }
 
 /// Issue a signed PUT to `http://{peer_addr}/files/{remote_path}`.
+///
+/// `content_length` is declared explicitly. A streaming body has no length
+/// reqwest can infer, so without this header hyper frames the request as
+/// `Transfer-Encoding: chunked` -- which the phone's NanoHTTPD rejects with
+/// 400, because it reads `content-length` directly to size its read loop.
 pub async fn put_stream(
     peer_addr: &str,
     remote_path: &str,
     body: reqwest::Body,
+    content_length: u64,
     device_id: &str,
     signing_key: &SigningKey,
 ) -> Result<reqwest::StatusCode, ClientError> {
@@ -64,6 +70,7 @@ pub async fn put_stream(
         .header(HEADER_DEVICE_ID, device_id)
         .header(HEADER_TIMESTAMP, ts.to_string())
         .header(HEADER_SIGNATURE, &sig_b64)
+        .header(reqwest::header::CONTENT_LENGTH, content_length)
         .body(body)
         .send()
         .await
