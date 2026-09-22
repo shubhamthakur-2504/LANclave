@@ -10,6 +10,8 @@ import type { PageType } from "../../types";
 
 interface SidebarProps {
   activePage: PageType;
+  /** In-flight transfers. Badged so movement is visible without opening the page. */
+  activeTransfers: number;
   onNavigate: (page: PageType) => void;
   serverRunning: boolean;
   onStartServer: () => void;
@@ -26,6 +28,7 @@ const navItems: { id: PageType; label: string; icon: LucideIcon }[] = [
 
 export default function Sidebar({
   activePage,
+  activeTransfers,
   onNavigate,
   serverRunning,
   onStartServer,
@@ -40,12 +43,17 @@ export default function Sidebar({
       <nav className="flex-1 space-y-1 px-3 py-4">
         {navItems.map((item) => {
           const isActive = activePage === item.id;
+          const badge = item.id === "transfers" ? activeTransfers : 0;
           return (
             <button
               key={item.id}
               onClick={() => onNavigate(item.id)}
               title={item.label}
-              aria-label={item.label}
+              aria-label={
+                badge > 0
+                  ? `${item.label}, ${badge} in progress`
+                  : item.label
+              }
               className={`relative flex w-full items-center justify-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:justify-start ${
                 isActive
                   ? "bg-action/10 text-action"
@@ -55,11 +63,18 @@ export default function Sidebar({
               {isActive && (
                 <span className="absolute left-0 h-5 w-0.5 rounded-r bg-action" />
               )}
-              <item.icon
-                className="h-5 w-5"
-                strokeWidth={1.75}
-                aria-hidden="true"
-              />
+              <span className="relative shrink-0">
+                <item.icon
+                  className="h-5 w-5"
+                  strokeWidth={1.75}
+                  aria-hidden="true"
+                />
+                {badge > 0 && (
+                  <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-action px-1 text-[10px] font-bold leading-none text-on-action">
+                    {badge > 9 ? "9+" : badge}
+                  </span>
+                )}
+              </span>
               <span className="hidden lg:inline">{item.label}</span>
             </button>
           );

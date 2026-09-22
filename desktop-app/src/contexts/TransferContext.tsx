@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, ReactNode, useCallback,
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Transfer, TransferStatus, PeerInfo, FileEntry } from "../types";
+import { useToast } from "../components/ui/Toast";
 
 interface TransferProgressEvent {
   id: string;
@@ -46,6 +47,30 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
   
   // Track events that fire before the `invoke` promise resolves
   const earlyEventsRef = useRef<Record<string, { status: TransferStatus; bytes: number; total: number }>>({});
+
+  // A finished transfer is announced with a toast so the Transfers page is
+  // somewhere you go to look at detail, not somewhere you have to sit and
+  // watch. The provider is mounted inside `ToastProvider` (see App.tsx).
+  const toast = useToast();
+
+  // Cancelling is a deliberate act, and the backend reports it as a failure.
+  // Toasting it would tell the user something they just did. Ids land here on
+  // cancel so the failure handler can stay quiet.
+  const cancelledRef = useRef<Set<string>>(new Set());
+
+  /** Name the file and the peer -- "done" alone is not worth interrupting for. */
+  const announceFinished = useCallback(
+    (t: Transfer | undefined) => {
+      if (!t) {
+        toast.success("Transfer complete.");
+        return;
+      }
+      const verb = t.direction === "download" ? "Saved" : "Sent";
+      const preposition = t.direction === "download" ? "from" : "to";
+      toast.success(`${verb} ${t.fileName}.`, `${preposition} ${t.peerName}`);
+    },
+    [toast],
+  );
 
   useEffect(() => {
     const unlisteners: (() => void)[] = [];
@@ -94,6 +119,8 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
 
     const handleCompleted = (event: { payload: TransferProgressEvent }) => {
       const { id, bytes_transferred, total_bytes } = event.payload;
+      cancelledRef.current.delete(id);
+      announceFinished(transfersRef.current.find((t) => t.id === id));
       setTransfers((prev) => {
         const exists = prev.some((t) => t.id === id);
         if (!exists) {
@@ -111,6 +138,12 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
 
     const handleFailed = (event: { payload: TransferProgressEvent }) => {
       const { id, message } = event.payload;
+      // A cancel is reported as a failure. `delete` returns true when this id
+      // was one, and clears it in the same step.
+      if (!cancelledRef.current.delete(id)) {
+        const t = transfersRef.current.find((x) => x.id === id);
+        toast.error(message ?? "Transfer failed", t?.peerName);
+      }
       setTransfers((prev) => {
         const exists = prev.some((t) => t.id === id);
         if (!exists) {
@@ -133,7 +166,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     return () => {
       unlisteners.forEach(unsub => unsub());
     };
-  }, []);
+  }, [announceFinished, toast]);
 
   const startDownload = useCallback(async (peer: PeerInfo, file: FileEntry) => {
     try {
@@ -186,19 +219,31 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         })
       );
 
+      // A small file can finish before `invoke` returns, so the listener had
+      // no row to name. Announce it from here instead, where we do.
+      if (earlyEvent) {
+        const finished = { ...newTransfer, id: transferId };
+        if (earlyEvent.status === "completed") {
+          announceFinished(finished);
+        } else if (earlyEvent.status === "failed") {
+          toast.error("Transfer failed", peer.device_name);
+        }
+      }
     } catch (err) {
       console.error("Failed to start download:", err);
-      // We could show a toast here
+      toast.error(err, peer.device_name);
     }
-  }, []);
+  }, [announceFinished, toast]);
 
   const cancelTransfer = useCallback(async (id: string) => {
     try {
+      cancelledRef.current.add(id);
       await invoke("cancel_transfer", { transferId: id });
       setTransfers((prev) => 
         prev.map((t) => (t.id === id ? { ...t, status: "failed", speed: 0 } : t))
       );
     } catch (err) {
+      cancelledRef.current.delete(id);
       console.error("Failed to cancel transfer:", err);
     }
   }, []);
@@ -251,10 +296,21 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         })
       );
 
+      // A small file can finish before `invoke` returns, so the listener had
+      // no row to name. Announce it from here instead, where we do.
+      if (earlyEvent) {
+        const finished = { ...newTransfer, id: transferId };
+        if (earlyEvent.status === "completed") {
+          announceFinished(finished);
+        } else if (earlyEvent.status === "failed") {
+          toast.error("Transfer failed", peer.device_name);
+        }
+      }
     } catch (err) {
       console.error("Failed to start upload:", err);
+      toast.error(err, peer.device_name);
     }
-  }, []);
+  }, [announceFinished, toast]);
 
   /**
    * Retry replays the original request rather than resuming: there is no

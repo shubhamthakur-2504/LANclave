@@ -21,7 +21,13 @@ function AppInner() {
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [localFiles, setLocalFiles] = useState<FileEntry[]>([]);
   const toast = useToast();
-  const { startUpload } = useTransfers();
+  const { startUpload, transfers } = useTransfers();
+
+  // Badges the Transfers nav item, so the page is for detail rather than for
+  // watching. Pending counts too: a queued transfer is still movement.
+  const activeTransfers = transfers.filter(
+    (t) => t.status === "in_progress" || t.status === "pending",
+  ).length;
 
   // Pairing state
   const [pairPeer, setPairPeer] = useState<PeerInfo | null>(null);
@@ -298,6 +304,7 @@ function AppInner() {
         <div className="flex flex-1 overflow-hidden">
           <Sidebar
             activePage={activePage}
+            activeTransfers={activeTransfers}
             onNavigate={(page) => {
               setActivePage(page);
               setViewingPeer(null);
