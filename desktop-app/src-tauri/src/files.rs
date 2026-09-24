@@ -274,6 +274,10 @@ pub struct FingerprintQuery {
     /// The size the caller holds. When ours differs we answer without
     /// hashing -- the files cannot be identical.
     pub size: Option<u64>,
+    /// `exact=1`: only this file, not its numbered copies. For checking a
+    /// finished download, where only the exact file matters.
+    #[serde(default)]
+    pub exact: Option<u8>,
 }
 
 /// `GET /api/sandbox/fingerprint/{*path}` -- size and SHA-256 of one file.
@@ -297,7 +301,8 @@ pub async fn fingerprint_handler(
     let path = crate::sandbox::verify_sandboxed_path(&sandbox_root, &requested_path)
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    match crate::dedupe::fingerprint_local(&path, query.size).await {
+    let with_siblings = query.exact != Some(1);
+    match crate::dedupe::fingerprint_local(&path, query.size, with_siblings).await {
         Ok(Some(fp)) => Ok(Json(fp)),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),

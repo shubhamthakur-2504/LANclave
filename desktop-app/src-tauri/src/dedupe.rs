@@ -125,6 +125,7 @@ async fn same_size_siblings(path: &Path, size: u64) -> Vec<PathBuf> {
 pub async fn fingerprint_local(
     path: &Path,
     expected_size: Option<u64>,
+    with_siblings: bool,
 ) -> std::io::Result<Option<Fingerprint>> {
     let Some(size) = file_size(path).await else {
         return Ok(None);
@@ -142,7 +143,8 @@ pub async fn fingerprint_local(
     };
 
     let mut siblings = Vec::new();
-    for sibling in same_size_siblings(path, expected).await {
+    let candidates = if with_siblings { same_size_siblings(path, expected).await } else { Vec::new() };
+    for sibling in candidates {
         let name = sibling
             .file_name()
             .and_then(|n| n.to_str())
@@ -247,10 +249,10 @@ mod tests {
         let path = dir.path().join("f.bin");
         std::fs::write(&path, b"12345").unwrap();
 
-        let fp = fingerprint_local(&path, Some(4)).await.unwrap().unwrap();
+        let fp = fingerprint_local(&path, Some(4), true).await.unwrap().unwrap();
         assert_eq!(fp, Fingerprint { size: 5, sha256: None, siblings: vec![] });
 
-        let fp = fingerprint_local(&path, Some(5)).await.unwrap().unwrap();
+        let fp = fingerprint_local(&path, Some(5), true).await.unwrap().unwrap();
         assert!(fp.sha256.is_some());
     }
 
@@ -262,7 +264,7 @@ mod tests {
         std::fs::write(dir.path().join("a (2).txt"), b"toolong!").unwrap();
         std::fs::write(dir.path().join("a (3).txt"), b"other").unwrap();
 
-        let fp = fingerprint_local(&dir.path().join("a.txt"), Some(5))
+        let fp = fingerprint_local(&dir.path().join("a.txt"), Some(5), true)
             .await
             .unwrap()
             .unwrap();
@@ -274,7 +276,7 @@ mod tests {
     #[tokio::test]
     async fn fingerprint_local_missing_is_none() {
         let dir = TempDir::new().unwrap();
-        let fp = fingerprint_local(&dir.path().join("nope"), None).await.unwrap();
+        let fp = fingerprint_local(&dir.path().join("nope"), None, true).await.unwrap();
         assert!(fp.is_none());
     }
 }

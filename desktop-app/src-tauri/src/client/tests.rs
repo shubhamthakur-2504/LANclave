@@ -614,3 +614,41 @@ async fn complete_partial_is_just_renamed() {
     assert_eq!(report.dest_name, "done.txt");
     assert_eq!(std::fs::read(local_dir.path().join("done.txt")).unwrap(), b"all here");
 }
+
+// ── Verification tests ───────────────────────────────────────────
+
+#[tokio::test]
+async fn corrupted_resume_is_caught_and_downloaded_again() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let content: Vec<u8> = (0..50_000u32).map(|i| (i % 199) as u8).collect();
+    let remote_dir = TempDir::new().unwrap();
+    let peer_addr = start_server(&remote_dir, &[("clip.bin", &content)]).await;
+    let etag = etag_of(&remote_dir.path().join("clip.bin"));
+
+    // Right version tag, wrong bytes: resuming would stitch garbage onto
+    // the real tail and produce a file of the right size.
+    let mut damaged = content.clone();
+    damaged[..20_000].fill(0xEE);
+    let local_dir = TempDir::new().unwrap();
+    seed_partial(local_dir.path(), "clip.bin", &damaged, 20_000, &etag);
+
+    let mut statuses = Vec::new();
+    let (_tx, rx) = cancel_channel();
+    super::pull_file_to_disk(
+        "t",
+        &peer_addr,
+        "clip.bin",
+        &local_dir.path().join("clip.bin"),
+        Some(content.len() as u64),
+        &did,
+        &key,
+        rx,
+        |e| statuses.push(e.status.clone()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(std::fs::read(local_dir.path().join("clip.bin")).unwrap(), content);
+    assert!(statuses.iter().filter(|s| *s == "verifying").count() >= 2, "{statuses:?}");
+}

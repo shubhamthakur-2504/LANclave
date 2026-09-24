@@ -29,7 +29,7 @@ export interface FileEntry {
 export type SandboxFile = FileEntry;
 
 // Transfers (UI-only for now — no backend)
-export type TransferStatus = "pending" | "in_progress" | "paused" | "completed" | "failed";
+export type TransferStatus = "pending" | "in_progress" | "verifying" | "paused" | "completed" | "failed";
 export type TransferDirection = "upload" | "download";
 export type TransferFilter = "all" | "active" | "completed" | "failed";
 

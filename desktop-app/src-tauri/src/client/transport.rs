@@ -129,7 +129,8 @@ pub async fn get_fingerprint_at(
 ) -> Result<Option<crate::dedupe::Fingerprint>, ClientError> {
     let mut url = format!("http://{peer_addr}{path}");
     if let Some(size) = expected_size {
-        url.push_str(&format!("?size={size}"));
+        let join = if path.contains('?') { '&' } else { '?' };
+        url.push_str(&format!("{join}size={size}"));
     }
 
     let (ts, sig) = sign_request(signing_key, device_id);

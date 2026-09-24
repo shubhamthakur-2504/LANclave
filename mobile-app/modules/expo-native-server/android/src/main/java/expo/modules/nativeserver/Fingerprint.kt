@@ -53,7 +53,13 @@ object Fingerprint {
      * same-size numbered copies with an expected size. Null when there is no
      * such regular file.
      */
-    fun ofSandboxFile(context: Context, rawSandboxPath: String, name: String, expectedSize: Long?): Result? {
+    fun ofSandboxFile(
+        context: Context,
+        rawSandboxPath: String,
+        name: String,
+        expectedSize: Long?,
+        withSiblings: Boolean = true,
+    ): Result? {
         val lookup: (String) -> Entry? = if (rawSandboxPath.startsWith("content://")) {
             val tree = DocumentFile.fromTreeUri(context, Uri.parse(rawSandboxPath)) ?: return null
             // One listing, then lookups by name: findFile() would re-list per call.
@@ -77,7 +83,7 @@ object Fingerprint {
 
         val baseSha = if (base.size == expectedSize) base.open()?.let(::sha256) else null
         val siblings = mutableListOf<Sibling>()
-        for (n in 1..MAX_SIBLINGS) {
+        for (n in 1..(if (withSiblings) MAX_SIBLINGS else 0)) {
             val siblingName = numberedName(name, n)
             val sibling = lookup(siblingName) ?: break
             if (sibling.size != expectedSize) continue

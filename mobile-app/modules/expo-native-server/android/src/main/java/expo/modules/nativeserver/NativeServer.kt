@@ -339,7 +339,9 @@ class NativeServer(
         }
         val expectedSize = session.parameters["size"]?.firstOrNull()?.toLongOrNull()
 
-        val result = Fingerprint.ofSandboxFile(context, rawSandboxPath, name, expectedSize)
+        // exact=1: this file only, not its numbered copies (download checks).
+        val exact = session.parameters["exact"]?.firstOrNull() == "1"
+        val result = Fingerprint.ofSandboxFile(context, rawSandboxPath, name, expectedSize, withSiblings = !exact)
             ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
 
         val json = JSONObject()

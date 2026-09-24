@@ -388,7 +388,26 @@ pub(crate) async fn pull_from_source(
             return Err(err);
         }
 
-        // ---- 3. Give the file its real name --------------------------------
+        // ---- 3. Check it against the sender's copy ------------------------
+        emit("verifying", done, total, None, None);
+        match verify(peer_addr, source, &partial.data, total, device_id, signing_key).await {
+            Verified::Mismatch if attempt == 0 => {
+                // A corrupted resume or transfer: once more, from scratch.
+                partial.discard().await;
+                continue;
+            }
+            Verified::Mismatch => {
+                partial.discard().await;
+                let err = ClientError::IoError(
+                    "the file arrived damaged twice; it does not match the sender's copy".into(),
+                );
+                emit("failed", done, total, Some(err.to_string()), None);
+                return Err(err);
+            }
+            Verified::Match | Verified::Unavailable => {}
+        }
+
+        // ---- 4. Give the file its real name --------------------------------
         let final_path = partial.finish(local_save_path).await?;
         let dest_name = file_name_of(&final_path);
         emit("completed", done, total, None, Some(dest_name.clone()));
@@ -398,6 +417,42 @@ pub(crate) async fn pull_from_source(
     let err = ClientError::HttpError("peer kept refusing to resume the download".into());
     emit("failed", 0, 0, Some(err.to_string()), None);
     Err(err)
+}
+
+enum Verified {
+    Match,
+    Mismatch,
+    /// The peer cannot say (no fingerprint route, too old, unreachable).
+    Unavailable,
+}
+
+/// Compare the downloaded bytes with the sender's SHA-256 of the file.
+async fn verify(
+    peer_addr: &str,
+    source: &PullSource,
+    data: &Path,
+    size: u64,
+    device_id: &str,
+    signing_key: &SigningKey,
+) -> Verified {
+    let Some(fp_path) = &source.fingerprint_path else {
+        return Verified::Unavailable;
+    };
+    let exact = format!("{fp_path}?exact=1");
+    let remote = match transport::get_fingerprint_at(peer_addr, &exact, Some(size), device_id, signing_key).await {
+        Ok(Some(fp)) => fp,
+        _ => return Verified::Unavailable,
+    };
+    let Some(remote_sha) = remote.sha256.filter(|_| remote.size == size) else {
+        // The sender's file changed size since: this copy is not it.
+        return Verified::Mismatch;
+    };
+    let data = data.to_path_buf();
+    match tokio::task::spawn_blocking(move || crate::dedupe::sha256_file(&data)).await {
+        Ok(Ok(local)) if local.eq_ignore_ascii_case(&remote_sha) => Verified::Match,
+        Ok(Ok(_)) => Verified::Mismatch,
+        _ => Verified::Unavailable,
+    }
 }
 
 /// The first byte of a `206` response, from its `Content-Range`.
@@ -453,7 +508,7 @@ pub async fn pull_file_from_peer(
 /// The frontend event a progress status is delivered as.
 pub fn event_name(status: &str) -> &'static str {
     match status {
-        "in_progress" => "transfer-progress",
+        "in_progress" | "verifying" => "transfer-progress",
         "completed" | "skipped" => "transfer-completed",
         "paused" => "transfer-paused",
         _ => "transfer-failed",

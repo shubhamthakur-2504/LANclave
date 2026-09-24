@@ -98,6 +98,13 @@ function statusBadge(status: Transfer["status"], skipped?: boolean): React.React
           Active
         </span>
       );
+    case "verifying":
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-action/10 px-2 py-0.5 text-[11px] font-medium text-action">
+          <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+          Checking
+        </span>
+      );
     case "paused":
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-content-muted/10 px-2 py-0.5 text-[11px] font-medium text-content-muted">
@@ -127,7 +134,7 @@ export default function TransferListPanel({
     activeFilter === "all"
       ? transfers
       : activeFilter === "active"
-        ? transfers.filter((t) => t.status === "in_progress" || t.status === "pending" || t.status === "paused")
+        ? transfers.filter((t) => ["in_progress", "pending", "verifying", "paused"].includes(t.status))
         : transfers.filter((t) => t.status === activeFilter);
 
   return (
