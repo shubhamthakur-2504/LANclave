@@ -11,6 +11,7 @@ mod presence;
 mod sandbox;
 mod server;
 mod settings;
+mod tray;
 
 use commands::CliState;
 use ed25519_dalek::SigningKey;
@@ -75,6 +76,12 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        // First: a second launch while we sit in the tray must not start
+        // another copy (it could not bind the server port). It reopens this
+        // one's window instead.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::show_main_window(app);
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(CliState {
@@ -88,7 +95,10 @@ pub fn run() {
             history: history.clone(),
         })
         .manage(commands::TransferState::default())
+        .on_window_event(tray::on_window_event)
         .setup(move |app| {
+            tray::install(app)?;
+
             let mut ctx = presence_ctx;
             ctx.app_handle = Some(app.handle().clone());
             history.set_app_handle(app.handle().clone());
