@@ -116,7 +116,11 @@ export default function HistoryPanel() {
   const maxPeerBytes = stats.byPeer[0]?.bytes ?? 0;
 
   const handleClear = async () => {
-    if (!window.confirm("Clear the transfer history on this device? This can't be undone.")) return;
+    const ok = await api.confirmAction("This removes the transfer log on this computer and can't be undone.", {
+      title: "Clear transfer history?",
+      okLabel: "Clear",
+    });
+    if (!ok) return;
     await api.clearTransferHistory();
     refresh();
   };

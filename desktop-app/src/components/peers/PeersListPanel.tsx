@@ -81,10 +81,15 @@ function PeerRow({
   // Removing here also asks the peer to forget us, so neither side is left
   // holding a one-sided pairing. The list refreshes on presence-changed.
   const handleUnpair = async () => {
-    const prompt = peer.untrusted
-      ? `Remove ${label}? It no longer trusts this computer, so pairing again is the only way to reconnect.`
-      : `Unpair ${label}? Both devices will forget each other, and you'll need to pair again to share files.`;
-    if (!window.confirm(prompt)) return;
+    const ok = await api.confirmAction(
+      peer.untrusted
+        ? `${label} no longer trusts this computer, so pairing again is the only way to reconnect.`
+        : `Both devices will forget each other, and you'll need to pair again to share files.`,
+      peer.untrusted
+        ? { title: `Remove ${label}?`, okLabel: "Remove" }
+        : { title: `Unpair ${label}?`, okLabel: "Unpair" },
+    );
+    if (!ok) return;
     try {
       await api.unpairPeer(peer.device_id);
     } catch (err) {

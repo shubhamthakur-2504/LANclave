@@ -8,7 +8,7 @@
  * I/O is performed (path-traversal protection).
  */
 
-import { Directory, File, Paths } from "expo-file-system";
+import { Directory, File } from "expo-file-system";
 import { getSettings } from "./settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────

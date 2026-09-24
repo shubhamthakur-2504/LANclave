@@ -5,9 +5,10 @@ pub(crate) mod push;
 mod tests;
 
 pub use pull::pull_file_from_peer;
+#[cfg(test)]
 pub(crate) use pull::pull_file_to_disk;
+#[cfg(test)]
 pub use push::push_file_to_peer;
-pub(crate) use push::push_file_to_peer_managed;
 
 /// Errors that can occur during client‑side file transfer operations.
 ///

@@ -38,7 +38,6 @@ use crate::settings::{AppSettings, save_settings};
 
 pub struct CliState {
     pub app_data_dir: PathBuf,
-    pub sandbox_root: PathBuf,
     pub settings: Arc<RwLock<AppSettings>>,
     pub identity_key: SigningKey,
     pub device_id: String,

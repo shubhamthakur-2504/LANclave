@@ -14,10 +14,6 @@ pub use middleware::{
 /// Errors that can occur during device pairing operations.
 #[derive(Debug)]
 pub enum PairingError {
-    /// The signature does not match the stored public key.
-    SignatureMismatch,
-    /// No pairing record exists for the given device.
-    DeviceNotPaired,
     /// A local I/O error occurred while reading or writing store/key files.
     StorageError(String),
     /// Other I/O errors.
@@ -27,8 +23,6 @@ pub enum PairingError {
 impl std::fmt::Display for PairingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SignatureMismatch => f.write_str("signature mismatch"),
-            Self::DeviceNotPaired => f.write_str("device not paired"),
             Self::StorageError(msg) => write!(f, "storage error: {msg}"),
             Self::IoError(msg) => write!(f, "I/O error: {msg}"),
         }

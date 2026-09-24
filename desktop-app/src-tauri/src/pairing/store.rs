@@ -106,17 +106,6 @@ impl DeviceStore {
         self.devices.remove(device_id).is_some()
     }
 
-    /// Update the device name for an existing peer
-    pub fn update_peer_name(&mut self, device_id: &str, device_name: String) -> bool {
-        if let Some(peer) = self.devices.get_mut(device_id) {
-            if peer.device_name.as_ref() != Some(&device_name) {
-                peer.device_name = Some(device_name);
-                return true;
-            }
-        }
-        false
-    }
-
     /// Retrieve the stored [`VerifyingKey`] for a paired device.
     pub fn get_peer_key(&self, device_id: &str) -> Option<VerifyingKey> {
         let record = self.devices.get(device_id)?;
@@ -128,6 +117,7 @@ impl DeviceStore {
     }
 
     /// Check whether a device is paired (exists in the store).
+    #[cfg(test)]
     pub fn is_paired(&self, device_id: &str) -> bool {
         self.devices.contains_key(device_id)
     }

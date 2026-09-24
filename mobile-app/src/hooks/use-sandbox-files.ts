@@ -10,7 +10,7 @@
  *   const { files, isLoading, refreshFiles } = useSandboxFiles();
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { useFocusEffect } from "expo-router";
 
 import { SandboxFileEntry, getLocalSandboxFiles } from "@/services/storage";

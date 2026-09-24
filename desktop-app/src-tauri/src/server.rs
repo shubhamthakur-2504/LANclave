@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::oneshot;
 
@@ -57,12 +56,6 @@ async fn pairing_request_handler(
         &state.identity_key.verifying_key(),
         &peer_key,
     );
-
-    let display_name = state
-        .settings
-        .read()
-        .map(|s| s.display_name.clone())
-        .unwrap_or_else(|_| "Desktop Workstation".to_string());
 
     if let Some(ref handle) = state.app_handle {
         use tauri::Emitter;
@@ -333,6 +326,7 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
 
 /// Alias of [`build_router`].  Exists so that test helpers that bypass auth
 /// can call this (they construct an `AppState` with [`AuthState::disabled`]).
+#[cfg(test)]
 pub fn build_raw_router(state: Arc<AppState>) -> axum::Router {
     build_router(state)
 }
@@ -352,8 +346,6 @@ pub enum ServerError {
     /// [`stop`](ServerController::stop) was called when no server was
     /// running.
     NotRunning,
-    /// A local I/O or channel error occurred.
-    IoError(String),
 }
 
 impl std::fmt::Display for ServerError {
@@ -362,7 +354,6 @@ impl std::fmt::Display for ServerError {
             Self::BindFailed(addr) => write!(f, "failed to bind listener: {addr}"),
             Self::AlreadyRunning => f.write_str("server is already running"),
             Self::NotRunning => f.write_str("server is not running"),
-            Self::IoError(msg) => write!(f, "I/O error: {msg}"),
         }
     }
 }

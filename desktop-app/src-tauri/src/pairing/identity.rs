@@ -1,5 +1,6 @@
 use super::PairingError;
 use base64::Engine;
+#[cfg(test)]
 use ed25519_dalek::Signature;
 use std::path::Path;
 
@@ -40,12 +41,14 @@ pub fn load_or_generate_identity(app_data_dir: &Path) -> Result<ed25519_dalek::S
 }
 
 /// Sign a message with the device's identity keypair.
+#[cfg(test)]
 pub fn sign(keypair: &ed25519_dalek::SigningKey, message: &[u8]) -> Signature {
     use ed25519_dalek::Signer;
     keypair.sign(message)
 }
 
 /// Verify a signature against a [`ed25519_dalek::VerifyingKey`] and message.
+#[cfg(test)]
 pub fn verify(
     public_key: &ed25519_dalek::VerifyingKey,
     message: &[u8],

@@ -11,7 +11,7 @@
  *   X-LANclave-Signature   = hex( ed25519.sign( "deviceId:timestamp", seed ) )
  */
 
-import { Directory, File, Paths, UploadType } from "expo-file-system";
+import { Directory, File, UploadType } from "expo-file-system";
 import { StorageAccessFramework } from "expo-file-system/legacy";
 
 import { getAuthHeaders } from "@/services/identity";

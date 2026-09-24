@@ -35,6 +35,7 @@ impl AuthState {
     }
 
     /// Create an auth‑disabled state for testing.
+    #[cfg(test)]
     pub fn disabled() -> Self {
         Self {
             store: std::sync::Arc::new(RwLock::new(DeviceStore::new())),

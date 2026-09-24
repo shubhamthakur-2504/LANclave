@@ -12,7 +12,7 @@ export interface SelectedPeer {
 export interface UseRemotePeerResult {
   /** Files available on the connected peer. */
   remoteFiles: RemoteFileEntry[];
-  /** True while `fetchPeerFiles` is running. */
+  /** True while the file list is being fetched. */
   isFetching: boolean;
   /** Last error message, or null when everything is OK. */
   error: string | null;
@@ -20,57 +20,74 @@ export interface UseRemotePeerResult {
   fetchPeerFiles: () => Promise<void>;
 }
 
+/** A fetch result, tagged with the peer address it belongs to. */
+interface Listing {
+  addr: string;
+  files: RemoteFileEntry[];
+  error: string | null;
+}
+
+const EMPTY: Listing = { addr: "", files: [], error: null };
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "Failed to fetch peer files.";
+}
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useRemotePeer(
   selectedPeer: SelectedPeer | null,
 ): UseRemotePeerResult {
-  const [remoteFiles, setRemoteFiles] = useState<RemoteFileEntry[]>([]);
-  const [isFetching, setIsFetching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Keyed by address rather than by the object: callers build a new peer
+  // object on every render.
+  const addr = selectedPeer ? `${selectedPeer.ip}:${selectedPeer.port}` : "";
 
-  const fetchPeerFiles = useCallback(
-    async (overridePeer?: SelectedPeer | null) => {
-      const activePeer = overridePeer !== undefined ? overridePeer : selectedPeer;
-      if (!activePeer) {
-        setError("No peer selected.");
-        return;
-      }
+  const [listing, setListing] = useState<Listing>(EMPTY);
+  const [refreshing, setRefreshing] = useState(false);
 
-      setIsFetching(true);
-      setError(null);
-
-      try {
-        const peerAddr = `${activePeer.ip}:${activePeer.port}`;
-        const files = await fetchRemoteFileList(peerAddr);
-        setRemoteFiles(files);
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to fetch peer files.";
-        setError(message);
-        console.warn("[useRemotePeer] fetchPeerFiles error:", err);
-      } finally {
-        setIsFetching(false);
-      }
-    },
-    [selectedPeer],
-  );
-
-  const peerAddrKey = selectedPeer ? `${selectedPeer.ip}:${selectedPeer.port}` : "";
-
+  // Fetch whenever the peer changes. Results carry their address, so a slow
+  // reply for a previous peer is never shown for the current one, and
+  // "loading" is simply "no result for this address yet".
   useEffect(() => {
-    if (peerAddrKey && selectedPeer) {
-      fetchPeerFiles(selectedPeer);
-    } else {
-      setRemoteFiles([]);
-      setError(null);
-    }
-  }, [peerAddrKey]);
+    if (!addr) return;
+    let cancelled = false;
+    fetchRemoteFileList(addr)
+      .then((files) => {
+        if (!cancelled) setListing({ addr, files, error: null });
+      })
+      .catch((err) => {
+        console.warn("[useRemotePeer] fetch error:", err);
+        if (!cancelled) setListing({ addr, files: [], error: errorMessage(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [addr]);
 
+  /** Manual refresh, e.g. after an upload or on pull-to-refresh. */
+  const fetchPeerFiles = useCallback(async () => {
+    if (!addr) return;
+    setRefreshing(true);
+    try {
+      const files = await fetchRemoteFileList(addr);
+      setListing({ addr, files, error: null });
+    } catch (err) {
+      console.warn("[useRemotePeer] refresh error:", err);
+      setListing((prev) => ({
+        addr,
+        files: prev.addr === addr ? prev.files : [],
+        error: errorMessage(err),
+      }));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [addr]);
+
+  const current = listing.addr === addr && addr !== "";
   return {
-    remoteFiles,
-    isFetching,
-    error,
+    remoteFiles: current ? listing.files : [],
+    isFetching: (addr !== "" && !current) || refreshing,
+    error: current ? listing.error : null,
     fetchPeerFiles,
   };
 }

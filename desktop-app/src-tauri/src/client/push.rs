@@ -3,7 +3,6 @@ use ed25519_dalek::SigningKey;
 use std::path::Path;
 use tokio::io::BufReader;
 use tokio_util::io::ReaderStream;
-use tokio::sync::oneshot;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use crate::client::pull::{TransferOutcome, TransferProgressEvent, TransferReport};
@@ -111,6 +110,8 @@ pub(crate) async fn push_file_with_progress(
     }
 }
 
+/// [`push_file_with_progress`] without progress or cancellation, for tests.
+#[cfg(test)]
 pub async fn push_file_to_peer(
     peer_addr: &str,
     local_path: &Path,

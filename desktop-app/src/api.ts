@@ -4,7 +4,22 @@
 // ---------------------------------------------------------------------------
 
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import type { PeerInfo, FileEntry, SandboxFile, HistoryEntry } from "./types";
+
+// ── Dialogs ────────────────────────────────────────────────────────
+
+/**
+ * A native yes/no confirmation for destructive actions. Replaces
+ * `window.confirm`, which renders as a bare browser prompt titled with the
+ * page URL inside the app window.
+ */
+export async function confirmAction(
+  message: string,
+  { title, okLabel }: { title: string; okLabel: string },
+): Promise<boolean> {
+  return await ask(message, { title, kind: "warning", okLabel, cancelLabel: "Cancel" });
+}
 
 // ── Server lifecycle ───────────────────────────────────────────────
 

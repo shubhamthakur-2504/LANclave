@@ -16,10 +16,9 @@ use commands::CliState;
 use ed25519_dalek::SigningKey;
 use pairing::DeviceStore;
 use server::ServerController;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use tauri::Manager;
-use settings::{AppSettings, load_settings};
+use settings::load_settings;
 #[cfg_attr(mobile, tauri::mobile)]
 pub fn run() {
     let app_data_dir = dirs_next::data_local_dir()
@@ -47,7 +46,6 @@ pub fn run() {
         });
 
     let device_id = pairing::public_key_b64(&identity_key);
-    let device_name = settings.read().unwrap().display_name.clone();
 
     let device_store = Arc::new(RwLock::new(
         DeviceStore::load(&app_data_dir).unwrap_or_default(),
@@ -81,7 +79,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(CliState {
             app_data_dir,
-            sandbox_root,
             settings,
             identity_key,
             device_id,

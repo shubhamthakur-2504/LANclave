@@ -214,6 +214,7 @@ impl HistoryStore {
         store
     }
 
+    #[cfg(test)]
     pub fn in_memory() -> Self {
         Self {
             path: None,

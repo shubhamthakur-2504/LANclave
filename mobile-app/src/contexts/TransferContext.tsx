@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
-import { File, Paths, Directory } from 'expo-file-system';
+import { File, Directory } from 'expo-file-system';
 import type { DownloadTask, UploadTask } from 'expo-file-system';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 import { getAuthHeaders } from '@/services/identity';

@@ -14,7 +14,7 @@ import { StorageAccessFramework } from "expo-file-system/legacy";
 import { Paths } from "expo-file-system";
 import { C } from "@/constants/colors";
 import { AppSettings, getSettings, saveSettings } from "@/services/settings";
-import { startServer, stopServer, isServerRunning } from "@/services/server";
+import { startServer, isServerRunning } from "@/services/server";
 
 export default function SettingsScreen() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -45,7 +45,7 @@ export default function SettingsScreen() {
       if (!silent) {
         Alert.alert("Success", "Settings saved successfully.");
       }
-    } catch (e) {
+    } catch {
       if (!silent) {
         Alert.alert("Error", "Failed to save settings.");
       }
