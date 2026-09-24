@@ -3,6 +3,7 @@ import * as SplashScreen from 'expo-splash-screen';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { TransferProvider } from '@/contexts/TransferContext';
+import { IncomingPairingHost } from '@/components/IncomingPairingHost';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -19,6 +20,8 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="peer-sandbox" options={{ headerShown: false }} />
       </Stack>
+      {/* Pairing started on another device can arrive on any screen. */}
+      <IncomingPairingHost />
     </TransferProvider>
   );
 }

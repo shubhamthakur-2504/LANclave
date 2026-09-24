@@ -20,7 +20,17 @@ export interface SandboxFingerprint {
 type NativeServerEvents = {
   /** A device withdrew its own pairing: rejected the codes, or unpaired. */
   onPairingCancelled: (event: { deviceId: string }) => void;
+  /** Another device started pairing with us; show the code to compare. */
+  onPairingRequest: (event: PairingRequestEvent) => void;
 };
+
+export interface PairingRequestEvent {
+  deviceId: string;
+  name: string;
+  /** Where the request came from; the peer's server listens there. */
+  ip: string | null;
+  fingerprint: string;
+}
 
 declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
   startServer(port: number, deviceId: string, deviceName: string, sandboxPath: string, pairedDevices: string[]): boolean;
@@ -47,6 +57,8 @@ declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
   uriSha256(uri: string): Promise<string>;
   /** Pairing cancels received since the last call; consumed on read. */
   consumePairingCancels(): string[];
+  /** A pairing request that arrived with nothing listening (under a minute old). */
+  consumePairingRequest(): PairingRequestEvent | null;
   stopServer(): void;
   updatePairedDevices(devices: string[]): void;
 }

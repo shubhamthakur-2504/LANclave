@@ -657,7 +657,7 @@ pub fn clear_transfer_history(state: State<'_, CliState>) {
 #[tauri::command]
 pub async fn initiate_pairing(
     state: State<'_, CliState>,
-    _peer_addr: String,
+    peer_addr: String,
     peer_device_id: String,
     _peer_device_name: Option<String>,
 ) -> Result<String, String> {
@@ -671,6 +671,33 @@ pub async fn initiate_pairing(
         &state.identity_key.verifying_key(),
         &peer_key,
     );
+
+    // Ask the peer to open its side of the comparison. Without this, a
+    // pairing started here was one-sided: only this computer ever stored
+    // anything, and the other device never showed a code to compare.
+    if let Some(addr) = normalize_peer_addr(&peer_addr) {
+        let display_name = state
+            .settings
+            .read()
+            .map(|s| s.display_name.clone())
+            .unwrap_or_default();
+        let res = CLIENT
+            .post(format!("http://{addr}/api/pairing/request"))
+            .timeout(std::time::Duration::from_secs(5))
+            .json(&serde_json::json!({
+                "device_id": state.device_id,
+                "name": display_name,
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("could not reach the device: {e}"))?;
+
+        // 404: a peer from before this endpoint. Still show the code, but
+        // that device has to start pairing from its own side too.
+        if !res.status().is_success() && res.status() != reqwest::StatusCode::NOT_FOUND {
+            return Err(format!("the device refused the pairing request (HTTP {})", res.status()));
+        }
+    }
 
     Ok(fingerprint)
 }

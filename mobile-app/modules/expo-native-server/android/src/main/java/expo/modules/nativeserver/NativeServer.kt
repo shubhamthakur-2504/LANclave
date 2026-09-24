@@ -21,6 +21,13 @@ class NativeServer(
     /** A device withdrew its own pairing (rejected the codes, or unpaired). */
     private val onPairingCancelled: (String) -> Unit = {},
 ) : NanoHTTPD(port) {
+    /** A device wants to pair: (deviceId, name, ip, code). */
+    private var onPairingRequest: (String, String, String?, String) -> Unit = { _, _, _, _ -> }
+
+    fun setPairingRequestHandler(handler: (String, String, String?, String) -> Unit) {
+        onPairingRequest = handler
+    }
+
     private val isContentUri = rawSandboxPath.startsWith("content://")
     private val sandboxPath = rawSandboxPath.removePrefix("file://")
 
@@ -40,6 +47,10 @@ class NativeServer(
         // paired with us any more -- it is checked against its own key below.
         if (uri == "/api/pairing/cancel" && method == Method.POST) {
             return handlePairingCancel(session)
+        }
+        // Asking to pair is, by definition, from a device we have not paired.
+        if (uri == "/api/pairing/request" && method == Method.POST) {
+            return handlePairingRequest(session)
         }
 
         if (uri != "/health") {
@@ -199,6 +210,42 @@ class NativeServer(
         } catch (e: Exception) {
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, e.message ?: "Unknown error")
         }
+    }
+
+    /**
+     * `POST /api/pairing/request` -- a device (the desktop, when pairing is
+     * started there) asking us to open our side of the code comparison.
+     * Mirrors the desktop's handler: same body, same reply.
+     *
+     * Grants nothing. It only shows a dialog; trust is stored when the user
+     * here confirms the code, exactly as when pairing starts on this phone.
+     */
+    private fun handlePairingRequest(session: IHTTPSession): Response {
+        val body = try {
+            val files = HashMap<String, String>()
+            session.parseBody(files)
+            JSONObject(files["postData"] ?: "")
+        } catch (_: Exception) {
+            return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Invalid body")
+        }
+
+        val peerId = body.optString("device_id")
+        val peerKey = PairingCode.publicKey(peerId)
+        val ownKey = PairingCode.publicKey(deviceId)
+        if (peerKey == null || ownKey == null || peerId == deviceId) {
+            return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Invalid device id")
+        }
+
+        val code = PairingCode.compute(ownKey, peerKey)
+        val name = body.optString("name").takeIf { it.isNotBlank() } ?: "Unknown device"
+        // The address the request came from, not one the body claims.
+        onPairingRequest(peerId, name, session.remoteIpAddress, code)
+
+        val reply = JSONObject()
+        reply.put("status", "ok")
+        reply.put("fingerprint", code)
+        reply.put("device_id", deviceId)
+        return newFixedLengthResponse(Response.Status.OK, "application/json", reply.toString())
     }
 
     /**

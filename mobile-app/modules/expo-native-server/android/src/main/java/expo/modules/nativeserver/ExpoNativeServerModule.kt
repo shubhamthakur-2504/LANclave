@@ -6,6 +6,9 @@ import expo.modules.kotlin.modules.ModuleDefinition
 class ExpoNativeServerModule : Module() {
   private var server: NativeServer? = null
 
+  /** The newest pairing request, until JS shows it. */
+  @Volatile private var pendingRequest: Map<String, Any?>? = null
+
   /** Pairing cancels not yet applied to the JS-side paired list. */
   private val pendingCancels = mutableSetOf<String>()
 
@@ -15,7 +18,7 @@ class ExpoNativeServerModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ExpoNativeServer")
 
-    Events("onPairingCancelled")
+    Events("onPairingCancelled", "onPairingRequest")
 
     Function("startServer") { port: Int, deviceId: String, deviceName: String, sandboxPath: String, pairedDevices: Array<String> ->
       try {
@@ -40,6 +43,19 @@ class ExpoNativeServerModule : Module() {
           // and a cancel must not be lost if nothing is listening right now.
           synchronized(pendingCancels) { pendingCancels.add(cancelledId) }
           sendEvent("onPairingCancelled", mapOf("deviceId" to cancelledId))
+        }.also { srv ->
+          srv.setPairingRequestHandler { id, name, ip, code ->
+            val request = mapOf(
+              "deviceId" to id,
+              "name" to name,
+              "ip" to ip,
+              "fingerprint" to code,
+              "receivedAtMs" to System.currentTimeMillis().toDouble(),
+            )
+            // Kept too, so a dialog is not lost while nothing is listening.
+            pendingRequest = request
+            sendEvent("onPairingRequest", request)
+          }
         }
         next.start(5000, false)
         server = next
@@ -154,6 +170,14 @@ class ExpoNativeServerModule : Module() {
     AsyncFunction("clearTransferHistory") {
       val context = appContext.reactContext ?: throw Exception("React context is null")
       TransferHistory.clear(context)
+    }
+
+    /** The last pairing request not yet shown, if under a minute old; consumed on read. */
+    Function("consumePairingRequest") {
+      val request = pendingRequest
+      pendingRequest = null
+      val at = (request?.get("receivedAtMs") as? Double) ?: 0.0
+      request?.takeIf { System.currentTimeMillis() - at < 60_000 }
     }
 
     /** Devices that withdrew their pairing since the last call; consumed on read. */
