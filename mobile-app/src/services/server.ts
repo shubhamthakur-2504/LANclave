@@ -3,11 +3,55 @@ import { getOrCreateDeviceIdentity } from "./identity";
 import { getSettings } from "./settings";
 import { getPairedPeers } from "./pairing";
 import { Platform } from "react-native";
+import Zeroconf from "react-native-zeroconf";
 import { startPresence, stopPresence } from "./presence";
 
 let serverDesiredOn = false; // tracks user intent: should the server be running?
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 const PORT = 8377;
+
+// ─── mDNS advertisement ──────────────────────────────────────────────────────
+//
+// Same service, TXT fields and naming as the desktop (discovery.rs), so
+// desktops and other phones find this phone on their own instead of only
+// after a manual subnet sweep.
+
+let publisher: Zeroconf | null = null;
+let publishedName: string | null = null;
+
+/** DNS-label-safe tag from the device id; matches the desktop's `mdns_tag`. */
+function mdnsTag(deviceId: string): string {
+  return deviceId.replace(/[^A-Za-z0-9]/g, "").slice(0, 12).toLowerCase();
+}
+
+function advertise(deviceId: string, deviceName: string): void {
+  if (publishedName) return;
+  try {
+    publisher = publisher ?? new Zeroconf();
+    const name = `LANclave-${mdnsTag(deviceId)}`;
+    publisher.publishService("lanclave-portal", "tcp", "local.", name, PORT, {
+      version: "1.0.0",
+      node_type: "mobile",
+      device_type: "phone",
+      device_id: deviceId,
+      device_name: deviceName,
+    });
+    publishedName = name;
+  } catch (err) {
+    // Discovery falls back to the manual sweep; nothing else depends on this.
+    console.warn("[server] mDNS advertise failed:", err);
+  }
+}
+
+function stopAdvertising(): void {
+  if (!publisher || !publishedName) return;
+  try {
+    publisher.unpublishService(publishedName);
+  } catch {
+    // best effort
+  }
+  publishedName = null;
+}
 
 function startWatchdog(): void {
   stopWatchdog();
@@ -66,6 +110,7 @@ export async function startServer(): Promise<void> {
   startWatchdog();
   // Announce to paired peers and start the per-peer heartbeat.
   startPresence();
+  advertise(identity.deviceId, settings.displayName);
 }
 
 export function stopServer(): void {
@@ -73,6 +118,7 @@ export function stopServer(): void {
   stopWatchdog();
   // Best-effort bye so peers show us offline immediately.
   stopPresence().catch(() => {});
+  stopAdvertising();
   if (Platform.OS === 'android') {
     ExpoNativeServerModule.stopServer();
   }
