@@ -8,6 +8,7 @@
     "@noble/hashes": "^2.2.0",
     "buffer": "^6.0.3",
     "expo": "~57.0.6",
+    "expo-build-properties": "~57.0.22",
     "expo-constants": "~57.0.5",
     "expo-crypto": "^57.0.1",
     "expo-dev-client": "~57.0.10",

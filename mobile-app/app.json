@@ -65,7 +65,15 @@
           "imageWidth": 76
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 33
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

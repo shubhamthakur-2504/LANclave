@@ -94,29 +94,18 @@ class ExpoNativeServerModule : Module() {
 
       val uris = when (action) {
         android.content.Intent.ACTION_SEND -> {
-          val uri = if (android.os.Build.VERSION.SDK_INT >= 33) {
-            intent.getParcelableExtra(
-              android.content.Intent.EXTRA_STREAM,
-              android.net.Uri::class.java,
-            )
-          } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
-          }
+          // minSdk is 33, so the typed getter always exists.
+          val uri = intent.getParcelableExtra(
+            android.content.Intent.EXTRA_STREAM,
+            android.net.Uri::class.java,
+          )
           listOfNotNull(uri)
         }
         else -> {
-          val list = if (android.os.Build.VERSION.SDK_INT >= 33) {
-            intent.getParcelableArrayListExtra(
-              android.content.Intent.EXTRA_STREAM,
-              android.net.Uri::class.java,
-            )
-          } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableArrayListExtra<android.net.Uri>(
-              android.content.Intent.EXTRA_STREAM,
-            )
-          }
+          val list = intent.getParcelableArrayListExtra(
+            android.content.Intent.EXTRA_STREAM,
+            android.net.Uri::class.java,
+          )
           list ?: emptyList()
         }
       }
