@@ -54,6 +54,17 @@ fn shared_daemon() -> Result<&'static ServiceDaemon, String> {
         .ok_or_else(|| "shared mDNS daemon unavailable".to_string())
 }
 
+/// A DNS-label-safe tag from a base64 device id: its first 12 alphanumeric
+/// characters, lowercased. Stable per device, distinct across devices.
+pub fn mdns_tag(device_id: &str) -> String {
+    device_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(12)
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
 /// Starts an mDNS service broadcaster on a background thread and keeps it
 /// alive for the lifetime of the process (or until the returned shutdown
 /// flag is set).
@@ -80,13 +91,20 @@ pub fn start_mdns_broadcast(device_id: &str, device_name: &str) -> Arc<AtomicBoo
             props.insert("version".to_string(), "1.0.0".to_string());
             props.insert("node_type".to_string(), "desktop".to_string());
             props.insert("device_type".to_string(), crate::presence::DEVICE_TYPE.to_string());
-            props.insert("device_id".to_string(), device_id);
+            props.insert("device_id".to_string(), device_id.clone());
             props.insert("device_name".to_string(), device_name);
+
+            // Instance and host names must be unique on the network: with a
+            // fixed name, two desktops advertised the same service and host,
+            // and mDNS treated them as one device.
+            let tag = mdns_tag(&device_id);
+            let instance = format!("LANclave-{tag}");
+            let host = format!("lanclave-{tag}.local.");
 
             let service_info = match ServiceInfo::new(
                 SERVICE_TYPE,
-                "Desktop-Node-Workstation",
-                "lanclave-desktop.local.",
+                &instance,
+                &host,
                 "",
                 8377u16,
                 props,
@@ -321,4 +339,18 @@ fn parse_peer(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer> {
         device_name,
         device_type,
     })
+}
+
+#[cfg(test)]
+mod mdns_tag_tests {
+    use super::mdns_tag;
+
+    #[test]
+    fn tag_is_dns_safe_and_distinct_per_device() {
+        let a = mdns_tag("q+8/Zr3xK0vQ1a2b3c4d5e6f7g8h9i0jKlMnOpQrStU=");
+        let b = mdns_tag("Zz9+Yy8/Xx7Ww6Vv5Uu4Tt3Ss2Rr1Qq0PpOoNnMmLlK=");
+        assert_eq!(a, "q8zr3xk0vq1a");
+        assert!(a.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+        assert_ne!(a, b);
+    }
 }
