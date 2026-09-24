@@ -54,7 +54,7 @@ pub async fn download_file(
     Path(requested_path): Path<String>,
 ) -> Result<Response, StatusCode> {
     // ---- 0. Authorize (pairing check) ------------------------------------
-    crate::pairing::check_request(&state.auth, &headers)
+    let peer_id = crate::pairing::check_request(&state.auth, &headers)
         .map_err(|s| StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
 
     let sandbox_root = {
@@ -88,8 +88,32 @@ pub async fn download_file(
         .unwrap_or("file");
     let content_disposition = format!("attachment; filename=\"{}\"", filename);
 
+    // Logged as "sent" once the body stream is dropped: complete if every
+    // byte went out, failed if the peer disconnected first.
+    let mut log = crate::history::PeerTransferLog::new(
+        state.history.clone(),
+        crate::history::HistoryEntry::new(
+            crate::history::Direction::Sent,
+            crate::history::Initiator::Peer,
+            peer_id.clone(),
+            state.peer_name(&peer_id),
+            requested_path.clone(),
+        ),
+    );
+    log.expected = Some(content_length);
+
+    use futures_util::StreamExt;
     let reader = BufReader::new(file);
-    let stream = ReaderStream::with_capacity(reader, 64 * 1024);
+    let stream = ReaderStream::with_capacity(reader, 64 * 1024).map(move |chunk| {
+        if let Ok(bytes) = &chunk {
+            // A method call, not `log.bytes += ..`: edition-2021 closures
+            // capture only the fields they touch, which would move a copy of
+            // the counter in and leave the guard to drop -- and log a failed
+            // transfer -- the moment this handler returns.
+            log.add_bytes(bytes.len() as u64);
+        }
+        chunk
+    });
     let body = axum::body::Body::from_stream(stream);
 
     let response = Response::builder()
@@ -111,22 +135,27 @@ pub async fn download_file(
 ///
 /// The caller sends the file bytes in the request body.  The handler streams
 /// them to disk in 64 KB chunks — never buffering the whole upload in memory.
-/// On success, returns **201 Created**; on failure, the partial file is
-/// deleted and an appropriate error status is returned.
+/// On success, returns **201 Created** with `{"name": ...}`, the path the
+/// file was actually saved under; on failure, the partial file is deleted
+/// and an appropriate error status is returned.
+///
+/// An existing file is never overwritten: a clash is saved as `name (1).ext`
+/// and so on, which is why the response names the file.
 ///
 /// ## TOCTOU (Time‑Of‑Check Time‑Of‑Use)
 ///
 /// As with [`download_file`], `verify_sandboxed_path` pins the destination
-/// inside the sandbox.  The `File::create_new` call below is **atomic** — it
-/// simultaneously creates the file and checks that it didn't already exist.
+/// inside the sandbox.  [`crate::fs_util::create_unique`] creates with
+/// `create_new`, which is **atomic** — concurrent pushes of the same name
+/// each land in their own file.
 pub async fn upload_file(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(requested_path): Path<String>,
     body: axum::body::Body,
-) -> Result<(StatusCode, &'static str), StatusCode> {
+) -> Result<(StatusCode, Json<UploadResult>), StatusCode> {
     // ---- 0. Authorize (pairing check) ------------------------------------
-    crate::pairing::check_request(&state.auth, &headers)
+    let peer_id = crate::pairing::check_request(&state.auth, &headers)
         .map_err(|s| StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
 
     let sandbox_root = {
@@ -150,17 +179,30 @@ pub async fn upload_file(
     let path = crate::sandbox::verify_sandboxed_path(&sandbox_root, &requested_path)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    // ---- 4. Atomically create the file (fails if already exists) ---------
-    let file = match tokio_fs::File::create_new(&path).await {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            return Err(StatusCode::CONFLICT);
-        }
-        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
-    };
+    // ---- 4. Atomically create the file, or a numbered sibling ------------
+    let (file, path) = crate::fs_util::create_unique(&path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let saved_as = sibling_path(
+        &requested_path,
+        path.file_name().and_then(|n| n.to_str()).unwrap_or_default(),
+    );
 
-    // ---- 5. Arm the cleanup guard ----------------------------------------
+    // ---- 5. Arm the cleanup guard and the history log -------------------
     let mut guard = WriteGuard::new(path.clone());
+    // Logged as "received" on every exit from here on, including the peer
+    // disconnecting mid-upload.
+    let mut log = crate::history::PeerTransferLog::new(
+        state.history.clone(),
+        crate::history::HistoryEntry::new(
+            crate::history::Direction::Received,
+            crate::history::Initiator::Peer,
+            peer_id.clone(),
+            state.peer_name(&peer_id),
+            requested_path.clone(),
+        ),
+    );
+    log.set_dest_name(saved_as.clone());
 
     // ---- 6. Stream the request body to disk in 64 KB chunks --------------
     use bytes::Bytes;
@@ -186,6 +228,7 @@ pub async fn upload_file(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         written += chunk_len;
+        log.bytes = written;
     }
 
     writer
@@ -194,7 +237,24 @@ pub async fn upload_file(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     guard.disarm();
-    Ok((StatusCode::CREATED, ""))
+    log.succeeded = true;
+    Ok((StatusCode::CREATED, Json(UploadResult { name: saved_as })))
+}
+
+/// Body of a successful upload.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct UploadResult {
+    /// Sandbox-relative path the file was saved under -- differs from the
+    /// requested one when that name was taken.
+    pub name: String,
+}
+
+/// `requested` with its last segment replaced by `file_name`.
+fn sibling_path(requested: &str, file_name: &str) -> String {
+    match requested.rsplit_once('/') {
+        Some((dir, _)) => format!("{dir}/{file_name}"),
+        None => file_name.to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +298,7 @@ pub async fn list_files_handler(
             name,
             size: metadata.len(),
             is_directory: metadata.is_dir(),
+            modified: crate::fs_util::modified_ms(&metadata),
         });
     }
 
@@ -289,6 +350,9 @@ pub struct ListFileItem {
     pub name: String,
     pub size: u64,
     pub is_directory: bool,
+    /// Last modified, Unix ms. Lets peers sort by date; absent when unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -320,6 +384,7 @@ mod tests {
             identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
+            history: Arc::new(crate::history::HistoryStore::in_memory()),
             auth: Arc::new(crate::pairing::AuthState::disabled()),
         })
     }
@@ -399,21 +464,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upload_existing_file_returns_409() {
+    async fn upload_existing_name_is_saved_alongside() {
         let (_dir, app) = setup_with_file("existing.bin", b"original data");
 
         let req = Request::builder()
             .method("PUT")
             .uri("/files/existing.bin")
             .header("Content-Type", "application/octet-stream")
-            .body(axum::body::Body::from(Bytes::from_static(b"overwrite")))
+            .body(axum::body::Body::from(Bytes::from_static(b"second copy")))
             .unwrap();
 
         let res = app.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::CONFLICT);
+        assert_eq!(res.status(), StatusCode::CREATED);
 
-        let saved = std::fs::read(_dir.path().join("existing.bin")).unwrap();
-        assert_eq!(saved, b"original data");
+        use http_body_util::BodyExt;
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        let result: UploadResult = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result.name, "existing (1).bin");
+
+        let original = std::fs::read(_dir.path().join("existing.bin")).unwrap();
+        assert_eq!(original, b"original data", "must never overwrite");
+        let second = std::fs::read(_dir.path().join("existing (1).bin")).unwrap();
+        assert_eq!(second, b"second copy");
     }
 
     #[tokio::test]
@@ -595,5 +667,71 @@ mod tests {
         assert_eq!(body.len(), 65_000);
         assert_eq!(body[0], 0xAB);
         assert_eq!(body[64_999], 0xAB);
+    }
+
+    // =======================================================================
+    // History tests
+    // =======================================================================
+
+    #[tokio::test]
+    async fn peer_push_and_pull_are_logged() {
+        use crate::history::{Direction, Initiator, Outcome};
+        use http_body_util::BodyExt;
+
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("have.txt"), b"served bytes").unwrap();
+        let state = make_state(&dir);
+        let app = build_raw_router(state.clone());
+
+        let req = Request::builder()
+            .method("PUT")
+            .uri("/files/have.txt")
+            .body(axum::body::Body::from(Bytes::from_static(b"pushed")))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+
+        let req = Request::builder()
+            .uri("/files/have.txt")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        let status = res.status();
+        let got = res.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!((status, got.len()), (StatusCode::OK, 12));
+
+        let log = state.history.list();
+        assert_eq!(log.len(), 2, "{log:?}");
+
+        let received = log.iter().find(|e| e.direction == Direction::Received).unwrap();
+        assert_eq!(received.initiated_by, Initiator::Peer);
+        assert_eq!(received.outcome, Outcome::Completed);
+        assert_eq!(received.bytes, 6);
+        assert_eq!(received.dest_name.as_deref(), Some("have (1).txt"));
+
+        let sent = log.iter().find(|e| e.direction == Direction::Sent).unwrap();
+        assert_eq!(sent.outcome, Outcome::Completed, "{sent:?}");
+        assert_eq!(sent.bytes, 12);
+    }
+
+    #[tokio::test]
+    async fn abandoned_download_is_logged_as_failed() {
+        use crate::history::Outcome;
+
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("big.bin"), vec![1u8; 300_000]).unwrap();
+        let state = make_state(&dir);
+        let app = build_raw_router(state.clone());
+
+        let req = Request::builder()
+            .uri("/files/big.bin")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        drop(res); // peer hangs up without reading
+
+        let log = state.history.list();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].outcome, Outcome::Failed);
     }
 }

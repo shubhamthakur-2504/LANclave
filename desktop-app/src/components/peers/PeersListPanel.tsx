@@ -3,6 +3,8 @@ import { HelpCircle, Laptop, Smartphone, Tablet } from "lucide-react";
 import { colorForDevice, deviceKind, initialForDevice } from "../../lib/identity";
 import { useTransfers } from "../../contexts/TransferContext";
 import type { PeerInfo, Transfer } from "../../types";
+import { useToast } from "../ui/Toast";
+import * as api from "../../api";
 
 interface PeersListPanelProps {
   peers: PeerInfo[];
@@ -73,6 +75,22 @@ function PeerRow({
 }) {
   const isOnline = peer.addr !== "";
   const [retrying, setRetrying] = useState(false);
+  const toast = useToast();
+  const label = peer.device_name || `${peer.device_id.substring(0, 8)}…`;
+
+  // Removing here also asks the peer to forget us, so neither side is left
+  // holding a one-sided pairing. The list refreshes on presence-changed.
+  const handleUnpair = async () => {
+    const prompt = peer.untrusted
+      ? `Remove ${label}? It no longer trusts this computer, so pairing again is the only way to reconnect.`
+      : `Unpair ${label}? Both devices will forget each other, and you'll need to pair again to share files.`;
+    if (!window.confirm(prompt)) return;
+    try {
+      await api.unpairPeer(peer.device_id);
+    } catch (err) {
+      toast.error(err, label);
+    }
+  };
 
   // Identity: name initial where there is one, device glyph otherwise, and a
   // colour derived from the device id so a peer looks the same every time.
@@ -112,7 +130,7 @@ function PeerRow({
       aria-label={
         primary ? `Open ${peer.device_name || "peer"}'s files` : undefined
       }
-      className={`flex w-full items-center gap-3 border-b border-border px-5 py-3 text-left transition-colors ${
+      className={`group flex w-full items-center gap-3 border-b border-border px-5 py-3 text-left transition-colors ${
         primary ? "cursor-pointer hover:bg-surface-active" : ""
       } ${isOnline ? "" : "opacity-60"} ${
         isDropTarget ? "bg-action/10 ring-1 ring-inset ring-action" : ""
@@ -138,14 +156,24 @@ function PeerRow({
           <span className="truncate text-sm font-medium text-content">
             {peer.device_name || `${peer.device_id.substring(0, 8)}…`}
           </span>
-          {!isOnline && (
-            <span className="shrink-0 text-[10px] uppercase tracking-wide text-content-faint">
-              Offline
+          {peer.untrusted ? (
+            <span className="shrink-0 text-[10px] uppercase tracking-wide text-warn">
+              Not paired there
             </span>
+          ) : (
+            !isOnline && (
+              <span className="shrink-0 text-[10px] uppercase tracking-wide text-content-faint">
+                Offline
+              </span>
+            )
           )}
         </div>
 
-        {activity.length > 0 ? (
+        {peer.untrusted ? (
+          <p className="truncate text-xs text-content-faint">
+            It rejected the pairing or unpaired this computer. Remove it, then pair again.
+          </p>
+        ) : activity.length > 0 ? (
           <PeerActivity transfers={activity} />
         ) : (
           <p className="truncate text-xs text-content-faint">
@@ -158,7 +186,23 @@ function PeerRow({
         className="flex shrink-0 gap-2"
         onClick={(e) => e.stopPropagation()}
       >
-        {peer.paired && !isOnline && onRescan && (
+        {peer.paired && peer.untrusted && (
+          <button
+            onClick={handleUnpair}
+            className="rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active"
+          >
+            Remove
+          </button>
+        )}
+        {peer.paired && !peer.untrusted && (
+          <button
+            onClick={handleUnpair}
+            className="rounded-lg px-2 py-1.5 text-xs font-medium text-content-faint opacity-0 transition-opacity hover:text-danger focus:opacity-100 group-hover:opacity-100"
+          >
+            Unpair
+          </button>
+        )}
+        {peer.paired && !peer.untrusted && !isOnline && onRescan && (
           <button
             onClick={handleRescan}
             disabled={retrying}

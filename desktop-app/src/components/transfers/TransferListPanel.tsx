@@ -246,7 +246,7 @@ export default function TransferListPanel({
                           onClick={async (e) => {
                             e.stopPropagation();
                             try {
-                              await api.revealInSandbox(t.localPath ?? t.fileName);
+                              await api.revealInSandbox(t.destName ?? t.localPath ?? t.fileName);
                             } catch (err) {
                               toast.error(err);
                             }

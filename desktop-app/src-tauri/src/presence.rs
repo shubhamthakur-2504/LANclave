@@ -58,14 +58,18 @@ pub struct PeerPresence {
     pub addr: Option<String>,
     pub last_seen_ms: u64,
     pub online: bool,
+    /// The peer answered but no longer trusts us: paired here, not there.
+    /// Happens when the other side rejected the pairing or unpaired.
+    pub untrusted: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct Entry {
     device_name: Option<String>,
     addr: Option<String>,
     last_seen_ms: u64,
     fail_count: u32,
+    untrusted: bool,
 }
 
 /// Shared, in-memory presence table. Cheap to read; written on every
@@ -85,14 +89,12 @@ impl PresenceStore {
         let Ok(mut map) = self.inner.write() else {
             return;
         };
-        let entry = map.entry(device_id.to_string()).or_insert(Entry {
-            device_name: None,
-            addr: None,
-            last_seen_ms: 0,
-            fail_count: 0,
-        });
+        let entry = map.entry(device_id.to_string()).or_default();
         entry.last_seen_ms = now_ms();
         entry.fail_count = 0;
+        // Only paired peers contact us or answer our signed probes, so any
+        // contact means the pairing holds on their side too.
+        entry.untrusted = false;
         if device_name.is_some() {
             entry.device_name = device_name;
         }
@@ -111,17 +113,39 @@ impl PresenceStore {
         }
     }
 
+    /// The peer is reachable but refused us as unpaired. Not online: nothing
+    /// but a re-pair would work. Not a failure either: its address is fine,
+    /// so no re-resolving.
+    pub fn mark_untrusted(&self, device_id: &str) {
+        if let Ok(mut map) = self.inner.write() {
+            let entry = map.entry(device_id.to_string()).or_default();
+            entry.untrusted = true;
+            entry.last_seen_ms = 0;
+            entry.fail_count = 0;
+        }
+    }
+
+    pub fn is_untrusted(&self, device_id: &str) -> bool {
+        self.inner
+            .read()
+            .ok()
+            .and_then(|m| m.get(device_id).map(|e| e.untrusted))
+            .unwrap_or(false)
+    }
+
+    /// Drop everything known about a peer, after an unpair.
+    pub fn forget(&self, device_id: &str) {
+        if let Ok(mut map) = self.inner.write() {
+            map.remove(device_id);
+        }
+    }
+
     /// Record a failed heartbeat, returning the new consecutive failure count.
     pub fn record_failure(&self, device_id: &str) -> u32 {
         let Ok(mut map) = self.inner.write() else {
             return 0;
         };
-        let entry = map.entry(device_id.to_string()).or_insert(Entry {
-            device_name: None,
-            addr: None,
-            last_seen_ms: 0,
-            fail_count: 0,
-        });
+        let entry = map.entry(device_id.to_string()).or_default();
         entry.fail_count = entry.fail_count.saturating_add(1);
         if entry.fail_count >= MAX_HEARTBEAT_FAILS {
             entry.last_seen_ms = 0;
@@ -135,14 +159,7 @@ impl PresenceStore {
 
     pub fn set_addr(&self, device_id: &str, addr: String) {
         if let Ok(mut map) = self.inner.write() {
-            map.entry(device_id.to_string())
-                .or_insert(Entry {
-                    device_name: None,
-                    addr: None,
-                    last_seen_ms: 0,
-                    fail_count: 0,
-                })
-                .addr = Some(addr);
+            map.entry(device_id.to_string()).or_default().addr = Some(addr);
         }
     }
 
@@ -179,6 +196,7 @@ fn to_public(device_id: &str, entry: &Entry) -> PeerPresence {
         addr: entry.addr.clone(),
         last_seen_ms: entry.last_seen_ms,
         online: is_fresh(entry.last_seen_ms),
+        untrusted: entry.untrusted,
     }
 }
 
@@ -254,7 +272,7 @@ impl PresenceContext {
         (ts.to_string(), sig_b64)
     }
 
-    fn emit_changed(&self) {
+    pub(crate) fn emit_changed(&self) {
         if let Some(app) = &self.app_handle {
             use tauri::Emitter;
             let _ = app.emit("presence-changed", self.presence.snapshot());
@@ -288,21 +306,49 @@ impl PresenceContext {
 
     /// One `/health` probe. Confirms identity before trusting the result --
     /// a stale address may now belong to an entirely different device.
+    /// Heartbeat one peer. `true` when it answered at all -- including a
+    /// refusal, which is recorded as untrusted rather than as a failure.
     async fn probe(&self, device_id: &str, addr: &str) -> bool {
-        let url = format!("http://{addr}/health");
+        // `/api/pairing/status` answers only peers that still trust us, so a
+        // 200 means paired on both sides and a 401 means paired here only.
+        // A 404 is a peer from before the endpoint existed: fall back to the
+        // open `/health`, which cannot tell the two apart.
+        let Some(res) = self.signed_get(&format!("http://{addr}/api/pairing/status")).await else {
+            return false;
+        };
+        match res.status().as_u16() {
+            401 | 403 => {
+                self.presence.mark_untrusted(device_id);
+                self.remember_addr(device_id, addr);
+                return true;
+            }
+            404 => {}
+            _ if res.status().is_success() => return self.accept_identity(device_id, addr, res).await,
+            _ => return false,
+        }
+
         // Signed so the peer can count this heartbeat as contact from us and
         // learn our current address. /health still answers unsigned probes.
+        let Some(res) = self.signed_get(&format!("http://{addr}/health")).await else {
+            return false;
+        };
+        self.accept_identity(device_id, addr, res).await
+    }
+
+    async fn signed_get(&self, url: &str) -> Option<reqwest::Response> {
         let (ts, sig) = self.sign_headers();
-        let Ok(res) = CLIENT
-            .get(&url)
+        CLIENT
+            .get(url)
             .header(HEADER_DEVICE_ID, &self.device_id)
             .header(HEADER_TIMESTAMP, ts)
             .header(HEADER_SIGNATURE, sig)
             .send()
             .await
-        else {
-            return false;
-        };
+            .ok()
+    }
+
+    /// Record a probe answer as contact, if it really is `device_id`.
+    async fn accept_identity(&self, device_id: &str, addr: &str, res: reqwest::Response) -> bool {
         let Ok(body) = res.json::<serde_json::Value>().await else {
             return false;
         };
@@ -348,6 +394,11 @@ impl PresenceContext {
         else {
             return false;
         };
+        if matches!(res.status().as_u16(), 401 | 403) {
+            // It is up, and it does not trust us.
+            self.presence.mark_untrusted(device_id);
+            return false;
+        }
         if !res.status().is_success() {
             return false;
         }
@@ -407,6 +458,7 @@ impl PresenceContext {
                 let mut changed = false;
                 for (device_id, addr) in targets {
                     let was_online = self.presence.is_online(&device_id);
+                    let was_untrusted = self.presence.is_untrusted(&device_id);
 
                     let reached = match &addr {
                         Some(a) => self.probe(&device_id, a).await,
@@ -430,7 +482,9 @@ impl PresenceContext {
                         }
                     }
 
-                    if self.presence.is_online(&device_id) != was_online {
+                    if self.presence.is_online(&device_id) != was_online
+                        || self.presence.is_untrusted(&device_id) != was_untrusted
+                    {
                         changed = true;
                     }
                 }

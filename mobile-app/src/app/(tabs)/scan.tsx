@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   FlatList,
   StatusBar,
@@ -9,6 +9,7 @@ import {
   Alert,
   Pressable,
   ActivityIndicator,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -21,8 +22,11 @@ import {
   getPairedPeers,
   savePairedPeer,
   getPairingFingerprintForPeer,
+  sendPairingCancel,
 } from "@/services/pairing";
+import ExpoNativeServerModule from "../../../modules/expo-native-server/src/ExpoNativeServerModule";
 import { getSettings } from "@/services/settings";
+import { rescanPeer } from "@/services/presence";
 import { Icon } from "@/components/Icon";
 import * as Network from "expo-network";
 
@@ -67,18 +71,22 @@ export default function ScanScreen() {
     setPairingTarget(peer);
     setPairingFingerprint(null);
     try {
-      const localFp = await getPairingFingerprintForPeer(peer.id);
+      // Everything the request needs, fetched in parallel rather than one
+      // after another. The IP is only a hint: the desktop uses the address
+      // the request arrives from.
+      const [localFp, identity, settings, myIp] = await Promise.all([
+        getPairingFingerprintForPeer(peer.id),
+        getOrCreateDeviceIdentity(),
+        getSettings(),
+        Network.getIpAddressAsync().catch(() => "Unknown IP"),
+      ]);
 
-      // Notify remote desktop peer via HTTP POST so desktop opens its modal simultaneously
-      const identity = await getOrCreateDeviceIdentity();
-      const settings = await getSettings();
-      let myIp = "Unknown IP";
-      try {
-        myIp = await Network.getIpAddressAsync();
-      } catch (e) {
-        // fallback
-      }
+      // The code is derived from both public keys, so ours is already the
+      // answer -- show it now instead of waiting on the network.
+      setPairingFingerprint(localFp);
 
+      // Ask the desktop to open its side of the ceremony. Bounded: without a
+      // timeout an unreachable peer left the sheet up until the OS gave up.
       fetch(`http://${peer.ip}:${peer.port}/api/pairing/request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -87,16 +95,17 @@ export default function ScanScreen() {
           name: settings.displayName,
           ip: myIp,
         }),
+        signal: AbortSignal.timeout(5_000),
       })
         .then((res) => {
           if (!res.ok) throw new Error("Server rejected pairing request");
           return res.json();
         })
         .then((data) => {
-          if (data && data.fingerprint) {
+          // The peer computes the same code; a mismatch means something is
+          // wrong, and showing its value makes the codes visibly disagree.
+          if (data?.fingerprint && data.fingerprint !== localFp) {
             setPairingFingerprint(data.fingerprint);
-          } else {
-            setPairingFingerprint(localFp);
           }
         })
         .catch(() => {
@@ -110,6 +119,39 @@ export default function ScanScreen() {
   }, []);
 
   /**
+   * Leaving while the code is on screen is a rejection. Tell the peer, so
+   * its dialog closes too and -- if it already accepted -- it drops a key
+   * this user did not vouch for.
+   */
+  const handleRejectPairing = useCallback(() => {
+    if (pairingTarget && pairingFingerprint && !pairingSucceeded) {
+      sendPairingCancel(pairingTarget.ip, pairingTarget.port).catch(() => {});
+    }
+    setPairingTarget(null);
+  }, [pairingTarget, pairingFingerprint, pairingSucceeded]);
+
+  // The other device rejected the codes: close our sheet and say so, rather
+  // than leave the user comparing digits with a device that already said no.
+  useEffect(() => {
+    if (!pairingTarget || Platform.OS !== "android") return;
+    let sub: { remove: () => void } | null = null;
+    try {
+      sub = ExpoNativeServerModule.addListener("onPairingCancelled", ({ deviceId }) => {
+        if (deviceId !== pairingTarget.id) return;
+        setPairingTarget(null);
+        setPairingSucceeded(false);
+        Alert.alert(
+          "Pairing rejected",
+          `${pairingTarget.name} said the codes don't match. Nothing was paired.`,
+        );
+      });
+    } catch {
+      // older native build
+    }
+    return () => sub?.remove();
+  }, [pairingTarget]);
+
+  /**
    * Called when user confirms the 6-digit code in the PairingModal.
    * Saves peer to SecureStore and redirects to the Paired Peers tab.
    */
@@ -119,6 +161,10 @@ export default function ScanScreen() {
     setIsPairingSubmitting(true);
     try {
       await savePairedPeer(pairingTarget);
+      // Announce ourselves now instead of on the next 20s heartbeat. If the
+      // desktop has confirmed too, both sides show online straight away; if
+      // not, its confirm says hello back to us.
+      rescanPeer(pairingTarget.id).catch(() => {});
       // Refresh paired IDs so this device disappears from the scan list immediately
       const saved = await getPairedPeers();
       setPairedIds(new Set(saved.map((p) => p.id)));
@@ -220,7 +266,7 @@ export default function ScanScreen() {
         isSubmitting={isPairingSubmitting}
         succeeded={pairingSucceeded}
         selfName={selfName}
-        onClose={() => setPairingTarget(null)}
+        onClose={handleRejectPairing}
         onConfirm={handleConfirmPairing}
       />
     </View>

@@ -23,6 +23,8 @@ import {
   subscribeShares,
 } from "@/services/share";
 import { uploadRemoteFile } from "@/services/peer-api";
+import { recordTransfer } from "@/services/history";
+import { unpairPeer } from "@/services/pairing";
 import {
   getPeerPresence,
   PeerPresence,
@@ -97,7 +99,29 @@ export default function PairedPeersScreen() {
 
       try {
         for (const share of shares) {
-          await uploadRemoteFile(addr, share.uri, share.name);
+          try {
+            const result = await uploadRemoteFile(addr, share.uri, share.name);
+            void recordTransfer({
+              direction: "sent",
+              peer_id: peer.id,
+              peer_name: peer.name,
+              file_name: share.name,
+              dest_name: result.savedAs,
+              bytes: result.bytes,
+              outcome: "completed",
+            });
+          } catch (err) {
+            void recordTransfer({
+              direction: "sent",
+              peer_id: peer.id,
+              peer_name: peer.name,
+              file_name: share.name,
+              bytes: 0,
+              outcome: "failed",
+              error: err instanceof Error ? err.message : String(err),
+            });
+            throw err;
+          }
           sent += 1;
         }
         clearPendingShares();
@@ -119,6 +143,24 @@ export default function PairedPeersScreen() {
     [shares],
   );
 
+  /** Forget a peer on both sides (best effort for the other side). */
+  const handleUnpair = (peer: PairedPeerStatus) => {
+    const message = peer.untrusted
+      ? `${peer.name} no longer trusts this phone. Remove it, then pair again to reconnect.`
+      : `Both devices will forget each other, and you'll need to pair again to share files.`;
+    Alert.alert(peer.untrusted ? `Remove ${peer.name}?` : `Unpair ${peer.name}?`, message, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: peer.untrusted ? "Remove" : "Unpair",
+        style: "destructive",
+        onPress: async () => {
+          await unpairPeer(peer);
+          await load();
+        },
+      },
+    ]);
+  };
+
   const handleOpenSandbox = (peer: PairedPeerStatus) => {
     router.push({
       pathname: "/peer-sandbox" as any,
@@ -126,6 +168,7 @@ export default function PairedPeersScreen() {
         ip: peer.ip,
         port: String(peer.port),
         name: peer.name,
+        id: peer.id,
       },
     });
   };
@@ -242,7 +285,7 @@ export default function PairedPeersScreen() {
                       item.isOnline ? styles.onlineText : styles.offlineText,
                     ]}
                   >
-                    {item.isOnline ? "Online" : "Offline"}
+                    {item.untrusted ? "Not paired there" : item.isOnline ? "Online" : "Offline"}
                   </Text>
                 </View>
               </View>
@@ -286,9 +329,20 @@ export default function PairedPeersScreen() {
                   </Pressable>
                 ) : (
                   <Text style={styles.offlineHint}>
-                    Device is offline or unreachable on local network
+                    {item.untrusted
+                      ? "It rejected the pairing or unpaired this phone."
+                      : "Device is offline or unreachable on local network"}
                   </Text>
                 )}
+                <Pressable
+                  onPress={() => handleUnpair(item)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.untrusted ? `Remove ${item.name}` : `Unpair ${item.name}`}
+                  style={styles.unpairBtn}
+                >
+                  <Text style={styles.unpairText}>{item.untrusted ? "Remove" : "Unpair"}</Text>
+                </Pressable>
               </View>
             </View>
           )}
@@ -311,6 +365,8 @@ export default function PairedPeersScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.surface },
   cardOffline: { opacity: 0.6 },
+  unpairBtn: { marginTop: 10, alignSelf: "flex-end" },
+  unpairText: { fontSize: 13, fontWeight: "600", color: C.danger },
   btnDisabled: { opacity: 0.6 },
   shareBanner: {
     flexDirection: "row",

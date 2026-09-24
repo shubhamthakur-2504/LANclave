@@ -15,11 +15,19 @@ import { C } from "@/constants/colors";
 import { useSandboxFiles } from "@/hooks/use-sandbox-files";
 import { startServer, stopServer, isServerRunning } from "@/services/server";
 import { Icon } from "@/components/Icon";
-import { useState, useEffect } from "react";
+import { SortBar } from "@/components/SortBar";
+import { getLastSort, rememberSort, sortFiles, type SortState } from "@/utils/sort-files";
+import { useState, useEffect, useMemo } from "react";
 
 export default function MySandboxScreen() {
   const { files, isLoading: filesLoading, refreshFiles } = useSandboxFiles();
   const [serverVisible, setServerVisible] = useState(false);
+  const [sort, setSort] = useState<SortState>(getLastSort);
+  const sortedFiles = useMemo(() => sortFiles(files, sort, (f) => f), [files, sort]);
+  const changeSort = (next: SortState) => {
+    setSort(next);
+    rememberSort(next);
+  };
 
   useEffect(() => {
     startServer()
@@ -74,9 +82,11 @@ export default function MySandboxScreen() {
 
         <View style={styles.divider} />
 
+        {files.length > 1 && <SortBar sort={sort} onChange={changeSort} />}
+
         {/* File List */}
         <FlatList
-          data={files}
+          data={sortedFiles}
           showsVerticalScrollIndicator={false}
           keyExtractor={(f) => f.uri}
           contentContainerStyle={styles.content}

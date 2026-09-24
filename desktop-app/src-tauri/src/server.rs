@@ -21,6 +21,21 @@ pub struct AppState {
     /// Shared with `CliState`, so inbound requests update the same table the
     /// heartbeat and the UI read.
     pub presence: Arc<crate::presence::PresenceStore>,
+    /// Where transfers a peer starts against this server are logged.
+    pub history: Arc<crate::history::HistoryStore>,
+}
+
+impl AppState {
+    /// The paired name we hold for `device_id`, for the history log.
+    pub fn peer_name(&self, device_id: &str) -> Option<String> {
+        self.auth
+            .store
+            .read()
+            .ok()?
+            .devices
+            .get(device_id)
+            .and_then(|d| d.device_name.clone())
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -32,6 +47,7 @@ pub struct PairingReqPayload {
 
 async fn pairing_request_handler(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    remote: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     axum::Json(body): axum::Json<PairingReqPayload>,
 ) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
     let peer_key = crate::pairing::public_key_from_str(&body.device_id)
@@ -55,7 +71,14 @@ async fn pairing_request_handler(
             serde_json::json!({
                 "device_id": body.device_id,
                 "name": body.name.unwrap_or_else(|| "Mobile Device".to_string()),
-                "ip": body.ip.unwrap_or_else(|| "Mobile".to_string()),
+                // The address the request actually came from beats the one
+                // the phone reports: a phone with several interfaces (Wi-Fi,
+                // hotspot, cellular) can name the wrong one, and confirming
+                // stores this address for reaching the peer later.
+                "ip": remote
+                    .map(|axum::Extension(ci)| ci.0.ip().to_string())
+                    .or(body.ip)
+                    .unwrap_or_else(|| "Mobile".to_string()),
                 "fingerprint": fingerprint,
             }),
         );
@@ -123,6 +146,94 @@ async fn presence_bye_handler(
     Ok(axum::Json(serde_json::json!({ "status": "ok" })))
 }
 
+/// `GET /api/pairing/status` -- "do you still trust me?"
+///
+/// Answers only callers this server has paired, so a heartbeat through here
+/// tells the caller the pairing holds on *both* sides. `/health` answers
+/// anyone, which let a one-sided pairing look online while every file
+/// request failed with 401. The 401 from here is the signal instead.
+async fn pairing_status_handler(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    remote: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
+    let device_id = crate::pairing::check_request(&state.auth, &headers)
+        .map_err(|s| axum::http::StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
+
+    // A verified probe from a paired peer is contact, like a hello.
+    if !device_id.is_empty() {
+        let was_online = state.presence.is_online(&device_id);
+        let addr = remote.map(|axum::Extension(ci)| {
+            format!("{}:{}", ci.0.ip(), crate::presence::SERVER_PORT)
+        });
+        state.presence.mark_seen(&device_id, None, addr);
+        if !was_online {
+            notify_presence(&state);
+        }
+    }
+
+    let display_name = state
+        .settings
+        .read()
+        .map(|s| s.display_name.clone())
+        .unwrap_or_else(|_| "Desktop Workstation".to_string());
+
+    Ok(axum::Json(serde_json::json!({
+        "paired": true,
+        "app": "lanclave",
+        "device_id": state.device_id,
+        "device_name": display_name,
+        "device_type": crate::presence::DEVICE_TYPE,
+    })))
+}
+
+/// `POST /api/pairing/cancel` -- a device withdrawing its own pairing with
+/// us: it rejected the codes, or it unpaired.
+///
+/// Needs no prior pairing (a rejecting device never paired), only a valid
+/// signature from the key the device id names. That is what makes it safe:
+/// a device can only ever revoke trust in itself, never in anyone else.
+async fn pairing_cancel_handler(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
+    let device_id = crate::pairing::verify_caller_signature(&headers)
+        .map_err(|s| axum::http::StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
+
+    let (was_paired, name) = {
+        let mut store = state
+            .auth
+            .store
+            .write()
+            .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+        let name = store.devices.get(&device_id).and_then(|d| d.device_name.clone());
+        let was_paired = store.remove_peer(&device_id);
+        if was_paired {
+            if let Some(dir) = &state.auth.data_dir {
+                let _ = store.save(dir);
+            }
+        }
+        (was_paired, name)
+    };
+    state.presence.forget(&device_id);
+
+    if let Some(app) = &state.app_handle {
+        use tauri::Emitter;
+        // Closes an open pairing dialog for this device, and says why.
+        let _ = app.emit(
+            "pairing-cancelled",
+            serde_json::json!({
+                "device_id": device_id,
+                "device_name": name,
+                "was_paired": was_paired,
+            }),
+        );
+    }
+    notify_presence(&state);
+
+    Ok(axum::Json(serde_json::json!({ "status": "ok" })))
+}
+
 /// `/health` stays open for discovery, but a paired peer's heartbeat arrives
 /// signed. Record it as contact when the signature verifies -- that is how
 /// this side learns a peer's new address after a DHCP lease change. Never
@@ -176,6 +287,14 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/pairing/request",
             axum::routing::post(pairing_request_handler),
+        )
+        .route(
+            "/api/pairing/status",
+            axum::routing::get(pairing_status_handler),
+        )
+        .route(
+            "/api/pairing/cancel",
+            axum::routing::post(pairing_cancel_handler),
         )
         .route(
             "/api/presence/hello",
@@ -397,6 +516,7 @@ mod tests {
             identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
+            history: Arc::new(crate::history::HistoryStore::in_memory()),
             auth: Arc::new(AuthState::disabled()),
         })
     }
@@ -499,5 +619,113 @@ mod tests {
         assert!(ctrl.is_running());
         ctrl.stop().unwrap();
         assert!(!ctrl.is_running());
+    }
+
+    // -----------------------------------------------------------------------
+    // Pairing status / cancel
+    // -----------------------------------------------------------------------
+
+    /// A server that has paired `paired` (and nobody else), with auth on.
+    fn paired_router(paired: &ed25519_dalek::SigningKey) -> (Arc<AppState>, axum::Router) {
+        use rand::rngs::OsRng;
+        let mut store = crate::pairing::DeviceStore::new();
+        store
+            .add_peer(crate::pairing::public_key_b64(paired), &paired.verifying_key(), None)
+            .unwrap();
+        let state = Arc::new(AppState {
+            settings: Arc::new(std::sync::RwLock::new(crate::settings::AppSettings {
+                display_name: "Test Node".to_string(),
+                sandbox_path: std::env::temp_dir().to_string_lossy().into_owned(),
+            })),
+            device_id: "server-device".to_string(),
+            identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
+            app_handle: None,
+            presence: Arc::new(crate::presence::PresenceStore::new()),
+            history: Arc::new(crate::history::HistoryStore::in_memory()),
+            auth: Arc::new(AuthState {
+                store: Arc::new(std::sync::RwLock::new(store)),
+                enabled: true,
+                data_dir: None,
+            }),
+        });
+        (state.clone(), build_router(state))
+    }
+
+    /// A request signed by `key`, claiming to be `claimed_id`.
+    fn signed(method: &str, uri: &str, key: &ed25519_dalek::SigningKey, claimed_id: &str) -> axum::http::Request<axum::body::Body> {
+        use base64::Engine;
+        let (ts, sig) = crate::pairing::sign_request(key, claimed_id);
+        axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(crate::pairing::HEADER_DEVICE_ID, claimed_id)
+            .header(crate::pairing::HEADER_TIMESTAMP, ts.to_string())
+            .header(
+                crate::pairing::HEADER_SIGNATURE,
+                base64::engine::general_purpose::STANDARD.encode(sig.to_bytes()),
+            )
+            .body(axum::body::Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn pairing_status_answers_only_paired_peers() {
+        use rand::rngs::OsRng;
+        use tower::ServiceExt;
+
+        let friend = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let stranger = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let (_state, app) = paired_router(&friend);
+
+        let friend_id = crate::pairing::public_key_b64(&friend);
+        let res = app.clone().oneshot(signed("GET", "/api/pairing/status", &friend, &friend_id)).await.unwrap();
+        assert_eq!(res.status(), 200);
+
+        let stranger_id = crate::pairing::public_key_b64(&stranger);
+        let res = app.oneshot(signed("GET", "/api/pairing/status", &stranger, &stranger_id)).await.unwrap();
+        assert_eq!(res.status(), 401, "a one-sided pairing must be visible as 401");
+    }
+
+    #[tokio::test]
+    async fn pairing_cancel_lets_a_device_revoke_only_itself() {
+        use rand::rngs::OsRng;
+        use tower::ServiceExt;
+
+        let friend = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let attacker = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let (state, app) = paired_router(&friend);
+        let friend_id = crate::pairing::public_key_b64(&friend);
+
+        // Someone else cannot revoke the friend: the signature must come
+        // from the key the device id names.
+        let res = app.clone().oneshot(signed("POST", "/api/pairing/cancel", &attacker, &friend_id)).await.unwrap();
+        assert_eq!(res.status(), 401);
+        assert!(state.auth.store.read().unwrap().devices.contains_key(&friend_id));
+
+        // The friend can revoke itself.
+        let res = app.clone().oneshot(signed("POST", "/api/pairing/cancel", &friend, &friend_id)).await.unwrap();
+        assert_eq!(res.status(), 200);
+        assert!(!state.auth.store.read().unwrap().devices.contains_key(&friend_id));
+
+        // And is refused from then on.
+        let res = app.oneshot(signed("GET", "/api/pairing/status", &friend, &friend_id)).await.unwrap();
+        assert_eq!(res.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn pairing_cancel_from_unpaired_device_is_harmless() {
+        use rand::rngs::OsRng;
+        use tower::ServiceExt;
+
+        // The reject-before-accept case: the rejecting device was never
+        // paired here. The request succeeds and changes nothing.
+        let friend = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let other = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let (state, app) = paired_router(&friend);
+        let other_id = crate::pairing::public_key_b64(&other);
+
+        let res = app.oneshot(signed("POST", "/api/pairing/cancel", &other, &other_id)).await.unwrap();
+        assert_eq!(res.status(), 200);
+        assert_eq!(state.auth.store.read().unwrap().devices.len(), 1);
     }
 }

@@ -11,6 +11,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { Transfer } from "@/contexts/TransferContext";
 import { Icon } from "@/components/Icon";
+import { HistoryView } from "@/components/HistoryView";
+import { useState } from "react";
 
 function formatSize(bytes: number): string {
   if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
@@ -36,6 +38,8 @@ function calcEta(transfer: Transfer): string {
 
 export default function TransfersScreen() {
   const { transfers, cancelTransfer } = useTransfers();
+  // "Activity": this session's live transfers. "History": the 30-day log.
+  const [view, setView] = useState<"activity" | "history">("activity");
 
   return (
     <View style={styles.root}>
@@ -44,11 +48,24 @@ export default function TransfersScreen() {
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Transfers</Text>
-          <Text style={styles.subtitle}>Track active downloads from paired peers</Text>
+          <Text style={styles.subtitle}>Live transfers and 30 days of history</Text>
         </View>
 
-        <View style={styles.divider} />
+        <View style={styles.tabs}>
+          {(["activity", "history"] as const).map((key) => (
+            <Pressable
+              key={key}
+              onPress={() => setView(key)}
+              style={[styles.tab, view === key && styles.tabActive]}
+            >
+              <Text style={[styles.tabText, view === key && styles.tabTextActive]}>
+                {key === "activity" ? "Activity" : "History"}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
 
+        {view === "history" ? <HistoryView /> : (
         <FlatList
           data={transfers}
           keyExtractor={(t) => t.id}
@@ -123,6 +140,7 @@ export default function TransfersScreen() {
             );
           }}
         />
+        )}
       </SafeAreaView>
     </View>
   );
@@ -141,6 +159,23 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   subtitle: { marginTop: 4, fontSize: 13, color: C.contentMuted },
+
+  tabs: {
+    flexDirection: "row",
+    marginHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  tab: {
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    marginBottom: -1,
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
+  },
+  tabActive: { borderBottomColor: C.action },
+  tabText: { fontSize: 14, fontWeight: "600", color: C.contentMuted },
+  tabTextActive: { color: C.action },
 
   divider: {
     height: 1,

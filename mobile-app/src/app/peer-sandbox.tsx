@@ -16,16 +16,20 @@ import { useRemotePeer } from "@/hooks/use-remote-peer";
 import { useSandboxFiles } from "@/hooks/use-sandbox-files";
 import { useTransfers } from "@/contexts/TransferContext";
 import { Icon } from "@/components/Icon";
+import { SortBar } from "@/components/SortBar";
+import { getLastSort, rememberSort, sortFiles, type SortState } from "@/utils/sort-files";
+import { useMemo, useState } from "react";
 
 import * as DocumentPicker from "expo-document-picker";
 
 export default function PeerSandboxScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ ip: string; port: string; name: string }>();
+  const params = useLocalSearchParams<{ ip: string; port: string; name: string; id?: string }>();
 
   const ip = params.ip ?? "";
   const port = Number(params.port ?? 8377);
   const name = params.name ?? "Peer";
+  const id = params.id || undefined;
 
   const { refreshFiles } = useSandboxFiles();
   const { transfers, startDownload, startUpload } = useTransfers();
@@ -39,13 +43,29 @@ export default function PeerSandboxScreen() {
     ip ? { ip, port, name } : null,
   );
 
+  const [sort, setSort] = useState<SortState>(getLastSort);
+  const sortedRemote = useMemo(
+    () =>
+      sortFiles(remoteFiles, sort, (f) => ({
+        name: f.name,
+        size: f.size,
+        isDirectory: f.is_directory,
+        modified: f.modified,
+      })),
+    [remoteFiles, sort],
+  );
+  const changeSort = (next: SortState) => {
+    setSort(next);
+    rememberSort(next);
+  };
+
   const handleSendFile = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: false });
       if (result.canceled || result.assets.length === 0) return;
       
       const file = result.assets[0];
-      await startUpload({ ip, port, name }, file.uri, file.name, file.size || 0, fetchPeerFiles);
+      await startUpload({ ip, port, name, id }, file.uri, file.name, file.size || 0, fetchPeerFiles);
     } catch (err) {
       console.warn("Failed to pick or send file:", err);
     }
@@ -102,9 +122,11 @@ export default function PeerSandboxScreen() {
           </View>
         )}
 
+        {remoteFiles.length > 1 && <SortBar sort={sort} onChange={changeSort} />}
+
         {/* File List */}
         <FlatList
-          data={remoteFiles}
+          data={sortedRemote}
           showsVerticalScrollIndicator={false}
           keyExtractor={(f) => f.name}
           contentContainerStyle={styles.content}
@@ -129,7 +151,7 @@ export default function PeerSandboxScreen() {
                 size={item.size}
                 is_directory={item.is_directory}
                 progress={progressPct}
-                onDownload={() => startDownload({ ip, port, name }, item.name, item.size, refreshFiles)}
+                onDownload={() => startDownload({ ip, port, name, id }, item.name, item.size, refreshFiles)}
               />
             );
           }}

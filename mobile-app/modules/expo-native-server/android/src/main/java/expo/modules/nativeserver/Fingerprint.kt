@@ -9,7 +9,8 @@ import java.security.MessageDigest
 
 /**
  * On-demand file fingerprints for transfer dedupe, mirroring
- * `desktop-app/src-tauri/src/dedupe.rs`.
+ * `desktop-app/src-tauri/src/dedupe.rs`, plus the collision-naming scheme
+ * both apps share (`name (1).ext`).
  *
  * Hashing is never part of the listing: on a SAF sandbox every file open is
  * a DocumentsProvider round trip, so it is paid only for the few files a peer
@@ -17,28 +18,72 @@ import java.security.MessageDigest
  * from ours, we answer without opening the file at all.
  */
 object Fingerprint {
-    data class Result(val size: Long, val sha256: String?)
+    /** How many numbered copies (`name (1)` ... `name (N)`) are considered. */
+    private const val MAX_SIBLINGS = 50
+
+    data class Sibling(val name: String, val sha256: String)
 
     /**
-     * Size and (when sizes agree) SHA-256 of `name` in the sandbox, or null
-     * when there is no such regular file.
+     * `size`/`sha256` describe the exact name; `siblings` are numbered copies
+     * whose size matched the caller's expected size.
+     */
+    data class Result(val size: Long, val sha256: String?, val siblings: List<Sibling> = emptyList())
+
+    /** `"notes.txt"`, 2 -> `"notes (2).txt"`; 0 is the name itself. */
+    fun numberedName(name: String, n: Int): String {
+        if (n == 0) return name
+        val dot = name.lastIndexOf('.')
+        return if (dot > 0) "${name.substring(0, dot)} ($n)${name.substring(dot)}" else "$name ($n)"
+    }
+
+    /** First of `name`, `name (1)`, ... for which `isTaken` is false. */
+    fun firstFreeName(name: String, isTaken: (String) -> Boolean): String {
+        for (n in 0 until 10_000) {
+            val candidate = numberedName(name, n)
+            if (!isTaken(candidate)) return candidate
+        }
+        throw IllegalStateException("No free name for $name")
+    }
+
+    /** One sandbox entry, however the sandbox is stored. */
+    private class Entry(val size: Long, val open: () -> InputStream?)
+
+    /**
+     * Size and (when sizes agree) SHA-256 of `name` in the sandbox, plus
+     * same-size numbered copies with an expected size. Null when there is no
+     * such regular file.
      */
     fun ofSandboxFile(context: Context, rawSandboxPath: String, name: String, expectedSize: Long?): Result? {
-        if (rawSandboxPath.startsWith("content://")) {
+        val lookup: (String) -> Entry? = if (rawSandboxPath.startsWith("content://")) {
             val tree = DocumentFile.fromTreeUri(context, Uri.parse(rawSandboxPath)) ?: return null
-            val doc = tree.findFile(name) ?: return null
-            if (!doc.exists() || doc.isDirectory) return null
-            val size = doc.length()
-            if (expectedSize != null && expectedSize != size) return Result(size, null)
-            val stream = context.contentResolver.openInputStream(doc.uri) ?: return null
-            return Result(size, sha256(stream))
+            // One listing, then lookups by name: findFile() would re-list per call.
+            val children = tree.listFiles().filter { it.isFile }.associateBy { it.name }
+            val resolve: (String) -> Entry? = { n ->
+                children[n]?.let { doc -> Entry(doc.length()) { context.contentResolver.openInputStream(doc.uri) } }
+            }
+            resolve
+        } else {
+            val dir = File(rawSandboxPath.removePrefix("file://"))
+            val resolve: (String) -> Entry? = { n ->
+                File(dir, n).takeIf { it.isFile }?.let { f -> Entry(f.length()) { f.inputStream() } }
+            }
+            resolve
         }
 
-        val file = File(rawSandboxPath.removePrefix("file://"), name)
-        if (!file.isFile) return null
-        val size = file.length()
-        if (expectedSize != null && expectedSize != size) return Result(size, null)
-        return Result(size, sha256(file.inputStream()))
+        val base = lookup(name) ?: return null
+        if (expectedSize == null) {
+            return Result(base.size, base.open()?.let(::sha256))
+        }
+
+        val baseSha = if (base.size == expectedSize) base.open()?.let(::sha256) else null
+        val siblings = mutableListOf<Sibling>()
+        for (n in 1..MAX_SIBLINGS) {
+            val siblingName = numberedName(name, n)
+            val sibling = lookup(siblingName) ?: break
+            if (sibling.size != expectedSize) continue
+            sibling.open()?.let { siblings.add(Sibling(siblingName, sha256(it))) }
+        }
+        return Result(base.size, baseSha, siblings)
     }
 
     /** SHA-256 of any `content://` or `file://` URI, e.g. a picked or shared file. */

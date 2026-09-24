@@ -39,6 +39,7 @@ async fn start_server(
         identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
         app_handle: None,
         presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
+        history: Arc::new(crate::history::HistoryStore::in_memory()),
         auth: Arc::new(crate::pairing::AuthState::disabled()),
     });
     let router = build_raw_router(state);
@@ -181,7 +182,7 @@ async fn push_small_file_success() {
 }
 
 #[tokio::test]
-async fn push_to_existing_file_returns_409() {
+async fn push_to_taken_name_is_saved_as_numbered_copy() {
     let key = test_keypair();
     let did = test_device_id(&key);
     let dir = TempDir::new().unwrap();
@@ -191,7 +192,7 @@ async fn push_to_existing_file_returns_409() {
     let src_path = dir.path().join("localfile.txt");
     tokio::fs::write(&src_path, b"new content").await.unwrap();
 
-    let err = crate::client::push_file_to_peer(
+    let report = crate::client::push_file_to_peer(
         &peer_addr,
         &src_path,
         "existing.bin",
@@ -199,14 +200,12 @@ async fn push_to_existing_file_returns_409() {
         &key,
     )
     .await
-    .unwrap_err();
+    .unwrap();
 
-    match err {
-        crate::client::ClientError::ServerRejected(code) => {
-            assert_eq!(code, 409);
-        }
-        other => panic!("expected ServerRejected(409), got {other:?}"),
-    }
+    assert_eq!(report.outcome, super::pull::TransferOutcome::Transferred);
+    assert_eq!(report.dest_name, "existing (1).bin");
+    assert_eq!(std::fs::read(dir.path().join("existing.bin")).unwrap(), b"original data");
+    assert_eq!(std::fs::read(dir.path().join("existing (1).bin")).unwrap(), b"new content");
 }
 
 #[tokio::test]
@@ -373,7 +372,7 @@ async fn pull_skips_identical_local_copy() {
 
     let mut statuses = Vec::new();
     let (_tx, rx) = cancel_channel();
-    let outcome = super::pull_file_to_disk(
+    let report = super::pull_file_to_disk(
         "t",
         &peer_addr,
         "same.bin",
@@ -387,12 +386,12 @@ async fn pull_skips_identical_local_copy() {
     .await
     .unwrap();
 
-    assert_eq!(outcome, super::pull::TransferOutcome::AlreadyPresent);
+    assert_eq!(report.outcome, super::pull::TransferOutcome::AlreadyPresent);
     assert_eq!(statuses, vec!["skipped".to_string()]);
 }
 
 #[tokio::test]
-async fn pull_same_size_different_content_still_downloads() {
+async fn pull_same_size_different_content_downloads_beside_it() {
     let key = test_keypair();
     let did = test_device_id(&key);
     let remote_dir = TempDir::new().unwrap();
@@ -403,14 +402,16 @@ async fn pull_same_size_different_content_still_downloads() {
     std::fs::write(&save_path, b"version A").unwrap();
 
     let (_tx, rx) = cancel_channel();
-    let outcome = super::pull_file_to_disk(
+    let report = super::pull_file_to_disk(
         "t", &peer_addr, "doc.txt", &save_path, Some(9), &did, &key, rx, |_| {},
     )
     .await
     .unwrap();
 
-    assert_eq!(outcome, super::pull::TransferOutcome::Transferred);
-    assert_eq!(std::fs::read(&save_path).unwrap(), b"version B");
+    assert_eq!(report.outcome, super::pull::TransferOutcome::Transferred);
+    assert_eq!(report.dest_name, "doc (1).txt");
+    assert_eq!(std::fs::read(&save_path).unwrap(), b"version A", "never overwrite");
+    assert_eq!(std::fs::read(local_dir.path().join("doc (1).txt")).unwrap(), b"version B");
 }
 
 #[tokio::test]
@@ -424,8 +425,61 @@ async fn push_skips_when_peer_has_identical_copy() {
     let src_path = local_dir.path().join("photo.jpg");
     std::fs::write(&src_path, b"jpeg bytes").unwrap();
 
-    let outcome = crate::client::push_file_to_peer(&peer_addr, &src_path, "photo.jpg", &did, &key)
+    let report = crate::client::push_file_to_peer(&peer_addr, &src_path, "photo.jpg", &did, &key)
         .await
         .unwrap();
-    assert_eq!(outcome, super::pull::TransferOutcome::AlreadyPresent);
+    assert_eq!(report.outcome, super::pull::TransferOutcome::AlreadyPresent);
+}
+
+#[tokio::test]
+async fn push_finds_identical_numbered_copy_on_peer() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let remote_dir = TempDir::new().unwrap();
+    let peer_addr = start_server(
+        &remote_dir,
+        &[("photo.jpg", b"old version"), ("photo (1).jpg", b"new version")],
+    )
+    .await;
+
+    let local_dir = TempDir::new().unwrap();
+    let src_path = local_dir.path().join("photo.jpg");
+    std::fs::write(&src_path, b"new version").unwrap();
+
+    let report = crate::client::push_file_to_peer(&peer_addr, &src_path, "photo.jpg", &did, &key)
+        .await
+        .unwrap();
+    assert_eq!(report.outcome, super::pull::TransferOutcome::AlreadyPresent);
+    assert_eq!(report.dest_name, "photo (1).jpg");
+    assert!(!remote_dir.path().join("photo (2).jpg").exists(), "no duplicate pile-up");
+}
+
+#[tokio::test]
+async fn pull_finds_identical_numbered_copy_locally() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let remote_dir = TempDir::new().unwrap();
+    let peer_addr = start_server(&remote_dir, &[("notes.txt", b"v2 text")]).await;
+
+    let local_dir = TempDir::new().unwrap();
+    std::fs::write(local_dir.path().join("notes.txt"), b"v1 text").unwrap();
+    std::fs::write(local_dir.path().join("notes (1).txt"), b"v2 text").unwrap();
+
+    let (_tx, rx) = cancel_channel();
+    let report = super::pull_file_to_disk(
+        "t",
+        &peer_addr,
+        "notes.txt",
+        &local_dir.path().join("notes.txt"),
+        Some(7),
+        &did,
+        &key,
+        rx,
+        |_| {},
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.outcome, super::pull::TransferOutcome::AlreadyPresent);
+    assert_eq!(report.dest_name, "notes (1).txt");
 }

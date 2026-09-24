@@ -51,6 +51,9 @@ pub async fn get_stream(
 /// reqwest can infer, so without this header hyper frames the request as
 /// `Transfer-Encoding: chunked` -- which the phone's NanoHTTPD rejects with
 /// 400, because it reads `content-length` directly to size its read loop.
+///
+/// Returns the status and, on success, the name the peer saved the file
+/// under (`{"name": ...}`). Peers that predate that body yield `None`.
 pub async fn put_stream(
     peer_addr: &str,
     remote_path: &str,
@@ -58,7 +61,7 @@ pub async fn put_stream(
     content_length: u64,
     device_id: &str,
     signing_key: &SigningKey,
-) -> Result<reqwest::StatusCode, ClientError> {
+) -> Result<(reqwest::StatusCode, Option<String>), ClientError> {
     let encoded = encode_path(remote_path);
     let url = format!("http://{}/files/{}", peer_addr, encoded);
 
@@ -76,7 +79,18 @@ pub async fn put_stream(
         .await
         .map_err(|e| ClientError::ConnectionFailed(e.to_string()))?;
 
-    Ok(response.status())
+    #[derive(serde::Deserialize)]
+    struct Saved {
+        name: String,
+    }
+
+    let status = response.status();
+    let saved_as = if status.is_success() {
+        response.json::<Saved>().await.ok().map(|s| s.name)
+    } else {
+        None
+    };
+    Ok((status, saved_as))
 }
 
 /// Ask the peer for the fingerprint of `remote_path`.
@@ -122,4 +136,32 @@ pub async fn get_fingerprint(
         .await
         .map(Some)
         .map_err(|e| ClientError::HttpError(e.to_string()))
+}
+
+/// Tell a peer we are withdrawing our pairing: we rejected its codes, or we
+/// unpaired. Signed with our own key, which is all the peer needs -- it can
+/// check the signature against our device id without having paired us.
+pub async fn send_pairing_cancel(
+    peer_addr: &str,
+    device_id: &str,
+    signing_key: &SigningKey,
+) -> Result<(), ClientError> {
+    let (ts, sig) = sign_request(signing_key, device_id);
+    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
+
+    let response = CLIENT
+        .post(format!("http://{peer_addr}/api/pairing/cancel"))
+        .header(HEADER_DEVICE_ID, device_id)
+        .header(HEADER_TIMESTAMP, ts.to_string())
+        .header(HEADER_SIGNATURE, &sig_b64)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| ClientError::ConnectionFailed(e.to_string()))?;
+
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(ClientError::ServerRejected(response.status().as_u16()))
+    }
 }

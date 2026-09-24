@@ -5,6 +5,7 @@ mod discovery;
 mod file_ops;
 mod files;
 mod fs_util;
+mod history;
 mod pairing;
 mod presence;
 mod sandbox;
@@ -53,6 +54,7 @@ pub fn run() {
     ));
 
     let server_controller = Arc::new(ServerController::new());
+    let history = Arc::new(history::HistoryStore::load(&app_data_dir));
     let presence = Arc::new(presence::PresenceStore::new());
 
     // Seed presence with the addresses we knew last run so paired peers can be
@@ -86,11 +88,13 @@ pub fn run() {
             device_store,
             server_controller,
             presence,
+            history: history.clone(),
         })
         .manage(commands::TransferState::default())
         .setup(move |app| {
             let mut ctx = presence_ctx;
             ctx.app_handle = Some(app.handle().clone());
+            history.set_app_handle(app.handle().clone());
 
             // Announce ourselves to every paired peer, then poll them on a
             // timer. One request per peer -- not a subnet sweep.
@@ -119,10 +123,15 @@ pub fn run() {
             commands::pull_file,
             commands::push_file,
             commands::cancel_transfer,
+            // History
+            commands::get_transfer_history,
+            commands::clear_transfer_history,
             // Pairing
             commands::initiate_pairing,
             commands::confirm_pairing,
             commands::get_paired_peers,
+            commands::cancel_pairing,
+            commands::unpair_peer,
             // Settings
             commands::get_settings,
             commands::update_settings,

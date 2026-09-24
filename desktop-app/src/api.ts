@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { invoke } from "@tauri-apps/api/core";
-import type { PeerInfo, FileEntry, SandboxFile } from "./types";
+import type { PeerInfo, FileEntry, SandboxFile, HistoryEntry } from "./types";
 
 // ── Server lifecycle ───────────────────────────────────────────────
 
@@ -74,6 +74,17 @@ export async function cancelTransfer(transferId: string): Promise<void> {
   await invoke("cancel_transfer", { transferId });
 }
 
+// ── History ────────────────────────────────────────────────────────
+
+/** Every transfer from the last 30 days, newest first. */
+export async function getTransferHistory(): Promise<HistoryEntry[]> {
+  return await invoke("get_transfer_history");
+}
+
+export async function clearTransferHistory(): Promise<void> {
+  await invoke("clear_transfer_history");
+}
+
 export async function pickFile(): Promise<string | null> {
   return await invoke("pick_file");
 }
@@ -92,6 +103,17 @@ export async function initiatePairing(
   peerDeviceName?: string,
 ): Promise<string> {
   return await invoke("initiate_pairing", { peerAddr, peerDeviceId, peerDeviceName });
+}
+
+/** The user rejected the codes: tell the peer so it closes its dialog and
+ *  drops the pairing if it already accepted. Best effort. */
+export async function cancelPairing(peerAddr: string): Promise<void> {
+  await invoke("cancel_pairing", { peerAddr });
+}
+
+/** Forget a paired peer here, and ask it to forget this computer too. */
+export async function unpairPeer(deviceId: string): Promise<void> {
+  await invoke("unpair_peer", { deviceId });
 }
 
 export async function confirmPairing(

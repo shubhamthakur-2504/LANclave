@@ -199,6 +199,41 @@ function AppInner() {
     return () => clearInterval(id);
   }, [refreshFiles]);
 
+  // The other device rejected the codes, or unpaired this computer.
+  const pairPeerRef = useRef<PeerInfo | null>(null);
+  useEffect(() => {
+    pairPeerRef.current = pairPeer;
+  }, [pairPeer]);
+
+  useEffect(() => {
+    let unlistenFn: (() => void) | null = null;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<{ device_id: string; device_name: string | null; was_paired: boolean }>(
+          "pairing-cancelled",
+          (event) => {
+            const { device_id, device_name, was_paired } = event.payload;
+            const who = device_name || "The other device";
+            if (pairPeerRef.current?.device_id === device_id) {
+              setPairPeer(null);
+              setPairFingerprint(null);
+              setIsConnectModalOpen(false);
+              toast.error(`${who} rejected the pairing.`, "The codes did not match on that device.");
+            } else if (was_paired) {
+              toast.info(`${who} unpaired from this computer.`);
+            }
+          },
+        ),
+      )
+      .then((unsub) => {
+        unlistenFn = unsub;
+      })
+      .catch(() => {});
+    return () => {
+      if (unlistenFn) unlistenFn();
+    };
+  }, [toast]);
+
   // Listen for pairing requests initiated by mobile peers
   useEffect(() => {
     let unlistenFn: (() => void) | null = null;

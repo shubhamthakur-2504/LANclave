@@ -6,11 +6,16 @@ import expo.modules.kotlin.modules.ModuleDefinition
 class ExpoNativeServerModule : Module() {
   private var server: NativeServer? = null
 
+  /** Pairing cancels not yet applied to the JS-side paired list. */
+  private val pendingCancels = mutableSetOf<String>()
+
   /** Identity of the running server, so a redundant start can be detected. */
   private var currentConfig: String? = null
 
   override fun definition() = ModuleDefinition {
     Name("ExpoNativeServer")
+
+    Events("onPairingCancelled")
 
     Function("startServer") { port: Int, deviceId: String, deviceName: String, sandboxPath: String, pairedDevices: Array<String> ->
       try {
@@ -30,7 +35,12 @@ class ExpoNativeServerModule : Module() {
 
         existing?.stop()
         val context = appContext.reactContext ?: throw Exception("React context is null")
-        val next = NativeServer(context, port, deviceId, deviceName, sandboxPath, pairedDevices.toList())
+        val next = NativeServer(context, port, deviceId, deviceName, sandboxPath, pairedDevices.toList()) { cancelledId ->
+          // Queued as well as announced: the stored paired list lives in JS,
+          // and a cancel must not be lost if nothing is listening right now.
+          synchronized(pendingCancels) { pendingCancels.add(cancelledId) }
+          sendEvent("onPairingCancelled", mapOf("deviceId" to cancelledId))
+        }
         next.start(5000, false)
         server = next
         currentConfig = config
@@ -104,20 +114,55 @@ class ExpoNativeServerModule : Module() {
 
     /**
      * Dedupe, client side: size and (when it matches `expectedSize`) SHA-256
-     * of a file in our own sandbox. Null when the file is absent.
+     * of a file in our own sandbox, plus same-size numbered copies. Null when
+     * the file is absent.
      */
     AsyncFunction("sandboxFileFingerprint") { sandboxPath: String, name: String, expectedSize: Double? ->
       if (name.contains("..") || name.contains("/") || name.isEmpty()) return@AsyncFunction null
       val context = appContext.reactContext ?: throw Exception("React context is null")
       val result = Fingerprint.ofSandboxFile(context, sandboxPath, name, expectedSize?.toLong())
         ?: return@AsyncFunction null
-      mapOf("size" to result.size.toDouble(), "sha256" to result.sha256)
+      mapOf(
+        "size" to result.size.toDouble(),
+        "sha256" to result.sha256,
+        "siblings" to result.siblings.map { mapOf("name" to it.name, "sha256" to it.sha256) },
+      )
     }
 
     /** SHA-256 of a local file about to be pushed, e.g. a picked content:// URI. */
     AsyncFunction("uriSha256") { uri: String ->
       val context = appContext.reactContext ?: throw Exception("React context is null")
       Fingerprint.ofUri(context, uri)
+    }
+
+    /**
+     * Transfer history (30 days). The server logs what peers do; JS logs the
+     * transfers it starts with `recordTransfer` (a JSON entry, same fields as
+     * the desktop's `HistoryEntry`).
+     */
+    AsyncFunction("recordTransfer") { json: String ->
+      val context = appContext.reactContext ?: throw Exception("React context is null")
+      TransferHistory.record(context, org.json.JSONObject(json))
+    }
+
+    /** JSON array string, newest first. */
+    AsyncFunction("getTransferHistory") {
+      val context = appContext.reactContext ?: throw Exception("React context is null")
+      TransferHistory.list(context)
+    }
+
+    AsyncFunction("clearTransferHistory") {
+      val context = appContext.reactContext ?: throw Exception("React context is null")
+      TransferHistory.clear(context)
+    }
+
+    /** Devices that withdrew their pairing since the last call; consumed on read. */
+    Function("consumePairingCancels") {
+      synchronized(pendingCancels) {
+        val out = pendingCancels.toList()
+        pendingCancels.clear()
+        out
+      }
     }
 
     /** Inbound presence recorded by the server. Local read, no network. */

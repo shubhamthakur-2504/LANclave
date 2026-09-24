@@ -11,7 +11,9 @@
 import { Buffer } from "buffer";
 import { sha256 } from "@noble/hashes/sha2.js";
 import * as SecureStore from "expo-secure-store";
-import { getOrCreateDeviceIdentity } from "@/services/identity";
+import { Platform } from "react-native";
+import ExpoNativeServerModule from "../../modules/expo-native-server/src/ExpoNativeServerModule";
+import { getAuthHeaders, getOrCreateDeviceIdentity } from "@/services/identity";
 import { updateNativeServerPairedDevices } from "@/services/server";
 
 const PAIRED_PEERS_KEY = "lanclave_paired_peers";
@@ -90,7 +92,11 @@ export async function savePairedPeer(peer: { id: string; name: string; ip: strin
   };
   filtered.push(updated);
   await SecureStore.setItemAsync(PAIRED_PEERS_KEY, JSON.stringify(filtered));
-  updateNativeServerPairedDevices().catch(err => console.error("Failed to update native server pairings", err));
+  // Awaited: the peer says hello the moment it confirms, and our server
+  // must already accept it or that first contact is refused with 401.
+  await updateNativeServerPairedDevices().catch((err) =>
+    console.error("Failed to update native server pairings", err),
+  );
 }
 
 /**
@@ -115,4 +121,59 @@ export async function updatePairedPeerAddress(
 export async function isPeerPaired(peerId: string): Promise<boolean> {
   const list = await getPairedPeers();
   return list.some((p) => p.id === peerId);
+}
+
+/** Forget a peer locally, and stop the native server accepting it. */
+export async function removePairedPeer(peerId: string): Promise<boolean> {
+  const list = await getPairedPeers();
+  const kept = list.filter((p) => p.id !== peerId);
+  if (kept.length === list.length) return false;
+  await SecureStore.setItemAsync(PAIRED_PEERS_KEY, JSON.stringify(kept));
+  await updateNativeServerPairedDevices().catch(() => {});
+  return true;
+}
+
+/**
+ * Tell a peer we are withdrawing our pairing: we rejected its codes, or we
+ * unpaired. Signed with our own key, which is all it needs -- it checks the
+ * signature against our device id without having to have paired us. Its
+ * dialog closes, and if it already accepted, it drops us.
+ */
+export async function sendPairingCancel(ip: string, port: number): Promise<void> {
+  const res = await fetch(`http://${ip}:${port}/api/pairing/cancel`, {
+    method: "POST",
+    headers: await getAuthHeaders(),
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!res.ok) throw new Error(`peer returned HTTP ${res.status}`);
+}
+
+/**
+ * Forget a peer here and ask it to forget us too. Removal is local and
+ * immediate; telling the peer is best effort -- if it is offline, its
+ * heartbeat later sees our refusals and shows the pairing as one-sided.
+ */
+export async function unpairPeer(peer: { id: string; ip: string; port: number }): Promise<void> {
+  await removePairedPeer(peer.id);
+  sendPairingCancel(peer.ip, peer.port).catch(() => {});
+}
+
+/**
+ * Apply cancels the native server received (a peer rejected our pairing or
+ * unpaired us). The native side already refuses those devices; this removes
+ * them from the stored list. Returns the ids removed.
+ */
+export async function applyPairingCancels(): Promise<string[]> {
+  if (Platform.OS !== "android") return [];
+  let ids: string[] = [];
+  try {
+    ids = ExpoNativeServerModule.consumePairingCancels();
+  } catch {
+    return []; // older native build
+  }
+  const removed: string[] = [];
+  for (const id of ids) {
+    if (await removePairedPeer(id)) removed.push(id);
+  }
+  return removed;
 }

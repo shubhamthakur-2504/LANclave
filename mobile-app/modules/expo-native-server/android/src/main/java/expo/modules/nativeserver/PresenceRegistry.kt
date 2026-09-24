@@ -39,6 +39,13 @@ object PresenceRegistry {
         }
     }
 
+    /** Last name a peer announced, for the transfer history. */
+    fun nameOf(deviceId: String): String? = entries[deviceId]?.deviceName
+
+    fun forget(deviceId: String) {
+        entries.remove(deviceId)
+    }
+
     fun markOffline(deviceId: String) {
         entries.computeIfPresent(deviceId) { _, prev -> prev.copy(offline = true) }
     }

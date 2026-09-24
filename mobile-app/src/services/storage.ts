@@ -18,6 +18,8 @@ export interface SandboxFileEntry {
   uri: string;
   size: number;
   isDirectory: boolean;
+  /** Last modified, Unix ms, for sorting. Null when the platform can't say. */
+  modified: number | null;
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -82,6 +84,7 @@ export async function getLocalSandboxFiles(): Promise<SandboxFileEntry[]> {
         uri: item.uri,
         size: 0,
         isDirectory: true,
+        modified: null,
       });
     } else {
       const file = item as File;
@@ -90,6 +93,7 @@ export async function getLocalSandboxFiles(): Promise<SandboxFileEntry[]> {
         uri: file.uri,
         size: file.size,
         isDirectory: false,
+        modified: file.modificationTime ?? null,
       });
     }
   }

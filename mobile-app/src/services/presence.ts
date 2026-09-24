@@ -22,6 +22,7 @@ import ExpoNativeServerModule, {
 } from "../../modules/expo-native-server/src/ExpoNativeServerModule";
 import { getAuthHeaders } from "./identity";
 import {
+  applyPairingCancels,
   getPairedPeers,
   PairedPeerRecord,
   updatePairedPeerAddress,
@@ -37,6 +38,8 @@ const OWN_PORT = 8377;
 interface Entry {
   lastSeenMs: number;
   fails: number;
+  /** When the peer last refused us as unpaired; 0 if it has not. */
+  untrustedAtMs?: number;
 }
 
 interface Addr {
@@ -47,6 +50,9 @@ interface Addr {
 export interface PeerPresence extends PairedPeerRecord {
   isOnline: boolean;
   lastSeenMs: number;
+  /** Paired here, but the peer refuses us: it rejected the pairing or
+   *  unpaired. Nothing works until it is removed and paired again. */
+  untrusted: boolean;
 }
 
 const table = new Map<string, Entry>();
@@ -54,6 +60,7 @@ const listeners = new Set<() => void>();
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let appStateSub: { remove: () => void } | null = null;
 let running = false;
+let cancelSub: { remove: () => void } | null = null;
 
 // ─── Subscription ────────────────────────────────────────────────────────────
 
@@ -72,6 +79,14 @@ function notify() {
 
 function markSeen(id: string) {
   table.set(id, { lastSeenMs: Date.now(), fails: 0 });
+}
+
+/**
+ * The peer answered and refused us as unpaired. Not online, and not a
+ * network failure either -- its address is fine.
+ */
+function markUntrusted(id: string) {
+  table.set(id, { lastSeenMs: 0, fails: 0, untrustedAtMs: Date.now() });
 }
 
 function recordFailure(id: string): number {
@@ -103,8 +118,14 @@ export async function getPeerPresence(): Promise<PeerPresence[]> {
   const now = Date.now();
 
   return peers.map((p) => {
-    const ours = table.get(p.id)?.lastSeenMs ?? 0;
+    const entry = table.get(p.id);
+    const ours = entry?.lastSeenMs ?? 0;
     const theirs = inbound.get(p.id);
+
+    // A peer only contacts devices it has paired, so inbound contact after
+    // the refusal means the pairing is back on its side.
+    const untrusted =
+      !!entry?.untrustedAtMs && !(theirs && theirs.lastSeenMs > entry.untrustedAtMs);
 
     let lastSeenMs = ours;
     if (theirs && !theirs.offline) {
@@ -114,9 +135,9 @@ export async function getPeerPresence(): Promise<PeerPresence[]> {
     // A bye is authoritative until we hear from the peer again afterwards.
     const saidBye = theirs?.offline === true && ours <= theirs.lastSeenMs;
     const isOnline =
-      !saidBye && lastSeenMs > 0 && now - lastSeenMs < ONLINE_TTL_MS;
+      !untrusted && !saidBye && lastSeenMs > 0 && now - lastSeenMs < ONLINE_TTL_MS;
 
-    return { ...p, isOnline, lastSeenMs };
+    return { ...p, isOnline, lastSeenMs, untrusted };
   });
 }
 
@@ -138,11 +159,23 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}) {
  */
 async function probe(peer: PairedPeerRecord, a: Addr): Promise<boolean> {
   try {
-    // Signed so the peer can count this heartbeat as contact from us (and
-    // learn our current address). /health still answers unsigned probes.
-    const res = await fetchWithTimeout(`http://${a.ip}:${a.port}/health`, {
+    // /api/pairing/status answers only devices the peer still trusts: 200
+    // means paired on both sides, 401 means paired here only. A 404 is a
+    // peer from before the endpoint existed; fall back to the open /health,
+    // which cannot tell the two apart. Signed either way, so the peer counts
+    // this as contact from us and learns our current address.
+    let res = await fetchWithTimeout(`http://${a.ip}:${a.port}/api/pairing/status`, {
       headers: await getAuthHeaders(),
     });
+    if (res.status === 401 || res.status === 403) {
+      markUntrusted(peer.id);
+      return true;
+    }
+    if (res.status === 404) {
+      res = await fetchWithTimeout(`http://${a.ip}:${a.port}/health`, {
+        headers: await getAuthHeaders(),
+      });
+    }
     if (!res.ok) return false;
     const body = await res.json();
     if (body?.app !== "lanclave" || body?.device_id !== peer.id) return false;
@@ -171,6 +204,10 @@ async function sendHello(peer: PairedPeerRecord, a: Addr): Promise<boolean> {
         }),
       },
     );
+    if (res.status === 401 || res.status === 403) {
+      markUntrusted(peer.id);
+      return false;
+    }
     if (!res.ok) return false;
     markSeen(peer.id);
     await updatePairedPeerAddress(peer.id, a.ip, a.port);
@@ -211,6 +248,7 @@ function candidateAddrs(peer: PairedPeerRecord): Addr[] {
 }
 
 async function heartbeatOnce() {
+  await applyPairingCancels();
   const peers = await getPairedPeers();
   const before = await getPeerPresence();
 
@@ -227,9 +265,10 @@ async function heartbeatOnce() {
   }
 
   const after = await getPeerPresence();
-  const changed = after.some(
-    (p) => before.find((b) => b.id === p.id)?.isOnline !== p.isOnline,
-  );
+  const changed = after.some((p) => {
+    const b = before.find((x) => x.id === p.id);
+    return b?.isOnline !== p.isOnline || b?.untrusted !== p.untrusted;
+  });
   if (changed) notify();
 }
 
@@ -295,6 +334,18 @@ export function startPresence(): void {
   if (running) return;
   running = true;
   appStateSub = AppState.addEventListener("change", onAppStateChange);
+
+  // A peer rejected our pairing or unpaired us: drop it from the list now.
+  if (Platform.OS === "android") {
+    applyPairingCancels().then((ids) => ids.length && notify()).catch(() => {});
+    try {
+      cancelSub = ExpoNativeServerModule.addListener("onPairingCancelled", () => {
+        applyPairingCancels().then(() => notify()).catch(() => {});
+      });
+    } catch {
+      // older native build
+    }
+  }
   startHeartbeat();
   announceHello().catch(() => {});
 }
@@ -311,6 +362,8 @@ export async function stopPresence(): Promise<void> {
   stopHeartbeat();
   appStateSub?.remove();
   appStateSub = null;
+  cancelSub?.remove();
+  cancelSub = null;
 
   const peers = await getPairedPeers();
   await Promise.all(

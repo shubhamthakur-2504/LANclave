@@ -1,5 +1,5 @@
 import { Check, ShieldCheck, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as api from "../../api";
 
 /**
@@ -39,6 +39,8 @@ export default function ConnectionModal({
   const [loading, setLoading] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Latest `dismiss` for the Esc listener, which is registered once per open.
+  const dismissRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (isOpen) {
@@ -52,16 +54,33 @@ export default function ConnectionModal({
     }
   }, [isOpen, initialFingerprint]);
 
+  /**
+   * Leaving while the code is on screen is a rejection, whichever way it is
+   * done: button, X or Esc. Tell the peer, so its dialog closes too and --
+   * if it already accepted -- it drops a key this user did not vouch for.
+   */
+  const dismiss = () => {
+    if (fingerprint && !confirmed) {
+      const addr = (customAddr || initialAddr).trim();
+      if (addr) api.cancelPairing(addr).catch(() => {});
+    }
+    onClose();
+  };
+
   // Esc closes the modal (U3.4). Registered before the early return so the
   // hook order stays stable across renders.
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") dismissRef.current();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen, onClose]);
+  }, [isOpen]);
+
+  useEffect(() => {
+    dismissRef.current = dismiss;
+  });
 
   if (!isOpen) return null;
 
@@ -138,7 +157,8 @@ export default function ConnectionModal({
       <div className="w-full max-w-sm rounded-2xl border border-border-strong bg-surface-raised shadow-2xl shadow-action/5">
         <div className="flex justify-end px-4 pt-4">
           <button
-            onClick={onClose}
+            onClick={dismiss}
+            aria-label="Close"
             className="flex h-6 w-6 items-center justify-center rounded-full text-content-faint transition-colors hover:bg-surface-active hover:text-content"
           >
             <X className="h-4 w-4" aria-hidden="true" />
@@ -267,7 +287,7 @@ export default function ConnectionModal({
                 */}
               <div className="mt-6 flex gap-3">
                 <button
-                  onClick={onClose}
+                  onClick={dismiss}
                   disabled={loading}
                   className="flex-1 rounded-lg border border-danger-border bg-danger-bg/40 px-4 py-2.5 text-sm font-semibold text-danger transition-colors hover:bg-danger-bg disabled:opacity-40"
                 >

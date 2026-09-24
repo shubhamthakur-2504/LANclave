@@ -20,6 +20,9 @@ pub struct AuthState {
     pub store: std::sync::Arc<RwLock<DeviceStore>>,
     /// Set to `false` to skip all auth checks (unit tests).
     pub enabled: bool,
+    /// Where `paired_devices.json` lives, so a server-side change (a peer
+    /// revoking its own pairing) persists. `None` in tests.
+    pub data_dir: Option<std::path::PathBuf>,
 }
 
 impl AuthState {
@@ -27,6 +30,7 @@ impl AuthState {
         Self {
             store: std::sync::Arc::new(RwLock::new(DeviceStore::new())),
             enabled: true,
+            data_dir: None,
         }
     }
 
@@ -35,6 +39,7 @@ impl AuthState {
         Self {
             store: std::sync::Arc::new(RwLock::new(DeviceStore::new())),
             enabled: false,
+            data_dir: None,
         }
     }
 }
@@ -105,7 +110,60 @@ pub fn check_request(
         return Ok(String::new());
     }
 
-    // --- Extract headers --------------------------------------------------
+    let signed = parse_signed(headers)?;
+
+    let store = auth.store.read().map_err(|_| {
+        eprintln!("[lanclave/auth] RwLock poisoned");
+        Status(500)
+    })?;
+
+    let peer_key = store.get_peer_key(&signed.device_id).ok_or_else(|| {
+        eprintln!("[lanclave/auth] unknown or unpaired device_id {}", signed.device_id);
+        Status(401)
+    })?;
+    drop(store);
+
+    signed.verify_with(&peer_key)
+}
+
+/// Verify a request is signed by the key its own device id names, without
+/// requiring that device to be paired.
+///
+/// A device id *is* its base64 public key, so this proves the caller holds
+/// that key. Enough to let a device speak for itself -- "stop trusting me",
+/// "I rejected our pairing" -- and never enough to act on anyone else.
+pub fn verify_caller_signature(headers: &axum::http::HeaderMap) -> Result<String, Status> {
+    let signed = parse_signed(headers)?;
+    let key = super::public_key_from_b64(&signed.device_id).map_err(|_| {
+        eprintln!("[lanclave/auth] device id is not a public key");
+        Status(401)
+    })?;
+    signed.verify_with(&key)
+}
+
+/// The three auth headers, decoded and freshness-checked.
+struct SignedRequest {
+    device_id: String,
+    timestamp: u64,
+    signature: Signature,
+}
+
+impl SignedRequest {
+    fn verify_with(self, key: &ed25519_dalek::VerifyingKey) -> Result<String, Status> {
+        let payload = signing_payload(&self.device_id, self.timestamp);
+        if key.verify_strict(payload.as_bytes(), &self.signature).is_ok() {
+            Ok(self.device_id)
+        } else {
+            eprintln!(
+                "[lanclave/auth] signature verification failed for device {}",
+                self.device_id
+            );
+            Err(Status(401))
+        }
+    }
+}
+
+fn parse_signed(headers: &axum::http::HeaderMap) -> Result<SignedRequest, Status> {
     let device_id = header_value(headers, HEADER_DEVICE_ID).map_err(|_| {
         eprintln!("[lanclave/auth] missing device_id header");
         Status(401)
@@ -121,7 +179,6 @@ pub fn check_request(
         Status(401)
     })?;
 
-    // --- Parse timestamp and check freshness (anti-replay) ----------------
     let timestamp: u64 = timestamp_str.parse::<u64>().map_err(|_| {
         eprintln!("[lanclave/auth] invalid timestamp format");
         Status(401)
@@ -145,22 +202,6 @@ pub fn check_request(
         return Err(Status(401));
     }
 
-    // --- Look up the paired peer's public key -----------------------------
-    // Only devices that completed the one-time pairing confirmation are
-    // authorised.  We must NOT derive the public key from the device_id
-    // itself, otherwise any device could self-authorise by signing with a
-    // key it controls.
-    let store = auth.store.read().map_err(|_| {
-        eprintln!("[lanclave/auth] RwLock poisoned");
-        Status(500)
-    })?;
-
-    let peer_key = store.get_peer_key(&device_id).ok_or_else(|| {
-        eprintln!("[lanclave/auth] unknown or unpaired device_id {device_id}");
-        Status(401)
-    })?;
-
-    // --- Verify the signature ---------------------------------------------
     use base64::Engine;
     let sig_bytes = base64::engine::general_purpose::STANDARD
         .decode(&sig_b64)
@@ -174,15 +215,11 @@ pub fn check_request(
         Status(401)
     })?;
 
-    let payload = signing_payload(&device_id, timestamp);
-
-    if peer_key.verify_strict(payload.as_bytes(), &signature).is_ok() {
-        drop(store);
-        Ok(device_id.to_string())
-    } else {
-        eprintln!("[lanclave/auth] signature verification failed for device {device_id}");
-        Err(Status(401))
-    }
+    Ok(SignedRequest {
+        device_id: device_id.to_string(),
+        timestamp,
+        signature,
+    })
 }
 
 // ---------------------------------------------------------------------------

@@ -101,6 +101,11 @@ impl DeviceStore {
         Ok(())
     }
 
+    /// Forget a peer. Returns whether it was paired.
+    pub fn remove_peer(&mut self, device_id: &str) -> bool {
+        self.devices.remove(device_id).is_some()
+    }
+
     /// Update the device name for an existing peer
     pub fn update_peer_name(&mut self, device_id: &str, device_name: String) -> bool {
         if let Some(peer) = self.devices.get_mut(device_id) {

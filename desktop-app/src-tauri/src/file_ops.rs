@@ -7,6 +7,8 @@ pub struct FileItem {
     pub name: String,
     pub size: u64,
     pub is_directory: bool,
+    /// Last modified, Unix ms, for sorting.
+    pub modified: Option<u64>,
 }
 
 #[tauri::command]
@@ -40,6 +42,7 @@ pub fn list_sandbox_files(state: tauri::State<'_, crate::commands::CliState>) ->
                             name,
                             size: metadata.len(),
                             is_directory: metadata.is_dir(),
+                            modified: crate::fs_util::modified_ms(&metadata),
                         });
                     }
                 }

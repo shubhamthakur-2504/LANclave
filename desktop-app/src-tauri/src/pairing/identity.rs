@@ -165,6 +165,7 @@ mod tests {
             identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
+            history: std::sync::Arc::new(crate::history::HistoryStore::in_memory()),
             auth: Arc::new(AuthState::new()), // enabled
         });
         let app = crate::server::build_router(state);
@@ -193,6 +194,7 @@ mod tests {
         let auth = Arc::new(AuthState {
             store: std::sync::Arc::new(std::sync::RwLock::new(store)),
             enabled: true,
+            data_dir: None,
         });
 
         let state = Arc::new(crate::server::AppState {
@@ -204,6 +206,7 @@ mod tests {
             identity_key: key.clone(),
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
+            history: std::sync::Arc::new(crate::history::HistoryStore::in_memory()),
             auth,
         });
         let app = crate::server::build_router(state);
@@ -240,6 +243,7 @@ mod tests {
         let auth = Arc::new(AuthState {
             store: std::sync::Arc::new(std::sync::RwLock::new(store)),
             enabled: true,
+            data_dir: None,
         });
 
         let state = Arc::new(crate::server::AppState {
@@ -251,6 +255,7 @@ mod tests {
             identity_key: key.clone(),
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
+            history: std::sync::Arc::new(crate::history::HistoryStore::in_memory()),
             auth,
         });
         let app = crate::server::build_router(state);
@@ -286,6 +291,7 @@ mod tests {
         let auth = Arc::new(AuthState {
             store: std::sync::Arc::new(std::sync::RwLock::new(store)),
             enabled: true,
+            data_dir: None,
         });
 
         let state = Arc::new(crate::server::AppState {
@@ -297,6 +303,7 @@ mod tests {
             identity_key: key.clone(),
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
+            history: std::sync::Arc::new(crate::history::HistoryStore::in_memory()),
             auth,
         });
         let app = crate::server::build_router(state);
@@ -337,6 +344,7 @@ mod tests {
         let auth = Arc::new(AuthState {
             store: std::sync::Arc::new(std::sync::RwLock::new(DeviceStore::new())),
             enabled: true,
+            data_dir: None,
         });
 
         let state = Arc::new(crate::server::AppState {
@@ -348,6 +356,7 @@ mod tests {
             identity_key: key.clone(),
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
+            history: std::sync::Arc::new(crate::history::HistoryStore::in_memory()),
             auth,
         });
         let app = crate::server::build_router(state);

@@ -23,6 +23,8 @@ export interface RemoteFileEntry {
   name: string;
   size: number;
   is_directory: boolean;
+  /** Last modified, Unix ms. Absent from peers that predate the field. */
+  modified?: number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -144,6 +146,13 @@ export async function downloadRemoteFile(
   }
 }
 
+/** How an upload ended on the peer. */
+export interface UploadResult {
+  /** Name the peer saved it under ("name (1).ext" when the name was taken). */
+  savedAs: string;
+  bytes: number;
+}
+
 /**
  * Upload a single file from the local device to a remote peer's sandbox.
  *
@@ -159,7 +168,7 @@ export async function uploadRemoteFile(
   remoteFileName: string,
   onProgress?: (event: { bytesSent: number; totalBytes: number }) => void,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<UploadResult> {
   const url = `http://${peerAddr}/files/${encodeFilePath(remoteFileName)}`;
   const headers = await getAuthHeaders();
 
@@ -168,8 +177,9 @@ export async function uploadRemoteFile(
     throw new Error("Local file does not exist");
   }
 
+  let result;
   try {
-    await source.upload(url, {
+    result = await source.upload(url, {
       httpMethod: 'PUT',
       uploadType: UploadType.BINARY_CONTENT,
       headers,
@@ -181,4 +191,18 @@ export async function uploadRemoteFile(
       `upload to ${peerAddr} failed — ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+
+  // `upload` resolves on any HTTP status; a rejection must not read as sent.
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`upload to ${peerAddr} failed — peer returned HTTP ${result.status}`);
+  }
+
+  let savedAs = remoteFileName;
+  try {
+    const body = JSON.parse(result.body) as { name?: unknown };
+    if (typeof body.name === "string") savedAs = body.name;
+  } catch {
+    // Older peers answer with plain text.
+  }
+  return { savedAs, bytes: source.size ?? 0 };
 }

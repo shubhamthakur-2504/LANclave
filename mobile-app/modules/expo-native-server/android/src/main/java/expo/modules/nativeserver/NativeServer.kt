@@ -2,6 +2,7 @@ package expo.modules.nativeserver
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import fi.iki.elonen.NanoHTTPD
 import org.json.JSONArray
@@ -16,7 +17,9 @@ class NativeServer(
     private val deviceId: String,
     private val deviceName: String,
     private val rawSandboxPath: String,
-    private var pairedDevices: List<String>
+    private var pairedDevices: List<String>,
+    /** A device withdrew its own pairing (rejected the codes, or unpaired). */
+    private val onPairingCancelled: (String) -> Unit = {},
 ) : NanoHTTPD(port) {
     private val isContentUri = rawSandboxPath.startsWith("content://")
     private val sandboxPath = rawSandboxPath.removePrefix("file://")
@@ -31,6 +34,12 @@ class NativeServer(
 
         if (method != Method.GET && method != Method.PUT && method != Method.POST) {
             return newFixedLengthResponse(Response.Status.METHOD_NOT_ALLOWED, MIME_PLAINTEXT, "Method Not Allowed")
+        }
+
+        // A device revoking its own pairing is, by definition, possibly not
+        // paired with us any more -- it is checked against its own key below.
+        if (uri == "/api/pairing/cancel" && method == Method.POST) {
+            return handlePairingCancel(session)
         }
 
         if (uri != "/health") {
@@ -88,6 +97,18 @@ class NativeServer(
                     json.put("device_type", "phone")
                     return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
                 }
+                uri == "/api/pairing/status" && method == Method.GET -> {
+                    // Reaching here means the caller passed the paired-device
+                    // check above: the pairing holds on this side. Unlike the
+                    // open /health, a one-sided pairing gets 401 instead.
+                    val json = JSONObject()
+                    json.put("paired", true)
+                    json.put("app", "lanclave")
+                    json.put("device_id", deviceId)
+                    json.put("device_name", deviceName)
+                    json.put("device_type", "phone")
+                    return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
+                }
                 uri == "/api/presence/hello" && method == Method.POST -> {
                     return handlePresenceHello(session)
                 }
@@ -100,15 +121,16 @@ class NativeServer(
                     val filesArray = JSONArray()
 
                     if (isContentUri) {
-                        val treeUri = Uri.parse(rawSandboxPath)
-                        val documentFile = DocumentFile.fromTreeUri(context, treeUri)
-                        documentFile?.listFiles()?.forEach { file ->
-                            val name = file.name
-                            if (name != null && !name.startsWith(".")) {
+                        // One query for every child's name, size, type and
+                        // mtime. DocumentFile.listFiles() + length()/isDirectory
+                        // cost a DocumentsProvider round trip per call, per file.
+                        querySafChildren { name, size, isDir, modified ->
+                            if (!name.startsWith(".")) {
                                 val fileObj = JSONObject()
                                 fileObj.put("name", name)
-                                fileObj.put("size", if (file.isDirectory) 0 else file.length())
-                                fileObj.put("is_directory", file.isDirectory)
+                                fileObj.put("size", if (isDir) 0 else size)
+                                fileObj.put("is_directory", isDir)
+                                if (modified != null) fileObj.put("modified", modified)
                                 filesArray.put(fileObj)
                             }
                         }
@@ -120,6 +142,7 @@ class NativeServer(
                                 fileObj.put("name", file.name)
                                 fileObj.put("size", if (file.isDirectory) 0 else file.length())
                                 fileObj.put("is_directory", file.isDirectory)
+                                file.lastModified().takeIf { it > 0 }?.let { fileObj.put("modified", it) }
                                 filesArray.put(fileObj)
                             }
                         }
@@ -153,7 +176,9 @@ class NativeServer(
                         val inputStream = context.contentResolver.openInputStream(childUri)
                             ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Could not open stream")
 
-                        val response = newFixedLengthResponse(Response.Status.OK, "application/octet-stream", inputStream, childFile.length())
+                        val length = childFile.length()
+                        val logged = servedToPeer(session, pathParam, inputStream, length)
+                        val response = newFixedLengthResponse(Response.Status.OK, "application/octet-stream", logged, length)
                         return response
                     } else {
                         val file = File(sandboxPath, pathParam)
@@ -161,8 +186,9 @@ class NativeServer(
                             return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
                         }
 
-                        val fis = FileInputStream(file)
-                        val response = newFixedLengthResponse(Response.Status.OK, "application/octet-stream", fis, file.length())
+                        val length = file.length()
+                        val logged = servedToPeer(session, pathParam, FileInputStream(file), length)
+                        val response = newFixedLengthResponse(Response.Status.OK, "application/octet-stream", logged, length)
                         return response
                     }
                 }
@@ -173,6 +199,35 @@ class NativeServer(
         } catch (e: Exception) {
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, e.message ?: "Unknown error")
         }
+    }
+
+    /**
+     * `POST /api/pairing/cancel` -- a device withdrawing its own pairing.
+     *
+     * Verified against the key its device id names, with no pairing needed:
+     * a device can only ever revoke trust in itself. Stops accepting it at
+     * once; JS removes it from the stored list via [onPairingCancelled].
+     */
+    private fun handlePairingCancel(session: IHTTPSession): Response {
+        val id = session.headers["x-lanclave-device-id"]
+        val ts = session.headers["x-lanclave-timestamp"]
+        val sig = session.headers["x-lanclave-signature"]
+        if (id == null || ts == null || sig == null) {
+            return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Missing authentication headers")
+        }
+        val tsSecs = ts.toLongOrNull()
+        if (tsSecs == null || kotlin.math.abs(System.currentTimeMillis() / 1000 - tsSecs) > 30) {
+            return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Timestamp expired")
+        }
+        val valid = try { verifyEd25519(id, ts, sig) } catch (_: Exception) { false }
+        if (!valid) {
+            return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Invalid signature")
+        }
+
+        pairedDevices = pairedDevices.filter { it != id }
+        PresenceRegistry.forget(id)
+        onPairingCancelled(id)
+        return newFixedLengthResponse(Response.Status.OK, "application/json", "{\"status\":\"ok\"}")
     }
 
     /** Ed25519 check of "deviceId:timestamp". Throws on malformed input. */
@@ -242,8 +297,9 @@ class NativeServer(
 
     /**
      * `GET /api/sandbox/fingerprint/{name}?size=N` -- size and SHA-256 of one
-     * file, for dedupe. With `size`, a mismatch is answered without hashing.
-     * Same wire format as the desktop's handler.
+     * file, for dedupe. With `size`, a mismatch is answered without hashing,
+     * and same-size numbered copies (`name (1).ext`...) are listed with their
+     * digests. Same wire format as the desktop's handler.
      */
     private fun handleFingerprint(session: IHTTPSession, name: String): Response {
         if (name.contains("..") || name.contains("/") || name.isEmpty()) {
@@ -257,6 +313,13 @@ class NativeServer(
         val json = JSONObject()
         json.put("size", result.size)
         json.put("sha256", result.sha256 ?: JSONObject.NULL)
+        if (result.siblings.isNotEmpty()) {
+            val siblings = JSONArray()
+            result.siblings.forEach { s ->
+                siblings.put(JSONObject().put("name", s.name).put("sha256", s.sha256))
+            }
+            json.put("siblings", siblings)
+        }
         return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
     }
 
@@ -271,35 +334,53 @@ class NativeServer(
             val fileToDeleteOnError: File?
             val documentToDeleteOnError: DocumentFile?
 
+            // Never overwrite: a taken name is saved as "name (1).ext", and the
+            // reply says which name was used. Choosing and creating happen
+            // under one lock -- NanoHTTPD serves each connection on its own
+            // thread, and two pushes of the same name used to both pass an
+            // exists() check and write into one file.
+            val savedName: String
             if (isContentUri) {
                 val treeUri = Uri.parse(rawSandboxPath)
                 val documentFile = DocumentFile.fromTreeUri(context, treeUri)
-                val existingFile = documentFile?.findFile(pathParam)
-                if (existingFile != null && existingFile.exists()) {
-                    return newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "File already exists")
-                }
-                val newFile = documentFile?.createFile("application/octet-stream", pathParam)
-                    ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Could not create file")
-                
+                    ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Sandbox unavailable")
+                val newFile = synchronized(createLock) {
+                    val taken = documentFile.listFiles().mapNotNull { it.name }.toHashSet()
+                    val name = Fingerprint.firstFreeName(pathParam) { it in taken }
+                    documentFile.createFile("application/octet-stream", name)
+                } ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Could not create file")
+
+                savedName = newFile.name ?: pathParam
                 documentToDeleteOnError = newFile
                 fileToDeleteOnError = null
                 outputStream = context.contentResolver.openOutputStream(newFile.uri)
                     ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Could not open output stream")
             } else {
-                val file = File(sandboxPath, pathParam)
-                if (file.exists()) {
-                    return newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "File already exists")
-                }
-                
+                // createNewFile() is atomic, so the lock only saves wasted retries.
+                val file = synchronized(createLock) {
+                    var created: File? = null
+                    Fingerprint.firstFreeName(pathParam) { candidate ->
+                        val f = File(sandboxPath, candidate)
+                        if (f.createNewFile()) { created = f; false } else true
+                    }
+                    created
+                } ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Could not create file")
+
+                savedName = file.name
                 documentToDeleteOnError = null
                 fileToDeleteOnError = file
                 outputStream = java.io.FileOutputStream(file)
             }
 
+            // Logged as "received" whichever way this ends.
+            val peerId = session.headers["x-lanclave-device-id"] ?: ""
+            val logEntry = TransferHistory.entry("received", "peer", peerId, PresenceRegistry.nameOf(peerId), pathParam)
+            if (savedName != pathParam) logEntry.put("dest_name", savedName)
+            var bytesReadTotal: Long = 0
+
             try {
                 val inputStream = session.inputStream
                 val buffer = ByteArray(64 * 1024)
-                var bytesReadTotal: Long = 0
                 while (bytesReadTotal < contentLength) {
                     val bytesToRead = minOf(buffer.size.toLong(), contentLength - bytesReadTotal).toInt()
                     val read = inputStream.read(buffer, 0, bytesToRead)
@@ -314,11 +395,18 @@ class NativeServer(
                     throw Exception("Short read: expected $contentLength, got $bytesReadTotal")
                 }
                 // Use custom CREATED status instead of casting to existing Response.Status since NanoHTTPD doesn't have 201 CREATED
-                return newFixedLengthResponse(Status_201_CREATED, MIME_PLAINTEXT, "Created")
+                logEntry.put("bytes", bytesReadTotal)
+                runCatching { TransferHistory.record(context, logEntry) }
+
+                val saved = JSONObject()
+                saved.put("name", savedName)
+                return newFixedLengthResponse(Status_201_CREATED, "application/json", saved.toString())
             } catch (e: Exception) {
                 outputStream.close()
                 fileToDeleteOnError?.delete()
                 documentToDeleteOnError?.delete()
+                logEntry.put("bytes", bytesReadTotal).put("outcome", "failed").put("error", e.message ?: "upload failed")
+                runCatching { TransferHistory.record(context, logEntry) }
                 throw e
             }
         } catch (e: Exception) {
@@ -326,6 +414,44 @@ class NativeServer(
         }
     }
     
+    /** Every child of the SAF sandbox, from a single ContentResolver query. */
+    private fun querySafChildren(visit: (name: String, size: Long, isDir: Boolean, modified: Long?) -> Unit) {
+        val tree = Uri.parse(rawSandboxPath)
+        val parentId = if (DocumentsContract.isDocumentUri(context, tree)) {
+            DocumentsContract.getDocumentId(tree)
+        } else {
+            DocumentsContract.getTreeDocumentId(tree)
+        }
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
+        val columns = arrayOf(
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+        )
+        context.contentResolver.query(children, columns, null, null, null)?.use { c ->
+            while (c.moveToNext()) {
+                val name = c.getString(0) ?: continue
+                val size = if (c.isNull(1)) 0L else c.getLong(1)
+                val isDir = c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR
+                val modified = if (c.isNull(3)) null else c.getLong(3).takeIf { it > 0 }
+                visit(name, size, isDir, modified)
+            }
+        }
+    }
+
+    /** Wrap a file a peer is pulling so the pull is logged when it ends. */
+    private fun servedToPeer(session: IHTTPSession, name: String, input: java.io.InputStream, length: Long): java.io.InputStream {
+        val peerId = session.headers["x-lanclave-device-id"] ?: ""
+        val entry = TransferHistory.entry("sent", "peer", peerId, PresenceRegistry.nameOf(peerId), name)
+        return TransferHistory.LoggingInputStream(input, context, entry, length)
+    }
+
+    companion object {
+        /** Serialises "pick a free name + create it" across request threads. */
+        private val createLock = Any()
+    }
+
     private val Status_201_CREATED = object : Response.IStatus {
         override fun getDescription(): String = "201 Created"
         override fun getRequestStatus(): Int = 201

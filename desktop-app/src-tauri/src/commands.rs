@@ -45,6 +45,7 @@ pub struct CliState {
     pub device_store: Arc<RwLock<DeviceStore>>,
     pub server_controller: Arc<ServerController>,
     pub presence: Arc<crate::presence::PresenceStore>,
+    pub history: Arc<crate::history::HistoryStore>,
 }
 
 pub enum CancelHandle {
@@ -69,6 +70,10 @@ pub struct PeerInfo {
     /// "laptop" | "phone" | ... as reported by the peer over `/health`.
     pub device_type: Option<String>,
     pub paired: bool,
+    /// Paired here but not on the peer: it rejected the pairing or unpaired
+    /// us. Nothing works until it is removed and paired again.
+    #[serde(default)]
+    pub untrusted: bool,
 }
 
 #[derive(Serialize)]
@@ -76,6 +81,8 @@ pub struct FileEntry {
     pub name: String,
     pub size: u64,
     pub is_directory: bool,
+    /// Last modified, Unix ms. `None` from peers that predate the field.
+    pub modified: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -93,9 +100,11 @@ pub async fn start_server(
         identity_key: state.identity_key.clone(),
         app_handle: Some(app),
         presence: state.presence.clone(),
+        history: state.history.clone(),
         auth: Arc::new(AuthState {
             store: state.device_store.clone(),
             enabled: true,
+            data_dir: Some(state.app_data_dir.clone()),
         }),
     });
 
@@ -159,6 +168,7 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
                     .and_then(|p| p.device_type.clone())
                     .or_else(|| d.device_type.clone()),
                 paired: true,
+                untrusted: state.presence.is_untrusted(&d.device_id),
             }
         })
         .collect();
@@ -183,6 +193,7 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
             device_name: Some(p.device_name),
             device_type: p.device_type,
             paired: false,
+            untrusted: false,
         });
     }
 
@@ -272,27 +283,14 @@ pub async fn import_files(
     Ok(imported)
 }
 
-/// Find a free name, turning `notes.txt` into `notes (2).txt` on collision so
-/// a drop never silently overwrites something already in the sandbox.
+/// Find a free name, turning `notes.txt` into `notes (1).txt` on collision so
+/// a drop never silently overwrites something already in the sandbox. Same
+/// scheme as transfers use (`fs_util::create_unique`).
 fn unique_sandbox_name(root: &std::path::Path, file_name: &str) -> String {
-    if !root.join(file_name).exists() {
-        return file_name.to_string();
-    }
-
-    let path = std::path::Path::new(file_name);
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(file_name);
-    let ext = path.extension().and_then(|s| s.to_str());
-
-    for n in 2..1000 {
-        let candidate = match ext {
-            Some(e) => format!("{stem} ({n}).{e}"),
-            None => format!("{stem} ({n})"),
-        };
-        if !root.join(&candidate).exists() {
-            return candidate;
-        }
-    }
-    file_name.to_string()
+    (0..1000)
+        .map(|n| crate::fs_util::numbered_name(file_name, n))
+        .find(|candidate| !root.join(candidate).exists())
+        .unwrap_or_else(|| file_name.to_string())
 }
 
 /// Reveal a sandbox file in the OS file manager.
@@ -348,6 +346,7 @@ pub fn list_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>, String> {
                     .or_else(|| d.device_name.clone()),
                 device_type: d.device_type.clone(),
                 paired: true,
+                untrusted: pres.as_ref().map(|p| p.untrusted).unwrap_or(false),
             }
         })
         .collect())
@@ -445,6 +444,7 @@ pub async fn list_peer_files(
                         name: e.name,
                         size: e.size,
                         is_directory: e.is_directory,
+                        modified: e.modified,
                     })
                     .collect());
             }
@@ -463,6 +463,8 @@ struct RemoteFileEntry {
     name: String,
     size: u64,
     is_directory: bool,
+    #[serde(default)]
+    modified: Option<u64>,
 }
 
 #[tauri::command]
@@ -475,6 +477,9 @@ pub async fn pull_file(
     // Size from the peer's listing. Lets an existing local file of a
     // different size rule out a duplicate without asking the peer.
     remote_size: Option<u64>,
+    // Who the peer is, for the history log. Looked up by address if absent.
+    peer_id: Option<String>,
+    peer_name: Option<String>,
 ) -> Result<String, String> {
     let safe_path = {
         let settings = state.settings.read().map_err(|e| e.to_string())?;
@@ -486,21 +491,19 @@ pub async fn pull_file(
     let transfer_id = uuid::Uuid::new_v4().to_string();
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
-    // Store the cancellation sender in the server controller or a new state.
-    // Wait, ServerController is for the HTTP server. Let's add a new state for TransferController or just put it in a static Mutex since it's just for cancellation.
-    // Actually, we can add a new Managed State: TransferState
-    // Let's assume TransferState is passed. If not, we'll need to define it.
     let transfer_state: State<'_, TransferState> = app.state();
     transfer_state.cancellations.write().unwrap().insert(transfer_id.clone(), CancelHandle::Pull(cancel_tx));
 
     let device_id = state.device_id.clone();
     let identity_key = state.identity_key.clone();
     let transfer_id_clone = transfer_id.clone();
+    let (peer_id, peer_name) = peer_identity(&state, &peer_addr, peer_id, peer_name);
+    let history = state.history.clone();
 
     tokio::spawn(async move {
-        let _ = client::pull_file_from_peer(
-            app,
-            transfer_id_clone,
+        let result = client::pull_file_from_peer(
+            app.clone(),
+            transfer_id_clone.clone(),
             &peer_addr,
             &remote_path,
             &safe_path,
@@ -510,6 +513,15 @@ pub async fn pull_file(
             cancel_rx,
         )
         .await;
+
+        forget_transfer(&app, &transfer_id_clone);
+        history.record(crate::history::entry_for_local_transfer(
+            crate::history::Direction::Received,
+            peer_id,
+            peer_name,
+            remote_path,
+            &result,
+        ));
     });
 
     Ok(transfer_id)
@@ -539,6 +551,9 @@ pub async fn push_file(
     peer_addr: String,
     local_relative_path: String,
     remote_path: String,
+    // Who the peer is, for the history log. Looked up by address if absent.
+    peer_id: Option<String>,
+    peer_name: Option<String>,
 ) -> Result<String, String> {
     let safe_local_path = {
         let settings = state.settings.read().map_err(|e| e.to_string())?;
@@ -556,11 +571,13 @@ pub async fn push_file(
     let device_id = state.device_id.clone();
     let identity_key = state.identity_key.clone();
     let transfer_id_clone = transfer_id.clone();
+    let (peer_id, peer_name) = peer_identity(&state, &peer_addr, peer_id, peer_name);
+    let history = state.history.clone();
 
     tokio::spawn(async move {
-        let _ = crate::client::push::push_file_to_peer_managed(
-            app,
-            transfer_id_clone,
+        let result = crate::client::push::push_file_to_peer_managed(
+            app.clone(),
+            transfer_id_clone.clone(),
             &peer_addr,
             &safe_local_path,
             &remote_path,
@@ -569,9 +586,68 @@ pub async fn push_file(
             cancel_flag,
         )
         .await;
+
+        forget_transfer(&app, &transfer_id_clone);
+        history.record(crate::history::entry_for_local_transfer(
+            crate::history::Direction::Sent,
+            peer_id,
+            peer_name,
+            remote_path,
+            &result,
+        ));
     });
 
     Ok(transfer_id)
+}
+
+/// Drop a finished transfer's cancel handle; nothing is left to cancel.
+fn forget_transfer(app: &tauri::AppHandle, transfer_id: &str) {
+    if let Some(ts) = app.try_state::<TransferState>() {
+        ts.cancellations.write().unwrap().remove(transfer_id);
+    }
+}
+
+/// Resolve the peer at `addr` to a device id and display name for the
+/// history log. Prefers what the UI passed; otherwise matches the address
+/// against presence and the paired store.
+fn peer_identity(
+    state: &State<'_, CliState>,
+    addr: &str,
+    id: Option<String>,
+    name: Option<String>,
+) -> (String, Option<String>) {
+    let store = state.device_store.read().ok();
+    let id = id.filter(|i| !i.is_empty()).or_else(|| {
+        store.as_ref().and_then(|s| {
+            s.devices
+                .values()
+                .find(|d| {
+                    state.presence.addr_of(&d.device_id).as_deref() == Some(addr)
+                        || d.last_addr.as_deref() == Some(addr)
+                })
+                .map(|d| d.device_id.clone())
+        })
+    });
+    let name = name.or_else(|| {
+        let id = id.as_ref()?;
+        store.as_ref()?.devices.get(id)?.device_name.clone()
+    });
+    (id.unwrap_or_else(|| addr.to_string()), name)
+}
+
+// ---------------------------------------------------------------------------
+// History
+// ---------------------------------------------------------------------------
+
+/// Every transfer from the last 30 days, newest first.
+#[tauri::command]
+pub fn get_transfer_history(state: State<'_, CliState>) -> Vec<crate::history::HistoryEntry> {
+    state.history.list()
+}
+
+#[tauri::command]
+pub fn clear_transfer_history(state: State<'_, CliState>) {
+    state.history.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -601,8 +677,9 @@ pub async fn initiate_pairing(
 
 #[tauri::command]
 pub async fn confirm_pairing(
+    app: tauri::AppHandle,
     state: State<'_, CliState>,
-    _peer_addr: String,
+    peer_addr: String,
     peer_device_id: String,
     peer_device_name: Option<String>,
 ) -> Result<(), String> {
@@ -617,11 +694,106 @@ pub async fn confirm_pairing(
         peer_device_name,
     };
 
-    let app_data_dir = &state.app_data_dir;
-    let mut store = state.device_store.write().map_err(|e| e.to_string())?;
-    crate::pairing::confirm_pairing(session, &mut store, app_data_dir)
-        .map_err(|e| e.to_string())?;
+    // Keep the address we paired over. Without it the heartbeat has nowhere
+    // to probe, and the new peer shows offline until *its* heartbeat happens
+    // to reach us -- up to 20s, longer if that first contact races our
+    // confirm and is refused.
+    let addr = normalize_peer_addr(&peer_addr);
+    {
+        let app_data_dir = &state.app_data_dir;
+        let mut store = state.device_store.write().map_err(|e| e.to_string())?;
+        crate::pairing::confirm_pairing(session, &mut store, app_data_dir)
+            .map_err(|e| e.to_string())?;
+        if let (Some(addr), Some(dev)) = (&addr, store.devices.get_mut(&peer_device_id)) {
+            dev.last_addr = Some(addr.clone());
+            let _ = store.save(app_data_dir);
+        }
+    }
 
+    // Say hello now rather than on the next heartbeat. If the peer has
+    // already confirmed, both sides show online within a round trip; if not,
+    // its own confirm sends a hello back to us.
+    if let Some(addr) = addr {
+        state.presence.set_addr(&peer_device_id, addr.clone());
+        if let Some(ctx) = app.try_state::<crate::presence::PresenceContext>() {
+            let ctx = ctx.inner().clone();
+            tauri::async_runtime::spawn(async move {
+                if ctx.hello_one(&peer_device_id, &addr).await {
+                    ctx.emit_changed();
+                }
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// `"10.0.0.5"` -> `"10.0.0.5:8377"`; `None` for an empty or non-address
+/// value (the manual pairing path can pass a device id instead).
+fn normalize_peer_addr(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let with_port = if raw.contains(':') {
+        raw.to_string()
+    } else {
+        format!("{raw}:{}", crate::presence::SERVER_PORT)
+    };
+    with_port
+        .parse::<std::net::SocketAddr>()
+        .ok()
+        .map(|a| a.to_string())
+}
+
+/// The user rejected the codes: tell the peer, so its dialog closes and --
+/// if it already accepted -- it drops the pairing instead of keeping a key
+/// the user just flagged as suspicious. Best effort; nothing to undo here,
+/// since a rejection never stored anything on this side.
+#[tauri::command]
+pub async fn cancel_pairing(state: State<'_, CliState>, peer_addr: String) -> Result<(), String> {
+    let Some(addr) = normalize_peer_addr(&peer_addr) else {
+        return Ok(());
+    };
+    client::transport::send_pairing_cancel(&addr, &state.device_id, &state.identity_key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Forget a paired peer here, and ask it to forget us too.
+///
+/// Removal is local and immediate. Telling the peer is best effort: if it is
+/// offline it keeps us until its heartbeat sees our 401s and marks the
+/// pairing one-sided, where its user can remove it.
+#[tauri::command]
+pub async fn unpair_peer(
+    app: tauri::AppHandle,
+    state: State<'_, CliState>,
+    device_id: String,
+) -> Result<(), String> {
+    let addr = {
+        let mut store = state.device_store.write().map_err(|e| e.to_string())?;
+        let addr = state
+            .presence
+            .addr_of(&device_id)
+            .or_else(|| store.devices.get(&device_id).and_then(|d| d.last_addr.clone()));
+        if store.remove_peer(&device_id) {
+            store.save(&state.app_data_dir).map_err(|e| e.to_string())?;
+        }
+        addr
+    };
+    state.presence.forget(&device_id);
+    if let Some(ctx) = app.try_state::<crate::presence::PresenceContext>() {
+        ctx.emit_changed();
+    }
+
+    if let Some(addr) = addr {
+        let own_id = state.device_id.clone();
+        let key = state.identity_key.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = client::transport::send_pairing_cancel(&addr, &own_id, &key).await;
+        });
+    }
     Ok(())
 }
 
@@ -693,4 +865,18 @@ pub async fn pick_file(app: tauri::AppHandle, state: State<'_, CliState>) -> Res
     });
     
     rx.await.map_err(|_| "Dialog cancelled".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_peer_addr;
+
+    #[test]
+    fn peer_addr_gets_default_port_and_rejects_non_addresses() {
+        assert_eq!(normalize_peer_addr("10.0.0.5").as_deref(), Some("10.0.0.5:8377"));
+        assert_eq!(normalize_peer_addr(" 10.0.0.5:9000 ").as_deref(), Some("10.0.0.5:9000"));
+        assert_eq!(normalize_peer_addr(""), None);
+        assert_eq!(normalize_peer_addr("Mobile"), None);
+        assert_eq!(normalize_peer_addr("dGVzdC1rZXk="), None);
+    }
 }
