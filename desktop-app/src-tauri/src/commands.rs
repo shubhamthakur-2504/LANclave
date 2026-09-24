@@ -93,11 +93,23 @@ pub async fn start_server(
     app: tauri::AppHandle,
     state: State<'_, CliState>,
 ) -> Result<(), String> {
+    launch_server(&app, &state).await.map_err(|e| e.to_string())
+}
+
+/// Start the HTTP server and announce the result as `server-status`.
+///
+/// Called from `setup` at launch, so the server runs whether or not the
+/// window's page ever loads, and from the `start_server` command when the
+/// user turns it back on.
+pub async fn launch_server(
+    app: &tauri::AppHandle,
+    state: &CliState,
+) -> Result<(), crate::server::ServerError> {
     let app_state = Arc::new(AppState {
         settings: state.settings.clone(),
         device_id: state.device_id.clone(),
         identity_key: state.identity_key.clone(),
-        app_handle: Some(app),
+        app_handle: Some(app.clone()),
         presence: state.presence.clone(),
         history: state.history.clone(),
         auth: Arc::new(AuthState {
@@ -107,19 +119,27 @@ pub async fn start_server(
         }),
     });
 
-    state
+    let result = state
         .server_controller
         .start(app_state, "0.0.0.0:8377")
-        .await
-        .map_err(|e| e.to_string())
+        .await;
+    emit_server_status(app, state.server_controller.is_running());
+    result
+}
+
+/// Tell the UI whether the server is up. The page may load before or after
+/// the launch finishes, so it reads `is_server_running` once and then
+/// follows this event.
+fn emit_server_status(app: &tauri::AppHandle, running: bool) {
+    use tauri::Emitter;
+    let _ = app.emit("server-status", running);
 }
 
 #[tauri::command]
-pub async fn stop_server(state: State<'_, CliState>) -> Result<(), String> {
-    state
-        .server_controller
-        .stop()
-        .map_err(|e| e.to_string())
+pub async fn stop_server(app: tauri::AppHandle, state: State<'_, CliState>) -> Result<(), String> {
+    let result = state.server_controller.stop().map_err(|e| e.to_string());
+    emit_server_status(&app, state.server_controller.is_running());
+    result
 }
 
 #[tauri::command]

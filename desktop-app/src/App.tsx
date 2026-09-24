@@ -150,23 +150,22 @@ function AppInner() {
   const hoveredPeerId = isDragging ? peerUnder(dragPosition) : null;
 
 
+  // The backend starts the server at launch; the page only follows it.
+  // Read the state once (it may have started before this rendered), then
+  // track the event for every later change.
   useEffect(() => {
-    api
-      .isServerRunning()
-      .then(async (running) => {
-        if (!running) {
-          try {
-            await api.startServer();
-            setServerRunning(true);
-          } catch {
-            // ignore
-          }
-        } else {
-          setServerRunning(true);
-        }
+    refreshServerStatus();
+    let unlisten: (() => void) | null = null;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) => listen<boolean>("server-status", (e) => setServerRunning(e.payload)))
+      .then((fn) => {
+        unlisten = fn;
       })
       .catch(() => {});
+    return () => unlisten?.();
+  }, [refreshServerStatus]);
 
+  useEffect(() => {
     // Paired peers come from presence -- no sweep needed at launch.
     loadPeers();
     refreshFiles();

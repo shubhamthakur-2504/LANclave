@@ -83,6 +83,7 @@ pub fn run() {
             tray::show_main_window(app);
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .manage(CliState {
             app_data_dir,
@@ -98,6 +99,17 @@ pub fn run() {
         .on_window_event(tray::on_window_event)
         .setup(move |app| {
             tray::install(app)?;
+
+            // Start serving now, not when the page first renders: peers can
+            // reach this computer even if the webview never loads, and a
+            // tray-launched app has no page to wait for.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = handle.state::<CliState>();
+                if let Err(e) = commands::launch_server(&handle, &state).await {
+                    eprintln!("[lanclave] server did not start: {e}");
+                }
+            });
 
             let mut ctx = presence_ctx;
             ctx.app_handle = Some(app.handle().clone());
