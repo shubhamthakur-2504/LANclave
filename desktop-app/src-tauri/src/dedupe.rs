@@ -154,14 +154,15 @@ pub async fn fingerprint_local(
     Ok(Some(Fingerprint { size, sha256, siblings }))
 }
 
-/// Before a pull: does our side already hold the peer's `remote_path`,
-/// under `local_path` or a numbered copy of it? Returns the local path.
+/// Before a pull: does our side already hold the peer's file (whose
+/// fingerprint route is `fingerprint_path`), under `local_path` or a
+/// numbered copy of it? Returns the local path.
 ///
 /// `known_remote_size` is the size from the peer's listing; with it, a
 /// size mismatch on every local candidate needs no network traffic at all.
 pub(crate) async fn local_copy_of(
     peer_addr: &str,
-    remote_path: &str,
+    fingerprint_path: &str,
     local_path: &Path,
     known_remote_size: Option<u64>,
     device_id: &str,
@@ -181,7 +182,7 @@ pub(crate) async fn local_copy_of(
     }
 
     // ---- Tier 2: digests ------------------------------------------------
-    let remote = transport::get_fingerprint(peer_addr, remote_path, Some(size), device_id, signing_key)
+    let remote = transport::get_fingerprint_at(peer_addr, fingerprint_path, Some(size), device_id, signing_key)
         .await
         .ok()??;
     let remote_sha = remote.sha256.filter(|_| remote.size == size)?;

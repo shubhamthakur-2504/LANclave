@@ -109,6 +109,9 @@ pub fn entry_for_local_transfer(
             entry.outcome = match report.outcome {
                 TransferOutcome::Transferred => Outcome::Completed,
                 TransferOutcome::AlreadyPresent => Outcome::Skipped,
+                // Callers do not log pauses; if one slips through, it did
+                // not finish.
+                TransferOutcome::Paused => Outcome::Cancelled,
             };
             if report.dest_name != entry.file_name {
                 entry.dest_name = Some(report.dest_name.clone());
@@ -162,6 +165,17 @@ impl PeerTransferLog {
                 e.dest_name = Some(name);
             }
         }
+    }
+}
+
+impl crate::range::ServeObserver for PeerTransferLog {
+    fn on_start(&mut self, _start: u64, len: u64) {
+        // A resumed pull sends only the tail; completing *that* completes it.
+        self.expected = Some(len);
+    }
+
+    fn add_bytes(&mut self, n: u64) {
+        PeerTransferLog::add_bytes(self, n);
     }
 }
 

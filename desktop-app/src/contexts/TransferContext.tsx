@@ -21,6 +21,12 @@ interface TransferContextState {
   startDownload: (peer: PeerInfo, file: FileEntry) => Promise<void>;
   startUpload: (peer: PeerInfo, localRelativePath: string, fileName: string, fileSize?: number) => Promise<void>;
   cancelTransfer: (id: string) => Promise<void>;
+  /** Stop a download, keeping what arrived. */
+  pauseTransfer: (id: string) => Promise<void>;
+  /** Continue a paused download from where it stopped. */
+  resumeTransfer: (id: string) => Promise<void>;
+  /** Drop a paused download and its partial file. */
+  discardTransfer: (id: string) => Promise<void>;
   /** Re-run a failed transfer using the details recorded when it started. */
   retryTransfer: (id: string) => Promise<void>;
 }
@@ -176,6 +182,17 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     listen<TransferProgressEvent>("transfer-progress", handleProgress).then(unsub => unlisteners.push(unsub));
     listen<TransferProgressEvent>("transfer-completed", handleCompleted).then(unsub => unlisteners.push(unsub));
     listen<TransferProgressEvent>("transfer-failed", handleFailed).then(unsub => unlisteners.push(unsub));
+    listen<TransferProgressEvent>("transfer-paused", (event) => {
+      const { id, bytes_transferred, total_bytes } = event.payload;
+      setTransfers((prev) =>
+        prev.map((t) =>
+          t.id === id
+            ? { ...t, status: "paused", speed: 0, progress: bytes_transferred, fileSize: total_bytes || t.fileSize }
+            : t,
+        ),
+      );
+      delete speedTrackerRef.current[id];
+    }).then(unsub => unlisteners.push(unsub));
 
     return () => {
       unlisteners.forEach(unsub => unsub());
@@ -367,9 +384,40 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     [startDownload, startUpload],
   );
 
+  const pauseTransfer = useCallback(async (id: string) => {
+    try {
+      await invoke("pause_transfer", { transferId: id });
+    } catch (err) {
+      console.error("Failed to pause transfer:", err);
+    }
+  }, []);
+
+  // Pulling the same file again finds the partial and continues from it.
+  const resumeTransfer = useCallback((id: string) => retryTransfer(id), [retryTransfer]);
+
+  const discardTransfer = useCallback(async (id: string) => {
+    const t = transfersRef.current.find((x) => x.id === id);
+    if (!t) return;
+    try {
+      await invoke("discard_partial", { localFilename: t.localPath ?? t.fileName });
+    } catch (err) {
+      console.error("Failed to discard partial download:", err);
+    }
+    setTransfers((prev) => prev.filter((x) => x.id !== id));
+  }, []);
+
   return (
     <TransferContext.Provider
-      value={{ transfers, startDownload, startUpload, cancelTransfer, retryTransfer }}
+      value={{
+        transfers,
+        startDownload,
+        startUpload,
+        cancelTransfer,
+        pauseTransfer,
+        resumeTransfer,
+        discardTransfer,
+        retryTransfer,
+      }}
     >
       {children}
     </TransferContext.Provider>

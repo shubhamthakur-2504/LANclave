@@ -1,15 +1,14 @@
 use axum::{
     extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode},
     response::Response,
     Json,
 };
 use std::sync::Arc;
 use tokio::{
     fs as tokio_fs,
-    io::{AsyncWriteExt, BufReader, BufWriter},
+    io::{AsyncWriteExt, BufWriter},
 };
-use tokio_util::io::ReaderStream;
 
 use crate::server::AppState;
 
@@ -65,32 +64,15 @@ pub async fn download_file(
     let path = crate::sandbox::verify_sandboxed_path(&sandbox_root, &requested_path)
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    let metadata = tokio_fs::metadata(&path)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-
-    if !metadata.is_file() {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
-    let file = tokio_fs::File::open(&path)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-
-    let content_length = metadata.len();
-    let content_type = mime_guess::from_path(&path)
-        .first_or_octet_stream()
-        .to_string();
-
     let filename = path
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or("file");
-    let content_disposition = format!("attachment; filename=\"{}\"", filename);
+        .unwrap_or("file")
+        .to_string();
 
     // Logged as "sent" once the body stream is dropped: complete if every
-    // byte went out, failed if the peer disconnected first.
-    let mut log = crate::history::PeerTransferLog::new(
+    // byte of this response went out, failed if the peer disconnected first.
+    let log = crate::history::PeerTransferLog::new(
         state.history.clone(),
         crate::history::HistoryEntry::new(
             crate::history::Direction::Sent,
@@ -100,31 +82,9 @@ pub async fn download_file(
             requested_path.clone(),
         ),
     );
-    log.expected = Some(content_length);
 
-    use futures_util::StreamExt;
-    let reader = BufReader::new(file);
-    let stream = ReaderStream::with_capacity(reader, 64 * 1024).map(move |chunk| {
-        if let Ok(bytes) = &chunk {
-            // A method call, not `log.bytes += ..`: edition-2021 closures
-            // capture only the fields they touch, which would move a copy of
-            // the counter in and leave the guard to drop -- and log a failed
-            // transfer -- the moment this handler returns.
-            log.add_bytes(bytes.len() as u64);
-        }
-        chunk
-    });
-    let body = axum::body::Body::from_stream(stream);
-
-    let response = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, content_type)
-        .header(header::CONTENT_LENGTH, content_length.to_string())
-        .header(header::CONTENT_DISPOSITION, content_disposition)
-        .body(body)
-        .unwrap();
-
-    Ok(response)
+    // Honours Range / If-Range, so an interrupted pull resumes.
+    crate::range::serve_file(&path, &headers, &filename, log).await
 }
 
 // ---------------------------------------------------------------------------
@@ -362,7 +322,7 @@ pub struct ListFileItem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::Request;
+    use axum::http::{header, Request};
     use bytes::Bytes;
     use tempfile::TempDir;
     use tower::ServiceExt;

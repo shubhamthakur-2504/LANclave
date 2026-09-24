@@ -48,7 +48,7 @@ pub struct CliState {
 }
 
 pub enum CancelHandle {
-    Pull(tokio::sync::oneshot::Sender<()>),
+    Pull(tokio::sync::oneshot::Sender<client::StopReason>),
     Push(std::sync::Arc<std::sync::atomic::AtomicBool>),
 }
 
@@ -534,13 +534,17 @@ pub async fn pull_file(
         .await;
 
         forget_transfer(&app, &transfer_id_clone);
-        history.record(crate::history::entry_for_local_transfer(
-            crate::history::Direction::Received,
-            peer_id,
-            peer_name,
-            remote_path,
-            &result,
-        ));
+        // A pause is not an ending: the resumed pull logs the outcome.
+        let paused = matches!(&result, Ok(r) if r.outcome == client::pull::TransferOutcome::Paused);
+        if !paused {
+            history.record(crate::history::entry_for_local_transfer(
+                crate::history::Direction::Received,
+                peer_id,
+                peer_name,
+                remote_path,
+                &result,
+            ));
+        }
     });
 
     Ok(transfer_id)
@@ -551,10 +555,37 @@ pub fn cancel_transfer(
     transfer_state: State<'_, TransferState>,
     transfer_id: String,
 ) {
-    if let Some(handle) = transfer_state.cancellations.write().unwrap().remove(&transfer_id) {
+    stop_transfer(&transfer_state, &transfer_id, client::StopReason::Cancel);
+}
+
+/// Stop a download but keep what arrived, so pulling the same file again
+/// resumes where it stopped. Uploads cannot resume, so pausing one cancels it.
+#[tauri::command]
+pub fn pause_transfer(
+    transfer_state: State<'_, TransferState>,
+    transfer_id: String,
+) {
+    stop_transfer(&transfer_state, &transfer_id, client::StopReason::Pause);
+}
+
+/// Throw away a paused download's partial file (the user chose Discard).
+#[tauri::command]
+pub async fn discard_partial(state: State<'_, CliState>, local_filename: String) -> Result<(), String> {
+    let sandbox_root = {
+        let settings = state.settings.read().map_err(|e| e.to_string())?;
+        PathBuf::from(&settings.sandbox_path)
+    };
+    let dest = sandbox::validate_sandboxed_path(&sandbox_root, &local_filename)
+        .map_err(|e| format!("invalid path: {e}"))?;
+    client::pull::discard_partial_for(&dest).await;
+    Ok(())
+}
+
+fn stop_transfer(transfer_state: &TransferState, transfer_id: &str, reason: client::StopReason) {
+    if let Some(handle) = transfer_state.cancellations.write().unwrap().remove(transfer_id) {
         match handle {
             CancelHandle::Pull(tx) => {
-                let _ = tx.send(());
+                let _ = tx.send(reason);
             }
             CancelHandle::Push(flag) => {
                 flag.store(true, std::sync::atomic::Ordering::Relaxed);

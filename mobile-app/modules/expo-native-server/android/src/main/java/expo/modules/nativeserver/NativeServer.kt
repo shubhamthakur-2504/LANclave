@@ -174,33 +174,18 @@ class NativeServer(
                         return handlePutFile(session, pathParam)
                     }
 
-                    if (isContentUri) {
-                        val treeUri = Uri.parse(rawSandboxPath)
-                        val documentFile = DocumentFile.fromTreeUri(context, treeUri)
-                        val childFile = documentFile?.findFile(pathParam)
-
-                        if (childFile == null || !childFile.exists() || childFile.isDirectory) {
-                            return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
-                        }
-
-                        val childUri = childFile.uri
-                        val inputStream = context.contentResolver.openInputStream(childUri)
-                            ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Could not open stream")
-
-                        val length = childFile.length()
-                        val logged = servedToPeer(session, pathParam, inputStream, length)
-                        val response = newFixedLengthResponse(Response.Status.OK, "application/octet-stream", logged, length)
-                        return response
+                    val served = if (isContentUri) {
+                        val tree = DocumentFile.fromTreeUri(context, Uri.parse(rawSandboxPath))
+                        tree?.findFile(pathParam)
+                            ?.takeIf { it.exists() && it.isFile }
+                            ?.let { ServedFile.of(context, it.uri, pathParam, it.length(), it.lastModified()) }
                     } else {
-                        val file = File(sandboxPath, pathParam)
-                        if (!file.exists() || file.isDirectory) {
-                            return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
-                        }
+                        ServedFile.of(File(sandboxPath, pathParam))
+                    } ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
 
-                        val length = file.length()
-                        val logged = servedToPeer(session, pathParam, FileInputStream(file), length)
-                        val response = newFixedLengthResponse(Response.Status.OK, "application/octet-stream", logged, length)
-                        return response
+                    // Honours Range / If-Range, so an interrupted pull resumes.
+                    return serveFile(session, served) { input, _, length ->
+                        servedToPeer(session, pathParam, input, length)
                     }
                 }
                 else -> {

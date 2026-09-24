@@ -8,6 +8,7 @@ mod fs_util;
 mod history;
 mod pairing;
 mod presence;
+mod range;
 mod sandbox;
 mod server;
 mod settings;
@@ -142,6 +143,8 @@ pub fn run() {
             commands::pull_file,
             commands::push_file,
             commands::cancel_transfer,
+            commands::pause_transfer,
+            commands::discard_partial,
             // History
             commands::get_transfer_history,
             commands::clear_transfer_history,

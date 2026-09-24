@@ -57,8 +57,8 @@ async fn start_server(
 }
 
 fn cancel_channel() -> (
-    tokio::sync::oneshot::Sender<()>,
-    tokio::sync::oneshot::Receiver<()>,
+    tokio::sync::oneshot::Sender<super::StopReason>,
+    tokio::sync::oneshot::Receiver<super::StopReason>,
 ) {
     tokio::sync::oneshot::channel()
 }
@@ -482,4 +482,135 @@ async fn pull_finds_identical_numbered_copy_locally() {
 
     assert_eq!(report.outcome, super::pull::TransferOutcome::AlreadyPresent);
     assert_eq!(report.dest_name, "notes (1).txt");
+}
+
+// ── Resume tests ─────────────────────────────────────────────────
+
+/// A partial download of `name` as the client leaves it: the first `have`
+/// bytes of `content`, plus the note naming the source and version.
+fn seed_partial(local_dir: &std::path::Path, name: &str, content: &[u8], have: usize, etag: &str) {
+    std::fs::write(local_dir.join(format!(".{name}.lanclave-part")), &content[..have]).unwrap();
+    let note = serde_json::json!({
+        "source": format!("/files/{name}"),
+        "etag": etag,
+        "size": content.len(),
+    });
+    std::fs::write(
+        local_dir.join(format!(".{name}.lanclave-part.json")),
+        serde_json::to_vec(&note).unwrap(),
+    )
+    .unwrap();
+}
+
+fn etag_of(path: &std::path::Path) -> String {
+    crate::range::etag(&std::fs::metadata(path).unwrap())
+}
+
+#[tokio::test]
+async fn range_request_returns_only_the_tail() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let dir = TempDir::new().unwrap();
+    let peer_addr = start_server(&dir, &[("r.bin", b"0123456789")]).await;
+    let etag = etag_of(&dir.path().join("r.bin"));
+
+    let res = super::transport::get_stream_at(&peer_addr, "/files/r.bin", Some((4, &etag)), &did, &key)
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 206);
+    assert_eq!(
+        res.headers().get("content-range").unwrap().to_str().unwrap(),
+        "bytes 4-9/10"
+    );
+    assert_eq!(res.bytes().await.unwrap().as_ref(), b"456789");
+
+    // A stale version tag voids the range: the whole file comes back.
+    let res = super::transport::get_stream_at(&peer_addr, "/files/r.bin", Some((4, "\"stale\"")), &did, &key)
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.bytes().await.unwrap().as_ref(), b"0123456789");
+}
+
+#[tokio::test]
+async fn pull_resumes_from_a_partial_file() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let content: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    let remote_dir = TempDir::new().unwrap();
+    let peer_addr = start_server(&remote_dir, &[("movie.bin", &content)]).await;
+    let etag = etag_of(&remote_dir.path().join("movie.bin"));
+
+    let local_dir = TempDir::new().unwrap();
+    seed_partial(local_dir.path(), "movie.bin", &content, 120_000, &etag);
+
+    let mut first_progress = None;
+    let (_tx, rx) = cancel_channel();
+    let report = super::pull_file_to_disk(
+        "t",
+        &peer_addr,
+        "movie.bin",
+        &local_dir.path().join("movie.bin"),
+        Some(content.len() as u64),
+        &did,
+        &key,
+        rx,
+        |e| {
+            if first_progress.is_none() && e.status == "in_progress" {
+                first_progress = Some(e.bytes_transferred);
+            }
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.outcome, super::pull::TransferOutcome::Transferred);
+    assert_eq!(first_progress, Some(120_000), "progress starts where the partial ended");
+    assert_eq!(std::fs::read(local_dir.path().join("movie.bin")).unwrap(), content);
+    assert!(!local_dir.path().join(".movie.bin.lanclave-part").exists());
+    assert!(!local_dir.path().join(".movie.bin.lanclave-part.json").exists());
+}
+
+#[tokio::test]
+async fn stale_partial_is_replaced_by_a_full_download() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let remote_dir = TempDir::new().unwrap();
+    let peer_addr = start_server(&remote_dir, &[("doc.txt", b"brand new contents")]).await;
+
+    // A partial left from an older version of the file.
+    let local_dir = TempDir::new().unwrap();
+    seed_partial(local_dir.path(), "doc.txt", b"old old old old old", 8, "\"old-version\"");
+
+    let (_tx, rx) = cancel_channel();
+    super::pull_file_to_disk(
+        "t", &peer_addr, "doc.txt", &local_dir.path().join("doc.txt"), None, &did, &key, rx, |_| {},
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(std::fs::read(local_dir.path().join("doc.txt")).unwrap(), b"brand new contents");
+}
+
+#[tokio::test]
+async fn complete_partial_is_just_renamed() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let remote_dir = TempDir::new().unwrap();
+    let peer_addr = start_server(&remote_dir, &[("done.txt", b"all here")]).await;
+    let etag = etag_of(&remote_dir.path().join("done.txt"));
+
+    // Every byte arrived last time; only the final rename was lost.
+    let local_dir = TempDir::new().unwrap();
+    seed_partial(local_dir.path(), "done.txt", b"all here", 8, &etag);
+
+    let (_tx, rx) = cancel_channel();
+    let report = super::pull_file_to_disk(
+        "t", &peer_addr, "done.txt", &local_dir.path().join("done.txt"), None, &did, &key, rx, |_| {},
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.dest_name, "done.txt");
+    assert_eq!(std::fs::read(local_dir.path().join("done.txt")).unwrap(), b"all here");
 }

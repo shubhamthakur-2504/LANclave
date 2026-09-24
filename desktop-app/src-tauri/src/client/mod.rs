@@ -4,7 +4,7 @@ pub(crate) mod push;
 #[cfg(test)]
 mod tests;
 
-pub use pull::pull_file_from_peer;
+pub use pull::{pull_file_from_peer, StopReason};
 #[cfg(test)]
 pub(crate) use pull::pull_file_to_disk;
 #[cfg(test)]

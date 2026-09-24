@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Download, FolderOpen, Loader2, RotateCcw, Upload, X } from "lucide-react";
+import { Check, ChevronDown, Download, FolderOpen, Loader2, Pause, RotateCcw, Upload, X } from "lucide-react";
 import * as api from "../../api";
 import EmptyState from "../ui/EmptyState";
 import { useToast } from "../ui/Toast";
@@ -98,6 +98,13 @@ function statusBadge(status: Transfer["status"], skipped?: boolean): React.React
           Active
         </span>
       );
+    case "paused":
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-content-muted/10 px-2 py-0.5 text-[11px] font-medium text-content-muted">
+          <Pause className="h-3 w-3" aria-hidden="true" />
+          Paused
+        </span>
+      );
     case "pending":
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-content-muted/10 px-2 py-0.5 text-[11px] font-medium text-content-muted">
@@ -112,7 +119,7 @@ export default function TransferListPanel({
   activeFilter,
   onFilterChange,
 }: TransferListPanelProps) {
-  const { cancelTransfer, retryTransfer } = useTransfers();
+  const { cancelTransfer, pauseTransfer, resumeTransfer, discardTransfer, retryTransfer } = useTransfers();
   const toast = useToast();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -120,7 +127,7 @@ export default function TransferListPanel({
     activeFilter === "all"
       ? transfers
       : activeFilter === "active"
-        ? transfers.filter((t) => t.status === "in_progress" || t.status === "pending")
+        ? transfers.filter((t) => t.status === "in_progress" || t.status === "pending" || t.status === "paused")
         : transfers.filter((t) => t.status === activeFilter);
 
   return (
@@ -196,7 +203,7 @@ export default function TransferListPanel({
                       </p>
                     )}
 
-                    {(t.status === "in_progress" || t.status === "pending") && (
+                    {(t.status === "in_progress" || t.status === "pending" || t.status === "paused") && (
                       <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-surface-active">
                         <div
                           className="h-full rounded-full bg-action transition-all duration-300"
@@ -230,7 +237,12 @@ export default function TransferListPanel({
                     <div className="mt-4 flex gap-2">
                       {t.status === "in_progress" && (
                         <>
-                          <button disabled className="flex-1 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content-faint transition-colors opacity-50 cursor-not-allowed" title="Pause requires HTTP Range support">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); pauseTransfer(t.id); }}
+                            disabled={t.direction === "upload"}
+                            title={t.direction === "upload" ? "Sending can't be paused yet" : "Stop for now and continue later"}
+                            className="flex-1 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active disabled:cursor-not-allowed disabled:opacity-40"
+                          >
                             Pause
                           </button>
                           <button 
@@ -238,6 +250,22 @@ export default function TransferListPanel({
                             className="flex-1 rounded-lg border border-danger-border px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger-bg"
                           >
                             Cancel
+                          </button>
+                        </>
+                      )}
+                      {t.status === "paused" && (
+                        <>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); resumeTransfer(t.id); }}
+                            className="flex-1 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active"
+                          >
+                            Resume
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); discardTransfer(t.id); }}
+                            className="flex-1 rounded-lg border border-danger-border px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger-bg"
+                          >
+                            Discard
                           </button>
                         </>
                       )}
