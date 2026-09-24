@@ -1,4 +1,4 @@
-mod transport;
+pub(crate) mod transport;
 pub(crate) mod pull;
 pub(crate) mod push;
 #[cfg(test)]

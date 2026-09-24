@@ -57,8 +57,9 @@ export async function pullFile(
   peerAddr: string,
   remotePath: string,
   localFilename: string,
+  remoteSize?: number,
 ): Promise<string> {
-  return await invoke("pull_file", { peerAddr, remotePath, localFilename });
+  return await invoke("pull_file", { peerAddr, remotePath, localFilename, remoteSize });
 }
 
 export async function pushFile(

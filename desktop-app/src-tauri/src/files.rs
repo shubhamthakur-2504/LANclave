@@ -244,6 +244,45 @@ pub async fn list_files_handler(
     Ok(Json(entries))
 }
 
+// ---------------------------------------------------------------------------
+// Fingerprint handler (on-demand dedupe, see `crate::dedupe`)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+pub struct FingerprintQuery {
+    /// The size the caller holds. When ours differs we answer without
+    /// hashing -- the files cannot be identical.
+    pub size: Option<u64>,
+}
+
+/// `GET /api/sandbox/fingerprint/{*path}` -- size and SHA-256 of one file.
+///
+/// Deliberately separate from the listing: hashing costs a full read, so it
+/// is paid only for the few files a peer cannot tell apart by name and size.
+pub async fn fingerprint_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(requested_path): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<FingerprintQuery>,
+) -> Result<Json<crate::dedupe::Fingerprint>, StatusCode> {
+    crate::pairing::check_request(&state.auth, &headers)
+        .map_err(|s| StatusCode::from_u16(s.code()).expect("valid HTTP status"))?;
+
+    let sandbox_root = {
+        let settings = state.settings.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        std::path::PathBuf::from(&settings.sandbox_path)
+    };
+
+    let path = crate::sandbox::verify_sandboxed_path(&sandbox_root, &requested_path)
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    match crate::dedupe::fingerprint_local(&path, query.size).await {
+        Ok(Some(fp)) => Ok(Json(fp)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
 /// Serializable file entry for the JSON list endpoint.
 #[derive(serde::Serialize)]
 pub struct ListFileItem {

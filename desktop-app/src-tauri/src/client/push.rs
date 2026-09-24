@@ -6,10 +6,14 @@ use tokio_util::io::ReaderStream;
 use tokio::sync::oneshot;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use crate::client::pull::TransferProgressEvent;
+use crate::client::pull::{TransferOutcome, TransferProgressEvent};
 
 /// Push (upload) a local file to a peer's sandbox at the given
 /// `remote_path`, reporting progress through `on_event`.
+///
+/// Asks the peer for a fingerprint first when it may already hold the file,
+/// and returns [`TransferOutcome::AlreadyPresent`] without sending a byte
+/// when it does (see `crate::dedupe`).
 pub(crate) async fn push_file_with_progress(
     transfer_id: &str,
     peer_addr: &str,
@@ -19,7 +23,21 @@ pub(crate) async fn push_file_with_progress(
     signing_key: &SigningKey,
     cancel_flag: Arc<AtomicBool>,
     mut on_event: impl FnMut(&TransferProgressEvent) + Send + 'static,
-) -> Result<(), ClientError> {
+) -> Result<TransferOutcome, ClientError> {
+    // ---- 0. Skip if the peer already holds an identical copy -------------
+    if crate::dedupe::peer_has_identical(
+        peer_addr,
+        remote_path,
+        local_path,
+        None,
+        device_id,
+        signing_key,
+    )
+    .await
+    {
+        return Ok(TransferOutcome::AlreadyPresent);
+    }
+
     // ---- 1. Open the local file and get its size -------------------------
     let file = tokio::fs::File::open(local_path)
         .await
@@ -74,7 +92,7 @@ pub(crate) async fn push_file_with_progress(
     // ---- 4. Map the response ---------------------------------------------
     match status_result {
         Ok(status) if status.is_success() => {
-            Ok(())
+            Ok(TransferOutcome::Transferred)
         }
         Ok(status) => {
             Err(ClientError::ServerRejected(status.as_u16()))
@@ -95,7 +113,7 @@ pub async fn push_file_to_peer(
     remote_path: &str,
     device_id: &str,
     signing_key: &SigningKey,
-) -> Result<(), ClientError> {
+) -> Result<TransferOutcome, ClientError> {
     push_file_with_progress(
         "legacy-push",
         peer_addr,
@@ -119,7 +137,7 @@ pub async fn push_file_to_peer_managed(
     device_id: &str,
     signing_key: &SigningKey,
     cancel_flag: Arc<AtomicBool>,
-) -> Result<(), ClientError> {
+) -> Result<TransferOutcome, ClientError> {
     use tauri::Emitter;
 
     let app_clone = app.clone();
@@ -143,13 +161,17 @@ pub async fn push_file_to_peer_managed(
     .await;
     
     // Ensure final event is sent
-    let final_status = if res.is_ok() { "completed" } else { "failed" };
+    let final_status = match res {
+        Ok(TransferOutcome::Transferred) => "completed",
+        Ok(TransferOutcome::AlreadyPresent) => "skipped",
+        Err(_) => "failed",
+    };
     let metadata = tokio::fs::metadata(local_path).await;
     let total_bytes = metadata.map(|m| m.len()).unwrap_or(0);
     
     let _ = app.emit(
         match final_status {
-            "completed" => "transfer-completed",
+            "completed" | "skipped" => "transfer-completed",
             _ => "transfer-failed",
         },
         TransferProgressEvent {

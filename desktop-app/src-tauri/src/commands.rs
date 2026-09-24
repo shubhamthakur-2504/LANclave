@@ -472,6 +472,9 @@ pub async fn pull_file(
     peer_addr: String,
     remote_path: String,
     local_filename: String,
+    // Size from the peer's listing. Lets an existing local file of a
+    // different size rule out a duplicate without asking the peer.
+    remote_size: Option<u64>,
 ) -> Result<String, String> {
     let safe_path = {
         let settings = state.settings.read().map_err(|e| e.to_string())?;
@@ -501,6 +504,7 @@ pub async fn pull_file(
             &peer_addr,
             &remote_path,
             &safe_path,
+            remote_size,
             &device_id,
             &identity_key,
             cancel_rx,

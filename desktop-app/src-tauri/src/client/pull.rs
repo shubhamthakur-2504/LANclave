@@ -21,8 +21,21 @@ pub struct TransferProgressEvent {
     pub message: Option<String>,
 }
 
+/// How a transfer that returned `Ok` ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferOutcome {
+    Transferred,
+    /// The destination already held an identical copy; nothing was sent.
+    AlreadyPresent,
+}
+
 /// Stream a file from `peer_addr` into `local_save_path`, reporting progress
 /// through `on_event`.
+///
+/// `remote_size` is the size from the peer's listing, when known. If a local
+/// file with that name and size already exists, it is compared by digest
+/// first and the download is skipped when they match (see `crate::dedupe`).
+/// A skip is reported with status `"skipped"`.
 ///
 /// This is the transport-level implementation and is intentionally free of
 /// Tauri types so the test suite can exercise it directly without an
@@ -32,11 +45,48 @@ pub(crate) async fn pull_file_to_disk(
     peer_addr: &str,
     remote_path: &str,
     local_save_path: &Path,
+    remote_size: Option<u64>,
     device_id: &str,
     signing_key: &SigningKey,
     mut cancel_rx: oneshot::Receiver<()>,
     mut on_event: impl FnMut(&TransferProgressEvent),
-) -> Result<(), ClientError> {
+) -> Result<TransferOutcome, ClientError> {
+    // ---- 0. Skip if we already hold an identical copy --------------------
+    let identical = tokio::select! {
+        _ = &mut cancel_rx => {
+            on_event(&TransferProgressEvent {
+                id: transfer_id.to_string(),
+                bytes_transferred: 0,
+                total_bytes: remote_size.unwrap_or(0),
+                status: "failed".to_string(),
+                message: None,
+            });
+            return Err(ClientError::IoError("Transfer cancelled".into()));
+        }
+        same = crate::dedupe::peer_has_identical(
+            peer_addr,
+            remote_path,
+            local_save_path,
+            remote_size,
+            device_id,
+            signing_key,
+        ) => same,
+    };
+    if identical {
+        let size = tokio_fs::metadata(local_save_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        on_event(&TransferProgressEvent {
+            id: transfer_id.to_string(),
+            bytes_transferred: size,
+            total_bytes: size,
+            status: "skipped".to_string(),
+            message: None,
+        });
+        return Ok(TransferOutcome::AlreadyPresent);
+    }
+
     // ---- 1. Request the stream from the peer -----------------------------
     let response = transport::get_stream(peer_addr, remote_path, device_id, signing_key).await?;
 
@@ -143,7 +193,7 @@ pub(crate) async fn pull_file_to_disk(
         message: None,
     });
 
-    Ok(())
+    Ok(TransferOutcome::Transferred)
 }
 
 /// Tauri-facing wrapper around [`pull_file_to_disk`] that re-emits progress
@@ -154,10 +204,11 @@ pub async fn pull_file_from_peer(
     peer_addr: &str,
     remote_path: &str,
     local_save_path: &Path,
+    remote_size: Option<u64>,
     device_id: &str,
     signing_key: &SigningKey,
     cancel_rx: oneshot::Receiver<()>,
-) -> Result<(), ClientError> {
+) -> Result<TransferOutcome, ClientError> {
     use tauri::Emitter;
 
     pull_file_to_disk(
@@ -165,13 +216,14 @@ pub async fn pull_file_from_peer(
         peer_addr,
         remote_path,
         local_save_path,
+        remote_size,
         device_id,
         signing_key,
         cancel_rx,
         |event| {
             let event_name = match event.status.as_str() {
                 "in_progress" => "transfer-progress",
-                "completed" => "transfer-completed",
+                "completed" | "skipped" => "transfer-completed",
                 _ => "transfer-failed",
             };
             let _ = app.emit(event_name, (*event).clone());

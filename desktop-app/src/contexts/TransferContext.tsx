@@ -8,6 +8,7 @@ interface TransferProgressEvent {
   id: string;
   bytes_transferred: number;
   total_bytes: number;
+  /** "skipped" when the destination already had an identical copy. */
   status: string;
   /** Present only on failure. */
   message?: string;
@@ -46,7 +47,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
   const speedTrackerRef = useRef<Record<string, { lastBytes: number; lastTime: number }>>({});
   
   // Track events that fire before the `invoke` promise resolves
-  const earlyEventsRef = useRef<Record<string, { status: TransferStatus; bytes: number; total: number }>>({});
+  const earlyEventsRef = useRef<Record<string, { status: TransferStatus; bytes: number; total: number; skipped?: boolean }>>({});
 
   // A finished transfer is announced with a toast so the Transfers page is
   // somewhere you go to look at detail, not somewhere you have to sit and
@@ -60,9 +61,14 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
 
   /** Name the file and the peer -- "done" alone is not worth interrupting for. */
   const announceFinished = useCallback(
-    (t: Transfer | undefined) => {
+    (t: Transfer | undefined, skipped = false) => {
       if (!t) {
-        toast.success("Transfer complete.");
+        toast.success(skipped ? "Already up to date." : "Transfer complete.");
+        return;
+      }
+      if (skipped) {
+        const where = t.direction === "download" ? "You already have" : `${t.peerName} already has`;
+        toast.info(`${where} ${t.fileName}.`, "Identical copy, nothing sent");
         return;
       }
       const verb = t.direction === "download" ? "Saved" : "Sent";
@@ -118,18 +124,19 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     };
 
     const handleCompleted = (event: { payload: TransferProgressEvent }) => {
-      const { id, bytes_transferred, total_bytes } = event.payload;
+      const { id, bytes_transferred, total_bytes, status } = event.payload;
+      const skipped = status === "skipped";
       cancelledRef.current.delete(id);
-      announceFinished(transfersRef.current.find((t) => t.id === id));
+      announceFinished(transfersRef.current.find((t) => t.id === id), skipped);
       setTransfers((prev) => {
         const exists = prev.some((t) => t.id === id);
         if (!exists) {
-          earlyEventsRef.current[id] = { status: "completed", bytes: bytes_transferred, total: total_bytes };
+          earlyEventsRef.current[id] = { status: "completed", bytes: bytes_transferred, total: total_bytes, skipped };
           return prev;
         }
         return prev.map((t) => 
           t.id === id 
-            ? { ...t, progress: bytes_transferred, fileSize: total_bytes, status: "completed", speed: 0 } 
+            ? { ...t, progress: bytes_transferred, fileSize: total_bytes, status: "completed", speed: 0, skipped } 
             : t
         );
       });
@@ -195,6 +202,8 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         peerAddr: peer.addr,
         remotePath: file.name, // Remote path is just the filename for now
         localFilename: file.name,
+        // Lets the backend rule out a duplicate by size before asking the peer.
+        remoteSize: file.size > 0 ? file.size : null,
       });
 
       // Check if we already received events for this transferId before the promise resolved
@@ -213,6 +222,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
               status: earlyEvent ? earlyEvent.status : "in_progress",
               progress: earlyEvent ? earlyEvent.bytes : t.progress,
               fileSize: earlyEvent && earlyEvent.total > 0 ? earlyEvent.total : t.fileSize,
+              skipped: earlyEvent?.skipped,
             };
           }
           return t;
@@ -224,7 +234,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
       if (earlyEvent) {
         const finished = { ...newTransfer, id: transferId };
         if (earlyEvent.status === "completed") {
-          announceFinished(finished);
+          announceFinished(finished, earlyEvent.skipped);
         } else if (earlyEvent.status === "failed") {
           toast.error("Transfer failed", peer.device_name);
         }
@@ -290,6 +300,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
               status: earlyEvent ? earlyEvent.status : "in_progress",
               progress: earlyEvent ? earlyEvent.bytes : t.progress,
               fileSize: earlyEvent && earlyEvent.total > 0 ? earlyEvent.total : t.fileSize,
+              skipped: earlyEvent?.skipped,
             };
           }
           return t;
@@ -301,7 +312,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
       if (earlyEvent) {
         const finished = { ...newTransfer, id: transferId };
         if (earlyEvent.status === "completed") {
-          announceFinished(finished);
+          announceFinished(finished, earlyEvent.skipped);
         } else if (earlyEvent.status === "failed") {
           toast.error("Transfer failed", peer.device_name);
         }

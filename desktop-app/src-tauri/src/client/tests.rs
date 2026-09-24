@@ -78,6 +78,7 @@ async fn pull_small_file_success() {
         &peer_addr,
         "hello.txt",
         &save_path,
+        None,
         &did,
         &key,
         rx,
@@ -104,6 +105,7 @@ async fn pull_peer_404_no_local_file_created() {
         &peer_addr,
         "nope.txt",
         &save_path,
+        None,
         &did,
         &key,
         rx,
@@ -130,7 +132,10 @@ async fn pull_large_file_success() {
     let big = vec![0xAAu8; 100_000];
     let peer_addr = start_server(&dir, &[("big.bin", &big)]).await;
 
-    let save_path = dir.path().join("big.bin");
+    // A separate directory: saving over the served file would now be
+    // recognised as a duplicate and skipped, and this test is about transfer.
+    let local_dir = TempDir::new().unwrap();
+    let save_path = local_dir.path().join("big.bin");
     let (_tx, rx) = cancel_channel();
 
     let result = super::pull_file_to_disk(
@@ -138,6 +143,7 @@ async fn pull_large_file_success() {
         &peer_addr,
         "big.bin",
         &save_path,
+        None,
         &did,
         &key,
         rx,
@@ -235,8 +241,11 @@ async fn push_file_exceeds_peer_limit_returns_413() {
 
 // ── Wire-format tests ────────────────────────────────────────────
 
-/// Accept one connection, capture the request head, drain the body, and
-/// answer `201 Created`. Returns the head as a string.
+/// Accept connections until a PUT arrives, capture its request head, drain
+/// the body, and answer `201 Created`. Returns the head as a string.
+///
+/// The dedupe probe (`GET /api/sandbox/fingerprint/...`) comes first; it is
+/// answered 404 and closed, as an older peer would.
 ///
 /// The Axum server in the tests above accepts either framing, so it cannot
 /// catch a missing `Content-Length`. The phone's NanoHTTPD cannot: it reads
@@ -244,18 +253,27 @@ async fn push_file_exceeds_peer_limit_returns_413() {
 async fn capture_push_head(listener: tokio::net::TcpListener) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let (mut sock, _) = listener.accept().await.unwrap();
-    let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
+    let (mut sock, buf) = loop {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = Vec::new();
 
-    // Read until the blank line that ends the head.
-    while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
-        let n = sock.read(&mut chunk).await.unwrap();
-        if n == 0 {
-            break;
+        // Read until the blank line that ends the head.
+        while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = sock.read(&mut chunk).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
         }
-        buf.extend_from_slice(&chunk[..n]);
-    }
+
+        if buf.starts_with(b"PUT ") {
+            break (sock, buf);
+        }
+        let _ = sock
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await;
+    };
     let head_end = buf
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
@@ -308,4 +326,106 @@ async fn push_sends_content_length_not_chunked() {
         !head.contains("transfer-encoding: chunked"),
         "push must not use chunked framing. Head was:\n{head}"
     );
+}
+
+// ── Dedupe tests ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn fingerprint_endpoint_hashes_only_on_size_match() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let dir = TempDir::new().unwrap();
+    let peer_addr = start_server(&dir, &[("abc.txt", b"abc")]).await;
+
+    let fp = super::transport::get_fingerprint(&peer_addr, "abc.txt", Some(3), &did, &key)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fp.size, 3);
+    assert_eq!(
+        fp.sha256.as_deref(),
+        Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    );
+
+    let fp = super::transport::get_fingerprint(&peer_addr, "abc.txt", Some(99), &did, &key)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fp.size, 3);
+    assert_eq!(fp.sha256, None, "size mismatch must not pay for a hash");
+
+    let missing = super::transport::get_fingerprint(&peer_addr, "nope.txt", None, &did, &key)
+        .await
+        .unwrap();
+    assert!(missing.is_none());
+}
+
+#[tokio::test]
+async fn pull_skips_identical_local_copy() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let remote_dir = TempDir::new().unwrap();
+    let peer_addr = start_server(&remote_dir, &[("same.bin", b"same bytes")]).await;
+
+    let local_dir = TempDir::new().unwrap();
+    let save_path = local_dir.path().join("same.bin");
+    std::fs::write(&save_path, b"same bytes").unwrap();
+
+    let mut statuses = Vec::new();
+    let (_tx, rx) = cancel_channel();
+    let outcome = super::pull_file_to_disk(
+        "t",
+        &peer_addr,
+        "same.bin",
+        &save_path,
+        Some(10),
+        &did,
+        &key,
+        rx,
+        |e| statuses.push(e.status.clone()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome, super::pull::TransferOutcome::AlreadyPresent);
+    assert_eq!(statuses, vec!["skipped".to_string()]);
+}
+
+#[tokio::test]
+async fn pull_same_size_different_content_still_downloads() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let remote_dir = TempDir::new().unwrap();
+    let peer_addr = start_server(&remote_dir, &[("doc.txt", b"version B")]).await;
+
+    let local_dir = TempDir::new().unwrap();
+    let save_path = local_dir.path().join("doc.txt");
+    std::fs::write(&save_path, b"version A").unwrap();
+
+    let (_tx, rx) = cancel_channel();
+    let outcome = super::pull_file_to_disk(
+        "t", &peer_addr, "doc.txt", &save_path, Some(9), &did, &key, rx, |_| {},
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome, super::pull::TransferOutcome::Transferred);
+    assert_eq!(std::fs::read(&save_path).unwrap(), b"version B");
+}
+
+#[tokio::test]
+async fn push_skips_when_peer_has_identical_copy() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let remote_dir = TempDir::new().unwrap();
+    let peer_addr = start_server(&remote_dir, &[("photo.jpg", b"jpeg bytes")]).await;
+
+    let local_dir = TempDir::new().unwrap();
+    let src_path = local_dir.path().join("photo.jpg");
+    std::fs::write(&src_path, b"jpeg bytes").unwrap();
+
+    let outcome = crate::client::push_file_to_peer(&peer_addr, &src_path, "photo.jpg", &did, &key)
+        .await
+        .unwrap();
+    assert_eq!(outcome, super::pull::TransferOutcome::AlreadyPresent);
 }

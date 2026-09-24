@@ -1,4 +1,5 @@
 mod client;
+mod dedupe;
 mod commands;
 mod discovery;
 mod file_ops;

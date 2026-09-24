@@ -16,6 +16,17 @@ declare class ExpoNativeServerModule extends NativeModule {
   getPresence(): NativePresenceEntry[];
   /** URIs from an Android share intent; consumed on read. */
   consumeSharedUris(): string[];
+  /**
+   * Dedupe: size of `name` in our sandbox and, when it equals `expectedSize`,
+   * its SHA-256. Null when absent. Android only.
+   */
+  sandboxFileFingerprint(
+    sandboxPath: string,
+    name: string,
+    expectedSize: number | null,
+  ): Promise<{ size: number; sha256: string | null } | null>;
+  /** SHA-256 of a local `content://` or `file://` URI. Android only. */
+  uriSha256(uri: string): Promise<string>;
   stopServer(): void;
   updatePairedDevices(devices: string[]): void;
 }

@@ -170,6 +170,10 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
             axum::routing::get(crate::files::list_files_handler),
         )
         .route(
+            "/api/sandbox/fingerprint/{*path}",
+            axum::routing::get(crate::files::fingerprint_handler),
+        )
+        .route(
             "/api/pairing/request",
             axum::routing::post(pairing_request_handler),
         )

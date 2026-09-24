@@ -4,6 +4,7 @@ import type { DownloadTask, UploadTask } from 'expo-file-system';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 import { getAuthHeaders } from '@/services/identity';
 import { getSettings } from '@/services/settings';
+import { haveIdenticalLocalCopy, peerHasIdenticalCopy } from '@/services/dedupe';
 
 export type TransferStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 export type TransferDirection = 'download' | 'upload';
@@ -18,6 +19,8 @@ export interface Transfer {
   status: TransferStatus;
   speed: number; // bytes per second
   startedAt: string;
+  /** Completed without sending anything: the destination already had an identical copy. */
+  skipped?: boolean;
 }
 
 export interface SelectedPeer {
@@ -78,6 +81,18 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
     });
 
     try {
+      // Checked before creating the destination: on SAF, createFileAsync on
+      // an existing name would leave a stray "name (1)" behind.
+      if (await haveIdenticalLocalCopy(`${peer.ip}:${peer.port}`, fileName, fileSize)) {
+        setTransfers(prev => prev.map(t =>
+          t.id === transferId
+            ? { ...t, status: 'completed', skipped: true, progress: fileSize, speed: 0 }
+            : t
+        ));
+        onComplete?.();
+        return;
+      }
+
       const encodedPath = fileName.split('/').map(encodeURIComponent).join('/');
       const url = `http://${peer.ip}:${peer.port}/files/${encodedPath}`;
       const headers = await getAuthHeaders();
@@ -181,6 +196,16 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
     });
 
     try {
+      if (await peerHasIdenticalCopy(`${peer.ip}:${peer.port}`, localUri, remoteFileName, fileSize)) {
+        setTransfers(prev => prev.map(t =>
+          t.id === transferId
+            ? { ...t, status: 'completed', skipped: true, progress: fileSize, speed: 0 }
+            : t
+        ));
+        onComplete?.();
+        return;
+      }
+
       const encodedPath = remoteFileName.split('/').map(encodeURIComponent).join('/');
       const url = `http://${peer.ip}:${peer.port}/files/${encodedPath}`;
       const headers = await getAuthHeaders();

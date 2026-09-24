@@ -127,6 +127,9 @@ class NativeServer(
 
                     return newFixedLengthResponse(Response.Status.OK, "application/json", filesArray.toString())
                 }
+                uri.startsWith("/api/sandbox/fingerprint/") && method == Method.GET -> {
+                    return handleFingerprint(session, uri.substring("/api/sandbox/fingerprint/".length))
+                }
                 uri.startsWith("/files/") -> {
                     val pathParam = uri.substring("/files/".length)
                     if (pathParam.contains("..") || pathParam.contains("/") || pathParam.isEmpty()) {
@@ -235,6 +238,26 @@ class NativeServer(
         ack.put("device_id", deviceId)
         ack.put("device_name", deviceName)
         return newFixedLengthResponse(Response.Status.OK, "application/json", ack.toString())
+    }
+
+    /**
+     * `GET /api/sandbox/fingerprint/{name}?size=N` -- size and SHA-256 of one
+     * file, for dedupe. With `size`, a mismatch is answered without hashing.
+     * Same wire format as the desktop's handler.
+     */
+    private fun handleFingerprint(session: IHTTPSession, name: String): Response {
+        if (name.contains("..") || name.contains("/") || name.isEmpty()) {
+            return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
+        }
+        val expectedSize = session.parameters["size"]?.firstOrNull()?.toLongOrNull()
+
+        val result = Fingerprint.ofSandboxFile(context, rawSandboxPath, name, expectedSize)
+            ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
+
+        val json = JSONObject()
+        json.put("size", result.size)
+        json.put("sha256", result.sha256 ?: JSONObject.NULL)
+        return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
     }
 
     private fun handlePutFile(session: IHTTPSession, pathParam: String): Response {

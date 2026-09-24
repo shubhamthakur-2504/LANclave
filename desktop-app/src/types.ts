@@ -40,6 +40,9 @@ export interface Transfer {
   status: TransferStatus;
   speed: number;
   startedAt: string;
+  /** Completed without sending anything: the destination already had an
+   *  identical copy. */
+  skipped?: boolean;
   /** Why it failed, for the failure state. Absent unless status is failed. */
   error?: string;
   /** Kept so a failed transfer can be retried without re-picking anything. */

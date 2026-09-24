@@ -64,7 +64,18 @@ function calcEta(transfer: Transfer): string {
   return `~${Math.round(seconds / 60)}m remaining`;
 }
 
-function statusBadge(status: Transfer["status"]): React.ReactNode {
+function statusBadge(status: Transfer["status"], skipped?: boolean): React.ReactNode {
+  if (status === "completed" && skipped) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-full bg-content-muted/10 px-2 py-0.5 text-[11px] font-medium text-content-muted"
+        title="The destination already had an identical copy, so nothing was sent."
+      >
+        <Check className="h-3 w-3" strokeWidth={2.5} aria-hidden="true" />
+        Already there
+      </span>
+    );
+  }
   switch (status) {
     case "completed":
       return (
@@ -167,7 +178,7 @@ export default function TransferListPanel({
                       <span className="truncate text-sm font-medium text-content">
                         {t.fileName}
                       </span>
-                      {statusBadge(t.status)}
+                      {statusBadge(t.status, t.skipped)}
                     </div>
                     <div className="mt-1 flex items-center justify-between text-xs text-content-faint">
                       <span className="truncate">

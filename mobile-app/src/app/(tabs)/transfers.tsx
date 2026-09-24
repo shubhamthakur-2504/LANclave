@@ -76,7 +76,7 @@ export default function TransfersScreen() {
                     item.status === 'completed' && styles.statusCompleted,
                     item.status === 'failed' && styles.statusFailed,
                   ]}>
-                    {item.status.replace('_', ' ').toUpperCase()}
+                    {item.skipped ? 'ALREADY THERE' : item.status.replace('_', ' ').toUpperCase()}
                   </Text>
                 </View>
 

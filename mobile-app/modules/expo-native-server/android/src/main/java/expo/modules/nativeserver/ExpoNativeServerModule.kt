@@ -102,6 +102,24 @@ class ExpoNativeServerModule : Module() {
       uris.map { it.toString() }
     }
 
+    /**
+     * Dedupe, client side: size and (when it matches `expectedSize`) SHA-256
+     * of a file in our own sandbox. Null when the file is absent.
+     */
+    AsyncFunction("sandboxFileFingerprint") { sandboxPath: String, name: String, expectedSize: Double? ->
+      if (name.contains("..") || name.contains("/") || name.isEmpty()) return@AsyncFunction null
+      val context = appContext.reactContext ?: throw Exception("React context is null")
+      val result = Fingerprint.ofSandboxFile(context, sandboxPath, name, expectedSize?.toLong())
+        ?: return@AsyncFunction null
+      mapOf("size" to result.size.toDouble(), "sha256" to result.sha256)
+    }
+
+    /** SHA-256 of a local file about to be pushed, e.g. a picked content:// URI. */
+    AsyncFunction("uriSha256") { uri: String ->
+      val context = appContext.reactContext ?: throw Exception("React context is null")
+      Fingerprint.ofUri(context, uri)
+    }
+
     /** Inbound presence recorded by the server. Local read, no network. */
     Function("getPresence") {
       PresenceRegistry.snapshot()
