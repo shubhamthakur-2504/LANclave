@@ -24,6 +24,7 @@ import {
 } from "@/services/share";
 import { uploadRemoteFile } from "@/services/peer-api";
 import { recordTransfer } from "@/services/history";
+import { offerFiles } from "@/contexts/OffersContext";
 import { unpairPeer } from "@/services/pairing";
 import {
   getPeerPresence,
@@ -97,6 +98,26 @@ export default function PairedPeersScreen() {
       const addr = `${peer.ip}:${peer.port}`;
       let sent = 0;
 
+      // One offer for everything shared: one prompt on the other side.
+      try {
+        const offerId = await offerFiles(peer, shares);
+        if (offerId) {
+          clearPendingShares();
+          setShares([]);
+          Alert.alert(
+            "Offered",
+            `${shares.length} file${shares.length === 1 ? "" : "s"} offered to ${peer.name}. They'll be sent once accepted.`,
+          );
+          setSendingTo(null);
+          return;
+        }
+      } catch (err) {
+        Alert.alert("Couldn't send", err instanceof Error ? err.message : String(err));
+        setSendingTo(null);
+        return;
+      }
+
+      // A peer from before offers: upload them the old way.
       try {
         for (const share of shares) {
           try {

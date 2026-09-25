@@ -2,7 +2,7 @@ import ExpoNativeServerModule from "../../modules/expo-native-server/src/ExpoNat
 import { getOrCreateDeviceIdentity } from "./identity";
 import { getSettings } from "./settings";
 import { getPairedPeers } from "./pairing";
-import { Platform } from "react-native";
+import { PermissionsAndroid, Platform } from "react-native";
 import Zeroconf from "react-native-zeroconf";
 import { startPresence, stopPresence } from "./presence";
 
@@ -73,6 +73,7 @@ function startWatchdog(): void {
       const peers = await getPairedPeers();
       const pairedDevices = peers.map(p => p.id);
 
+      ExpoNativeServerModule.setIdentity(identity.deviceId, identity.privateKey);
       ExpoNativeServerModule.startServer(PORT, identity.deviceId, settings.displayName, settings.sandboxPath, pairedDevices);
     } catch (err: unknown) {
       console.warn("[watchdog] Restart failed:", err);
@@ -101,6 +102,9 @@ export async function startServer(): Promise<void> {
   const pairedDevices = peers.map(p => p.id);
 
   try {
+    // Native transfers sign their own requests (so a late resume is never
+    // refused for a stale signature); the key stays in memory there.
+    ExpoNativeServerModule.setIdentity(identity.deviceId, identity.privateKey);
     ExpoNativeServerModule.startServer(PORT, identity.deviceId, settings.displayName, settings.sandboxPath, pairedDevices);
     console.log(`[server] Native Server started on port ${PORT}`);
   } catch (err: unknown) {
@@ -108,6 +112,9 @@ export async function startServer(): Promise<void> {
   }
 
   startWatchdog();
+  // The transfer notification needs this on Android 13+. Asked once; a
+  // refusal only hides the notification, transfers still run.
+  PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS).catch(() => {});
   // Announce to paired peers and start the per-peer heartbeat.
   startPresence();
   advertise(identity.deviceId, settings.displayName);

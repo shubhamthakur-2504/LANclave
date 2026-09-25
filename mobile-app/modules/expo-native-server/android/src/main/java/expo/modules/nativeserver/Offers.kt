@@ -322,7 +322,10 @@ object Offers {
             runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             val id = UUID.randomUUID().toString().replace("-", "")
             val name = safeFileName(f.getString("name")) ?: throw IllegalArgumentException("Unsafe name: ${f.getString("name")}")
-            offerFiles.add(OfferFile(id, name, f.getLong("size"), modifiedOf(ctx, uri)))
+            // Pickers and shares do not always say how big a file is.
+            val size = f.optLong("size").takeIf { it > 0 } ?: sizeOf(ctx, uri)
+                ?: throw IllegalArgumentException("Cannot read the size of $name")
+            offerFiles.add(OfferFile(id, name, size, modifiedOf(ctx, uri)))
             uris[id] = uri
         }
 
@@ -339,6 +342,12 @@ object Offers {
         changed()
         return offer.id
     }
+
+    private fun sizeOf(ctx: Context, uri: Uri): Long? = runCatching {
+        ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)?.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getLong(0).takeIf { it > 0 } else null
+        }
+    }.getOrNull()
 
     private fun modifiedOf(ctx: Context, uri: Uri): Long? = runCatching {
         ctx.contentResolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED), null, null, null)?.use { c ->

@@ -4,6 +4,8 @@ import * as SplashScreen from 'expo-splash-screen';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { TransferProvider } from '@/contexts/TransferContext';
 import { IncomingPairingHost } from '@/components/IncomingPairingHost';
+import { IncomingOfferHost } from '@/components/IncomingOfferHost';
+import { OffersProvider } from '@/contexts/OffersContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -15,6 +17,7 @@ SplashScreen.preventAutoHideAsync();
 export default function RootLayout() {
   return (
     <TransferProvider>
+      <OffersProvider>
       <AnimatedSplashOverlay />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -22,6 +25,9 @@ export default function RootLayout() {
       </Stack>
       {/* Pairing started on another device can arrive on any screen. */}
       <IncomingPairingHost />
+      {/* So is an offer of files. */}
+      <IncomingOfferHost />
+      </OffersProvider>
     </TransferProvider>
   );
 }

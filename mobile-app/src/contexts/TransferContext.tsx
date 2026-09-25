@@ -1,4 +1,7 @@
-import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
+import { Alert, Platform } from 'react-native';
+import { offerFiles } from '@/contexts/OffersContext';
+import ExpoNativeServerModule, { type NativeTransfer } from '../../modules/expo-native-server/src/ExpoNativeServerModule';
 import { File, Directory } from 'expo-file-system';
 import type { DownloadTask, UploadTask } from 'expo-file-system';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
@@ -7,7 +10,7 @@ import { getSettings } from '@/services/settings';
 import { localCopyOf, numberedName, peerCopyOf } from '@/services/dedupe';
 import { peerIdForAddress, recordTransfer, type HistoryOutcome } from '@/services/history';
 
-export type TransferStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+export type TransferStatus = 'pending' | 'in_progress' | 'verifying' | 'paused' | 'completed' | 'failed';
 export type TransferDirection = 'download' | 'upload';
 
 export interface Transfer {
@@ -27,6 +30,41 @@ export interface Transfer {
    * (saved as "name (1).ext") or an identical copy lives under another name.
    */
   destName?: string;
+  /** Peer address and remote name, so a screen can find its file's row. */
+  peerAddr?: string;
+  remoteName?: string;
+  /** Downloads run in the native engine, which can pause and resume them. */
+  native?: boolean;
+  /** Why it stopped or is waiting ("Paused by sender", "Waiting for network", errors). */
+  message?: string;
+  /** Set when the download is a file of an accepted offer. */
+  offerId?: string;
+}
+
+/** A native job as a transfer row. */
+function fromNative(job: NativeTransfer, prev?: Transfer): Transfer {
+  const status: TransferStatus =
+    job.status === 'queued' ? 'pending'
+    : job.status === 'skipped' ? 'completed'
+    : job.status;
+  return {
+    id: job.id,
+    fileName: job.fileName,
+    fileSize: job.total || prev?.fileSize || 0,
+    peerName: job.peerName ?? prev?.peerName ?? 'Unknown device',
+    direction: 'download',
+    progress: job.bytes,
+    status,
+    speed: prev?.speed ?? 0,
+    startedAt: prev?.startedAt ?? new Date().toISOString(),
+    skipped: job.status === 'skipped',
+    destName: job.destName ?? undefined,
+    peerAddr: prev?.peerAddr,
+    remoteName: prev?.remoteName ?? job.fileName,
+    native: true,
+    message: job.pausedBySender ? 'Paused by sender' : job.message ?? undefined,
+    offerId: job.offerId ?? undefined,
+  };
 }
 
 /** Last path segment of a SAF document URI, e.g. ".../LANclave%2Fphoto%20(1).jpg" → "photo (1).jpg". */
@@ -51,7 +89,13 @@ interface TransferContextState {
   startDownload: (peer: SelectedPeer, fileName: string, fileSize: number, onComplete?: () => void) => Promise<void>;
   startUpload: (peer: SelectedPeer, localUri: string, remoteFileName: string, fileSize: number, onComplete?: () => void) => Promise<void>;
   cancelTransfer: (id: string) => Promise<void>;
+  /** Native downloads only: stop, keeping what arrived. */
+  pauseTransfer: (id: string) => void;
+  /** Continue a paused or failed native download from its partial file. */
+  resumeTransfer: (id: string) => void;
 }
+
+const useNativeEngine = Platform.OS === 'android';
 
 const TransferContext = createContext<TransferContextState | null>(null);
 
@@ -62,7 +106,20 @@ export const useTransfers = () => {
 };
 
 export function TransferProvider({ children }: { children: React.ReactNode }) {
-  const [transfers, setTransfers] = useState<Transfer[]>([]);
+  // Native downloads still running from before this mounted (e.g. after
+  // the JS side restarted while the engine kept going).
+  const [transfers, setTransfers] = useState<Transfer[]>(() => {
+    if (!useNativeEngine) return [];
+    try {
+      return ExpoNativeServerModule.getTransfers().map((j) => fromNative(j));
+    } catch {
+      return []; // older native build
+    }
+  });
+  const transfersRef = useRef<Transfer[]>([]);
+  useEffect(() => {
+    transfersRef.current = transfers;
+  }, [transfers]);
 
   // Track Expo FileSystem DownloadTasks and UploadTasks
   const tasksRef = useRef<Record<string, DownloadTask | UploadTask>>({});
@@ -72,6 +129,43 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
   const bytesRef = useRef<Record<string, number>>({});
   // Ids the user cancelled: their rejection is logged as cancelled, not failed.
   const cancelledRef = useRef<Set<string>>(new Set());
+
+  // Native downloads: rows follow the engine's events; `onComplete`
+  // callbacks fire when their job ends well.
+  const completionRef = useRef<Record<string, () => void>>({});
+
+  useEffect(() => {
+    if (!useNativeEngine) return;
+    let sub: { remove: () => void } | null = null;
+    try {
+      sub = ExpoNativeServerModule.addListener('onTransferProgress', (job) => {
+        const now = Date.now();
+        setTransfers((prev) => {
+          const old = prev.find((t) => t.id === job.id);
+          const row = fromNative(job, old);
+          const tracker = speedTrackerRef.current[job.id];
+          if (job.status === 'in_progress' && tracker && now > tracker.lastTime) {
+            row.speed = ((job.bytes - tracker.lastBytes) * 1000) / (now - tracker.lastTime);
+          }
+          if (!tracker || now - tracker.lastTime > 500) {
+            speedTrackerRef.current[job.id] = { lastBytes: job.bytes, lastTime: now };
+          }
+          if (job.status !== 'in_progress') row.speed = 0;
+          return old ? prev.map((t) => (t.id === job.id ? row : t)) : [row, ...prev];
+        });
+        if (job.status === 'completed' || job.status === 'skipped') {
+          completionRef.current[job.id]?.();
+        }
+        if (['completed', 'skipped', 'failed'].includes(job.status)) {
+          delete completionRef.current[job.id];
+          delete speedTrackerRef.current[job.id];
+        }
+      });
+    } catch {
+      // older native build
+    }
+    return () => sub?.remove();
+  }, []);
 
   /** Append a finished transfer to the 30-day history. Fire and forget. */
   const logTransfer = useCallback((
@@ -101,14 +195,29 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
     cancelledRef.current.delete(transferId) ? 'cancelled' : 'failed';
 
   const startDownload = useCallback(async (
-    peer: SelectedPeer, 
-    fileName: string, 
+    peer: SelectedPeer,
+    fileName: string,
     fileSize: number,
     onComplete?: () => void
   ) => {
+    if (useNativeEngine) {
+      // Native: resumable, verified, survives the app going to the
+      // background. The engine logs history itself.
+      try {
+        const peerAddr = `${peer.ip}:${peer.port}`;
+        const peerId = peer.id ?? await peerIdForAddress(peer.ip, peer.port);
+        const id = await ExpoNativeServerModule.pull(peerAddr, peerId, peer.name, fileName, fileSize > 0 ? fileSize : null);
+        if (onComplete) completionRef.current[id] = onComplete;
+        setTransfers((prev) => prev.map((t) => (t.id === id ? { ...t, peerAddr, remoteName: fileName } : t)));
+      } catch (err) {
+        console.warn('Download failed to start:', err);
+      }
+      return;
+    }
+
     // Generate an ID based on peer and filename
     const transferId = `${peer.ip}-${fileName}`;
-    
+
     // Prevent duplicate downloads
     if (tasksRef.current[transferId]) return;
 
@@ -120,6 +229,8 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
         fileName,
         fileSize,
         peerName: peer.name,
+        peerAddr: `${peer.ip}:${peer.port}`,
+        remoteName: fileName,
         direction: 'download',
         progress: 0,
         status: 'pending',
@@ -180,7 +291,7 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
           const now = Date.now();
           const tracker = speedTrackerRef.current[transferId];
           let speed = 0;
-          
+
           if (tracker) {
             const timeDiff = (now - tracker.lastTime) / 1000;
             if (timeDiff > 0) {
@@ -189,14 +300,14 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
           } else {
             speedTrackerRef.current[transferId] = { lastBytes: bytesWritten, lastTime: now };
           }
-          
+
           if (tracker && now - tracker.lastTime > 500) {
             speedTrackerRef.current[transferId] = { lastBytes: bytesWritten, lastTime: now };
           }
 
-          setTransfers(prev => prev.map(t => 
-            t.id === transferId 
-              ? { ...t, progress: bytesWritten, fileSize: totalBytes > 0 ? totalBytes : t.fileSize, speed: speed > 0 ? speed : t.speed } 
+          setTransfers(prev => prev.map(t =>
+            t.id === transferId
+              ? { ...t, progress: bytesWritten, fileSize: totalBytes > 0 ? totalBytes : t.fileSize, speed: speed > 0 ? speed : t.speed }
               : t
           ));
         }
@@ -206,22 +317,22 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
       await task.downloadAsync();
 
       // On complete
-      setTransfers(prev => prev.map(t => 
-        t.id === transferId 
-          ? { ...t, status: 'completed', speed: 0, progress: t.fileSize } 
+      setTransfers(prev => prev.map(t =>
+        t.id === transferId
+          ? { ...t, status: 'completed', speed: 0, progress: t.fileSize }
           : t
       ));
       logTransfer(peer, 'download', fileName, 'completed', bytesRef.current[transferId] ?? fileSize, { destName });
-      
+
       delete tasksRef.current[transferId];
       delete speedTrackerRef.current[transferId];
       delete bytesRef.current[transferId];
-      
+
       onComplete?.();
 
     } catch (err) {
       console.warn('Download failed:', err);
-      setTransfers(prev => prev.map(t => 
+      setTransfers(prev => prev.map(t =>
         t.id === transferId ? { ...t, status: 'failed', speed: 0 } : t
       ));
       logTransfer(peer, 'download', fileName, endedAs(transferId), bytesRef.current[transferId] ?? 0, {
@@ -234,14 +345,30 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
   }, [logTransfer]);
 
   const startUpload = useCallback(async (
-    peer: SelectedPeer, 
+    peer: SelectedPeer,
     localUri: string,
-    remoteFileName: string, 
+    remoteFileName: string,
     fileSize: number,
     onComplete?: () => void
   ) => {
+    // An offer first: the receiver consents, then pulls (resumable,
+    // verified). Peers from before offers get the old upload below.
+    if (useNativeEngine) {
+      try {
+        const peerId = peer.id ?? await peerIdForAddress(peer.ip, peer.port);
+        const offerId = await offerFiles(
+          { ip: peer.ip, port: peer.port, id: peerId, name: peer.name },
+          [{ uri: localUri, name: remoteFileName, size: fileSize }],
+        );
+        if (offerId) return; // shown under Sent on the Transfers tab
+      } catch (err) {
+        Alert.alert("Couldn't send", err instanceof Error ? err.message : String(err));
+        return;
+      }
+    }
+
     const transferId = `${peer.ip}-up-${remoteFileName}`;
-    
+
     if (tasksRef.current[transferId]) return;
 
     setTransfers(prev => {
@@ -288,7 +415,7 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
           const now = Date.now();
           const tracker = speedTrackerRef.current[transferId];
           let speed = 0;
-          
+
           if (tracker) {
             const timeDiff = (now - tracker.lastTime) / 1000;
             if (timeDiff > 0) {
@@ -297,14 +424,14 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
           } else {
             speedTrackerRef.current[transferId] = { lastBytes: totalBytesSent, lastTime: now };
           }
-          
+
           if (tracker && now - tracker.lastTime > 500) {
             speedTrackerRef.current[transferId] = { lastBytes: totalBytesSent, lastTime: now };
           }
 
-          setTransfers(prev => prev.map(t => 
-            t.id === transferId 
-              ? { ...t, progress: totalBytesSent, fileSize: totalBytesExpectedToSend > 0 ? totalBytesExpectedToSend : t.fileSize, speed: speed > 0 ? speed : t.speed } 
+          setTransfers(prev => prev.map(t =>
+            t.id === transferId
+              ? { ...t, progress: totalBytesSent, fileSize: totalBytesExpectedToSend > 0 ? totalBytesExpectedToSend : t.fileSize, speed: speed > 0 ? speed : t.speed }
               : t
           ));
         }
@@ -324,22 +451,22 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
         if (typeof saved.name === 'string') destName = saved.name;
       } catch {}
 
-      setTransfers(prev => prev.map(t => 
-        t.id === transferId 
-          ? { ...t, status: 'completed', speed: 0, progress: t.fileSize, destName } 
+      setTransfers(prev => prev.map(t =>
+        t.id === transferId
+          ? { ...t, status: 'completed', speed: 0, progress: t.fileSize, destName }
           : t
       ));
       logTransfer(peer, 'upload', remoteFileName, 'completed', bytesRef.current[transferId] ?? fileSize, { destName });
-      
+
       delete tasksRef.current[transferId];
       delete speedTrackerRef.current[transferId];
       delete bytesRef.current[transferId];
-      
+
       onComplete?.();
 
     } catch (err) {
       console.warn('Upload failed:', err);
-      setTransfers(prev => prev.map(t => 
+      setTransfers(prev => prev.map(t =>
         t.id === transferId ? { ...t, status: 'failed', speed: 0 } : t
       ));
       logTransfer(peer, 'upload', remoteFileName, endedAs(transferId), bytesRef.current[transferId] ?? 0, {
@@ -351,7 +478,19 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
     }
   }, [logTransfer]);
 
+  const pauseTransfer = useCallback((id: string) => {
+    ExpoNativeServerModule.pauseTransfer(id);
+  }, []);
+
+  const resumeTransfer = useCallback((id: string) => {
+    ExpoNativeServerModule.resumeTransfer(id);
+  }, []);
+
   const cancelTransfer = useCallback(async (id: string) => {
+    if (transfersRef.current.find((t) => t.id === id)?.native) {
+      ExpoNativeServerModule.cancelTransfer(id);
+      return;
+    }
     const task = tasksRef.current[id];
     if (task) {
       cancelledRef.current.add(id);
@@ -362,15 +501,17 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
       }
       delete tasksRef.current[id];
       delete speedTrackerRef.current[id];
-      
-      setTransfers(prev => prev.map(t => 
+
+      setTransfers(prev => prev.map(t =>
         t.id === id ? { ...t, status: 'failed', speed: 0 } : t
       ));
     }
   }, []);
 
   return (
-    <TransferContext.Provider value={{ transfers, startDownload, startUpload, cancelTransfer }}>
+    <TransferContext.Provider
+      value={{ transfers, startDownload, startUpload, cancelTransfer, pauseTransfer, resumeTransfer }}
+    >
       {children}
     </TransferContext.Provider>
   );

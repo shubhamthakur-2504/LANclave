@@ -12,6 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import type { Transfer } from "@/contexts/TransferContext";
 import { Icon } from "@/components/Icon";
 import { HistoryView } from "@/components/HistoryView";
+import { OffersList } from "@/components/OffersList";
 import { useState } from "react";
 
 function formatSize(bytes: number): string {
@@ -37,7 +38,7 @@ function calcEta(transfer: Transfer): string {
 }
 
 export default function TransfersScreen() {
-  const { transfers, cancelTransfer } = useTransfers();
+  const { transfers, cancelTransfer, pauseTransfer, resumeTransfer } = useTransfers();
   // "Activity": this session's live transfers. "History": the 30-day log.
   const [view, setView] = useState<"activity" | "history">("activity");
 
@@ -70,6 +71,7 @@ export default function TransfersScreen() {
           data={transfers}
           keyExtractor={(t) => t.id}
           contentContainerStyle={styles.content}
+          ListHeaderComponent={<OffersList />}
           ListEmptyComponent={
             <View style={styles.empty}>
               <Icon name="transfers" size={40} color={C.contentFaint} />
@@ -82,24 +84,31 @@ export default function TransfersScreen() {
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           renderItem={({ item }) => {
             const pct = item.fileSize > 0 ? Math.round((item.progress / item.fileSize) * 100) : 0;
-            const inProgress = item.status === 'in_progress';
-            
+            const inProgress = item.status === 'in_progress' || item.status === 'verifying';
+
             return (
               <View style={styles.card}>
                 <View style={styles.cardHeader}>
                   <Text style={styles.fileName} numberOfLines={1}>{item.fileName}</Text>
                   <Text style={[
-                    styles.statusBadge, 
+                    styles.statusBadge,
                     item.status === 'completed' && styles.statusCompleted,
                     item.status === 'failed' && styles.statusFailed,
                   ]}>
-                    {item.skipped ? 'ALREADY THERE' : item.status.replace('_', ' ').toUpperCase()}
+                    {item.skipped
+                      ? 'ALREADY THERE'
+                      : item.status === 'verifying'
+                        ? 'CHECKING'
+                        : item.status.replace('_', ' ').toUpperCase()}
                   </Text>
                 </View>
 
                 <Text style={styles.peerInfo}>
                   {item.direction === 'download' ? 'Receiving from ' : 'Sending to '}{item.peerName}
                 </Text>
+                {item.message && item.status !== 'completed' && (
+                  <Text style={styles.peerInfo}>{item.message}</Text>
+                )}
 
                 {inProgress && (
                   <View style={styles.progressSection}>
@@ -118,7 +127,7 @@ export default function TransfersScreen() {
                   </View>
                 )}
 
-                {item.status === 'failed' && (
+                {(item.status === 'failed' || item.status === 'paused') && (
                   <View style={styles.progressSection}>
                     <Text style={styles.progressText}>
                       Stopped at {formatSize(item.progress)} / {formatSize(item.fileSize)}
@@ -126,14 +135,32 @@ export default function TransfersScreen() {
                   </View>
                 )}
 
-                {inProgress && (
-                  <View style={styles.actions}>
-                    <Pressable 
-                      style={styles.cancelBtn} 
+                {(inProgress || item.status === 'pending') && (
+                  <View style={[styles.actions, styles.actionRow]}>
+                    {item.native && item.status === 'in_progress' && (
+                      <Pressable style={styles.pauseBtn} onPress={() => pauseTransfer(item.id)}>
+                        <Text style={styles.pauseText}>Pause</Text>
+                      </Pressable>
+                    )}
+                    <Pressable
+                      style={styles.cancelBtn}
                       onPress={() => cancelTransfer(item.id)}
                     >
                       <Text style={styles.cancelText}>Cancel</Text>
                     </Pressable>
+                  </View>
+                )}
+
+                {item.native && (item.status === 'paused' || item.status === 'failed') && (
+                  <View style={[styles.actions, styles.actionRow]}>
+                    <Pressable style={styles.pauseBtn} onPress={() => resumeTransfer(item.id)}>
+                      <Text style={styles.pauseText}>{item.status === 'paused' ? 'Resume' : 'Retry'}</Text>
+                    </Pressable>
+                    {item.status === 'paused' && (
+                      <Pressable style={styles.cancelBtn} onPress={() => cancelTransfer(item.id)}>
+                        <Text style={styles.cancelText}>Discard</Text>
+                      </Pressable>
+                    )}
                   </View>
                 )}
               </View>
@@ -227,7 +254,7 @@ const styles = StyleSheet.create({
     color: C.contentMuted,
     marginTop: 4,
   },
-  
+
   progressSection: {
     marginTop: 12,
   },
@@ -256,7 +283,7 @@ const styles = StyleSheet.create({
     backgroundColor: C.action,
     borderRadius: 3,
   },
-  
+
   actions: {
     marginTop: 16,
     borderTopWidth: 1,
@@ -264,6 +291,15 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     alignItems: 'flex-end',
   },
+  actionRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
+  pauseBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: C.borderStrong,
+  },
+  pauseText: { fontSize: 13, fontWeight: '600', color: C.content },
   cancelBtn: {
     paddingHorizontal: 16,
     paddingVertical: 8,

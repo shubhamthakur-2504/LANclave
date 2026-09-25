@@ -63,7 +63,7 @@ export default function PeerSandboxScreen() {
     try {
       const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: false });
       if (result.canceled || result.assets.length === 0) return;
-      
+
       const file = result.assets[0];
       await startUpload({ ip, port, name, id }, file.uri, file.name, file.size || 0, fetchPeerFiles);
     } catch (err) {
@@ -139,10 +139,12 @@ export default function PeerSandboxScreen() {
             ) : null
           }
           renderItem={({ item }) => {
-            const transferId = `${ip}-${item.name}`;
-            const transfer = transfers.find(t => t.id === transferId);
-            const progressPct = transfer && transfer.fileSize > 0 && transfer.status === 'in_progress' 
-              ? Math.round((transfer.progress / transfer.fileSize) * 100) 
+            // Native transfer ids are random: match on peer and file.
+            const transfer = transfers.find(
+              (t) => t.direction === 'download' && t.peerAddr === `${ip}:${port}` && t.remoteName === item.name,
+            );
+            const progressPct = transfer && transfer.fileSize > 0 && transfer.status === 'in_progress'
+              ? Math.round((transfer.progress / transfer.fileSize) * 100)
               : undefined;
 
             return (
