@@ -63,6 +63,8 @@ object TransferEngine {
 
     private val jobs = LinkedHashMap<String, Job>()
     private val runner = Executors.newSingleThreadExecutor { r -> Thread(r, "lanclave-transfers").apply { isDaemon = true } }
+    /** Re-queues jobs a sender paused, without holding up the rest. */
+    private val later = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "lanclave-retry").apply { isDaemon = true } }
     @Volatile private var app: Context? = null
     @Volatile private var sandboxPath: String? = null
 
@@ -164,7 +166,7 @@ object TransferEngine {
     }
 
     private fun run(job: Job) {
-        if (job.status != Status.QUEUED) return // paused or cancelled while queued
+        if (job.status != Status.QUEUED || job.stop != null) return // paused or cancelled while queued
         val ctx = app ?: return finish(job, Status.FAILED, "Not ready")
         val sandbox = Sandbox(ctx, sandboxPath ?: return finish(job, Status.FAILED, "No sandbox"))
         if (!Identity.isSet) return finish(job, Status.FAILED, "Identity not ready")
@@ -181,10 +183,16 @@ object TransferEngine {
             try {
                 return pullOnce(ctx, sandbox, job)
             } catch (e: SenderPaused) {
+                // Step aside: other downloads run meanwhile; this one is
+                // queued again in 5 s (pause / cancel still apply).
                 job.pausedBySender = true
                 job.message = "Paused by sender"
+                job.status = Status.QUEUED
                 emit(job)
-                if (sleepUnlessStopped(job, 5_000)) return stopped(job)
+                later.schedule({
+                    if (job.status == Status.QUEUED && job.stop == null) runner.execute { run(job) }
+                }, 5, java.util.concurrent.TimeUnit.SECONDS)
+                return
             } catch (e: IOException) {
                 if (job.stop != null) return stopped(job)
                 if (networkRetries >= 5) return finish(job, Status.FAILED, e.message ?: "Network error")

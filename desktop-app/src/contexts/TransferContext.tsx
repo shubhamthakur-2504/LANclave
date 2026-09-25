@@ -215,11 +215,19 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
       });
     }).then(unsub => unlisteners.push(unsub));
     listen<TransferProgressEvent>("transfer-paused", (event) => {
-      const { id, bytes_transferred, total_bytes } = event.payload;
+      const { id, bytes_transferred, total_bytes, message } = event.payload;
       setTransfers((prev) =>
         prev.map((t) =>
           t.id === id
-            ? { ...t, status: "paused", speed: 0, progress: bytes_transferred, fileSize: total_bytes || t.fileSize }
+            ? {
+                ...t,
+                status: "paused",
+                speed: 0,
+                // A sender pause reports no position: keep the one we had.
+                progress: bytes_transferred || t.progress,
+                fileSize: total_bytes || t.fileSize,
+                error: message,
+              }
             : t,
         ),
       );

@@ -146,9 +146,11 @@ impl Partial {
             .await
             .map_err(|e| ClientError::IoError(e.to_string()))?;
         drop(placeholder);
-        tokio_fs::rename(&self.data, &final_path)
-            .await
-            .map_err(|e| ClientError::IoError(e.to_string()))?;
+        if let Err(e) = tokio_fs::rename(&self.data, &final_path).await {
+            // Do not leave the reserved, empty file looking like a download.
+            let _ = tokio_fs::remove_file(&final_path).await;
+            return Err(ClientError::IoError(e.to_string()));
+        }
         let _ = tokio_fs::remove_file(&self.note).await;
         Ok(final_path)
     }

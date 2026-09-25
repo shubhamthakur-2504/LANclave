@@ -453,12 +453,14 @@ pub async fn offer_reported(
     let mut newly = Vec::new();
     state.offers.update_outgoing(&id, |o| {
         for (fid, result) in body.results {
-            if o.accepted.contains(&fid) && !o.results.contains_key(&fid) {
+            // A file that failed may be retried and reported again.
+            let open = o.results.get(&fid).is_none_or(|r| r.outcome == "failed");
+            if o.accepted.contains(&fid) && open && o.results.get(&fid) != Some(&result) {
                 newly.push((fid.clone(), result.clone()));
                 o.results.insert(fid, result);
             }
         }
-        if o.accepted.iter().all(|f| o.results.contains_key(f)) {
+        if all_settled(&o.accepted, &o.results) {
             o.state = OfferState::Done;
         }
     });
@@ -492,6 +494,14 @@ fn log_sent(
     entry.dest_name = dest_name.filter(|d| *d != file.name);
     entry.error = error;
     state.history.record(entry);
+}
+
+/// Every accepted file has a result, and none failed. A failed file keeps
+/// the offer open (still servable) so the receiver can retry it.
+fn all_settled(accepted: &[String], results: &HashMap<String, FileResult>) -> bool {
+    accepted
+        .iter()
+        .all(|f| results.get(f).is_some_and(|r| r.outcome != "failed"))
 }
 
 /// Whether `caller` may pull file `fid` of offer `id` right now.
@@ -932,15 +942,20 @@ fn spawn_queue(ctx: ReceiveCtx, offer_id: String) {
 
         let offer = ctx.offers.update_incoming(&offer_id, |o| {
             o.receiving = false;
-            if o.state == OfferState::Accepted && o.remaining().is_empty() {
+            // Failures keep it open, so Retry can pull them again.
+            if o.state == OfferState::Accepted && all_settled(&o.accepted, &o.results) {
                 o.state = OfferState::Done;
             }
             o.clone()
         });
         ctx.offers.emit_changed();
 
-        // Tell the sender how its files ended, once all have.
-        if let Some(offer) = offer.filter(|o| o.state == OfferState::Done) {
+        // Tell the sender how its files ended, once all have -- again after
+        // a retry, which the sender accepts for files that had failed.
+        let ended = |o: &IncomingOffer| {
+            matches!(o.state, OfferState::Accepted | OfferState::Done) && o.remaining().is_empty()
+        };
+        if let Some(offer) = offer.filter(ended) {
             let body = serde_json::json!({ "results": offer.results });
             let path = format!("/api/offers/{}/report", offer.id);
             let addr = ctx.presence.addr_of(&offer.peer_id).unwrap_or(offer.peer_addr.clone());
@@ -1240,6 +1255,30 @@ mod tests {
         assert_eq!(state.offers.snapshot().outgoing[0].state, OfferState::Done);
         let sent = state.history.list().into_iter().find(|e| e.file_name == "a.txt").unwrap();
         assert_eq!((sent.outcome, sent.dest_name.as_deref()), (Outcome::Completed, Some("a (1).txt")));
+    }
+
+    #[tokio::test]
+    async fn a_failed_file_can_be_retried_and_reported_again() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let receiver = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let (state, app) = sender_with_offer(&dir, &[&receiver]);
+
+        let accept = serde_json::json!({ "file_ids": ["fa"] });
+        app.clone().oneshot(signed("POST", "/api/offers/o1/accept", &receiver, Some(accept))).await.unwrap();
+
+        // First attempt failed: the offer stays open and the file servable.
+        let failed = serde_json::json!({ "results": { "fa": { "outcome": "failed", "error": "network" } } });
+        app.clone().oneshot(signed("POST", "/api/offers/o1/report", &receiver, Some(failed))).await.unwrap();
+        assert_eq!(state.offers.snapshot().outgoing[0].state, OfferState::Accepted);
+        let res = app.clone().oneshot(signed("GET", "/api/offers/o1/files/fa", &receiver, None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // The retry succeeded: now it is done.
+        let ok = serde_json::json!({ "results": { "fa": { "outcome": "completed" } } });
+        app.clone().oneshot(signed("POST", "/api/offers/o1/report", &receiver, Some(ok))).await.unwrap();
+        assert_eq!(state.offers.snapshot().outgoing[0].state, OfferState::Done);
+        let outcomes: Vec<_> = state.history.list().into_iter().filter(|e| e.file_name == "a.txt").map(|e| e.outcome).collect();
+        assert!(outcomes.contains(&Outcome::Failed) && outcomes.contains(&Outcome::Completed), "{outcomes:?}");
     }
 
     #[tokio::test]

@@ -204,6 +204,9 @@ export default function TransferListPanel({
                       </span>
                     </div>
                     
+                    {t.status === "paused" && t.error && (
+                      <p className="mt-1 truncate text-xs text-content-muted">{t.error}</p>
+                    )}
                     {t.status === "failed" && (
                       <p className="mt-1 truncate text-xs text-danger">
                         {humanizeError(t.error ?? "", t.peerName).message}

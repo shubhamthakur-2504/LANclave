@@ -119,6 +119,10 @@ object Offers {
         incoming.values.removeAll { it.state !in listOf("waiting", "accepted") && it.expiresMs < cutoff }
     }
 
+    /** Every accepted file has a result, and none failed. */
+    private fun allSettled(accepted: List<String>, results: Map<String, JSONObject>): Boolean =
+        accepted.all { results[it]?.optString("outcome")?.let { o -> o != "failed" } == true }
+
     /** A bare, visible file name from an offered one, or null to refuse it. */
     fun safeFileName(name: String): String? {
         val base = name.split('/', '\\').last().trim()
@@ -230,14 +234,16 @@ object Offers {
         val offer = outgoingFor(id, caller) ?: return status(Response.Status.NOT_FOUND)
         val results = body(session)?.optJSONObject("results") ?: return status(Response.Status.BAD_REQUEST)
         for (fid in results.keys()) {
-            if (fid !in offer.accepted || offer.results.containsKey(fid)) continue
+            // A file that failed may be retried and reported again.
+            val open = offer.results[fid]?.optString("outcome")?.let { it == "failed" } ?: true
+            if (fid !in offer.accepted || !open) continue
             val r = results.getJSONObject(fid)
             offer.results[fid] = r
             val file = offer.files.firstOrNull { it.id == fid } ?: continue
             logSent(offer, file, r.optString("outcome"), r.optString("dest_name").takeIf { it.isNotEmpty() && it != "null" },
                 r.optString("error").takeIf { it.isNotEmpty() && it != "null" })
         }
-        if (offer.accepted.all { offer.results.containsKey(it) }) offer.state = "done"
+        if (allSettled(offer.accepted, offer.results)) offer.state = "done"
         changed()
         return status(Response.Status.OK)
     }
@@ -432,8 +438,10 @@ object Offers {
         offer.results[fid] = JSONObject().put("outcome", outcome)
             .put("dest_name", job.destName ?: JSONObject.NULL)
             .put("error", if (outcome == "failed") job.message else JSONObject.NULL)
+        // Report once every file has ended -- again after a retry. Failures
+        // keep the offer open so Retry can pull them again.
         if (offer.state == "accepted" && offer.accepted.all { offer.results.containsKey(it) }) {
-            offer.state = "done"
+            if (allSettled(offer.accepted, offer.results)) offer.state = "done"
             val body = JSONObject().put("results", JSONObject(offer.results as Map<*, *>))
             Thread { PeerHttp.postJson(offer.peerAddr, "/api/offers/$id/report", body) }.start()
         }
