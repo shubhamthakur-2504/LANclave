@@ -1,33 +1,29 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
-import { Transfer, TransferStatus, PeerInfo, FileEntry } from "../types";
+import * as api from "../api";
+import { Transfer, TransferRow, PeerInfo, FileEntry } from "../types";
 import { useToast } from "../components/ui/Toast";
 
+/** A progress tick from a running transfer. Endings come as rows. */
 interface TransferProgressEvent {
   id: string;
   bytes_transferred: number;
   total_bytes: number;
-  /** "skipped" when the destination already had an identical copy. */
   status: string;
-  /** Present only on failure. */
-  message?: string;
-  /** On completion or skip: the file's name at the destination. */
-  dest_name?: string;
 }
 
 interface TransferContextState {
   transfers: Transfer[];
   startDownload: (peer: PeerInfo, file: FileEntry) => Promise<void>;
-  startUpload: (peer: PeerInfo, localRelativePath: string, fileName: string, fileSize?: number) => Promise<void>;
+  startUpload: (peer: PeerInfo, localRelativePath: string, fileName: string) => Promise<void>;
   cancelTransfer: (id: string) => Promise<void>;
-  /** Stop a download, keeping what arrived. */
+  /** Stop a download, keeping what arrived; a waiting one leaves the queue. */
   pauseTransfer: (id: string) => Promise<void>;
   /** Continue a paused download from where it stopped. */
   resumeTransfer: (id: string) => Promise<void>;
   /** Drop a paused download and its partial file. */
   discardTransfer: (id: string) => Promise<void>;
-  /** Re-run a failed transfer using the details recorded when it started. */
+  /** Try a failed transfer again. */
   retryTransfer: (id: string) => Promise<void>;
 }
 
@@ -41,40 +37,56 @@ export const useTransfers = () => {
   return context;
 };
 
+/** A backend row as the page's transfer, keeping the speed the page measured. */
+function fromRow(r: TransferRow, speed = 0): Transfer {
+  return {
+    id: r.id,
+    fileName: r.file_name,
+    fileSize: r.file_size,
+    peerId: r.peer_id,
+    peerName: r.peer_name ?? "Unknown device",
+    direction: r.direction,
+    progress: r.progress,
+    status: r.status,
+    speed: r.status === "in_progress" ? speed : 0,
+    startedAt: new Date(r.started_ms).toISOString(),
+    skipped: r.skipped,
+    destName: r.dest_name ?? undefined,
+    error: r.error ?? undefined,
+    message: r.message ?? undefined,
+    ahead: r.ahead ?? undefined,
+    offerId: r.offer_id ?? undefined,
+    offerFileId: r.offer_file_id ?? undefined,
+    peerAddr: r.peer_addr ?? undefined,
+    remotePath: r.remote_path ?? undefined,
+    localPath: r.local_path ?? undefined,
+  };
+}
+
+/**
+ * The Transfers list. The backend holds it and runs the queue
+ * (`transfers.rs`); this reads it when the page loads and then follows its
+ * events, so the page can come and go without losing anything.
+ */
 export const TransferProvider = ({ children }: { children: ReactNode }) => {
   const [transfers, setTransfers] = useState<Transfer[]>([]);
-
-  // We use a ref to track the latest transfers so the event listeners don't need to be recreated
   const transfersRef = useRef<Transfer[]>([]);
-  
   useEffect(() => {
     transfersRef.current = transfers;
   }, [transfers]);
 
-  // Track the previous bytes for speed calculation
-  const speedTrackerRef = useRef<Record<string, { lastBytes: number; lastTime: number }>>({});
-  
-  // Track events that fire before the `invoke` promise resolves
-  const earlyEventsRef = useRef<Record<string, { status: TransferStatus; bytes: number; total: number; skipped?: boolean; destName?: string }>>({});
+  // Speed is measured here, from progress ticks.
+  const speedRef = useRef<Record<string, { bytes: number; at: number; speed: number }>>({});
 
   // A finished transfer is announced with a toast so the Transfers page is
   // somewhere you go to look at detail, not somewhere you have to sit and
   // watch. The provider is mounted inside `ToastProvider` (see App.tsx).
   const toast = useToast();
 
-  // Cancelling is a deliberate act, and the backend reports it as a failure.
-  // Toasting it would tell the user something they just did. Ids land here on
-  // cancel so the failure handler can stay quiet.
-  const cancelledRef = useRef<Set<string>>(new Set());
-
   /** Name the file and the peer -- "done" alone is not worth interrupting for. */
   const announceFinished = useCallback(
-    (t: Transfer | undefined, skipped = false) => {
-      if (!t) {
-        toast.success(skipped ? "Already up to date." : "Transfer complete.");
-        return;
-      }
-      if (skipped) {
+    (t: Transfer) => {
+      if (t.skipped) {
         const where = t.direction === "download" ? "You already have" : `${t.peerName} already has`;
         const as = t.destName && t.destName !== t.fileName ? ` as ${t.destName}` : "";
         toast.info(`${where} ${t.fileName}${as}.`, "Identical copy, nothing sent");
@@ -90,374 +102,108 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
   );
 
   useEffect(() => {
-    const unlisteners: (() => void)[] = [];
+    // An event can beat the initial read; the event is newer, so it wins.
+    let heardEvent = false;
+    const apply = (rows: TransferRow[]) =>
+      setTransfers(rows.map((r) => fromRow(r, speedRef.current[r.id]?.speed)));
 
-    const handleProgress = (event: { payload: TransferProgressEvent }) => {
-      const { id, bytes_transferred, total_bytes, status } = event.payload;
-      
-      const now = Date.now();
-      const tracker = speedTrackerRef.current[id];
-      let speed = 0;
-      
-      if (tracker) {
-        const timeDiff = (now - tracker.lastTime) / 1000; // seconds
-        if (timeDiff > 0) {
-          const bytesDiff = bytes_transferred - tracker.lastBytes;
-          speed = bytesDiff / timeDiff;
-        }
-      } else {
-        speedTrackerRef.current[id] = { lastBytes: bytes_transferred, lastTime: now };
-      }
-      
-      // Update tracker
-      if (tracker && now - tracker.lastTime > 500) {
-          speedTrackerRef.current[id] = { lastBytes: bytes_transferred, lastTime: now };
-      }
+    api
+      .listTransfers()
+      .then((rows) => {
+        if (!heardEvent) apply(rows);
+      })
+      .catch(() => {});
 
-      setTransfers((prev) => {
-        const exists = prev.some((t) => t.id === id);
-        if (!exists) {
-          earlyEventsRef.current[id] = { status: status as TransferStatus, bytes: bytes_transferred, total: total_bytes };
-          return prev;
+    const unlisteners = [
+      listen<TransferRow[]>("transfers-changed", (e) => {
+        heardEvent = true;
+        apply(e.payload);
+      }),
+      listen<TransferProgressEvent>("transfer-progress", (e) => {
+        const { id, bytes_transferred, total_bytes, status } = e.payload;
+        const now = Date.now();
+        const last = speedRef.current[id];
+        let speed = last?.speed ?? 0;
+        if (!last) {
+          speedRef.current[id] = { bytes: bytes_transferred, at: now, speed: 0 };
+        } else if (now - last.at > 500) {
+          speed = ((bytes_transferred - last.bytes) * 1000) / (now - last.at);
+          speedRef.current[id] = { bytes: bytes_transferred, at: now, speed };
         }
-        return prev.map((t) => 
-          t.id === id 
-            ? { 
-                ...t, 
-                progress: bytes_transferred, 
-                fileSize: total_bytes > 0 ? total_bytes : t.fileSize,
-                status: status as TransferStatus,
-                speed: speed > 0 ? speed : t.speed // keep last speed if 0 to avoid jitter
-              } 
-            : t
+        setTransfers((prev) =>
+          prev.map((t) =>
+            t.id === id
+              ? {
+                  ...t,
+                  progress: bytes_transferred,
+                  fileSize: total_bytes > 0 ? total_bytes : t.fileSize,
+                  status: status === "verifying" ? "verifying" : "in_progress",
+                  message: undefined,
+                  speed: speed > 0 ? speed : t.speed,
+                }
+              : t,
+          ),
         );
-      });
-    };
-
-    const handleCompleted = (event: { payload: TransferProgressEvent }) => {
-      const { id, bytes_transferred, total_bytes, status, dest_name } = event.payload;
-      const skipped = status === "skipped";
-      const destName = dest_name;
-      cancelledRef.current.delete(id);
-      const row = transfersRef.current.find((t) => t.id === id);
-      announceFinished(row && { ...row, destName }, skipped);
-      setTransfers((prev) => {
-        const exists = prev.some((t) => t.id === id);
-        if (!exists) {
-          earlyEventsRef.current[id] = { status: "completed", bytes: bytes_transferred, total: total_bytes, skipped, destName };
-          return prev;
-        }
-        return prev.map((t) => 
-          t.id === id 
-            ? { ...t, progress: bytes_transferred, fileSize: total_bytes, status: "completed", speed: 0, skipped, destName } 
-            : t
-        );
-      });
-      delete speedTrackerRef.current[id];
-    };
-
-    const handleFailed = (event: { payload: TransferProgressEvent }) => {
-      const { id, message } = event.payload;
-      // A cancel is reported as a failure. `delete` returns true when this id
-      // was one, and clears it in the same step.
-      if (!cancelledRef.current.delete(id)) {
-        const t = transfersRef.current.find((x) => x.id === id);
-        toast.error(message ?? "Transfer failed", t?.peerName);
-      }
-      setTransfers((prev) => {
-        const exists = prev.some((t) => t.id === id);
-        if (!exists) {
-          earlyEventsRef.current[id] = { status: "failed", bytes: 0, total: 0 };
-          return prev;
-        }
-        return prev.map((t) => 
-          t.id === id
-            ? { ...t, status: "failed", speed: 0, error: message }
-            : t
-        );
-      });
-      delete speedTrackerRef.current[id];
-    };
-
-    listen<TransferProgressEvent>("transfer-progress", handleProgress).then(unsub => unlisteners.push(unsub));
-    listen<TransferProgressEvent>("transfer-completed", handleCompleted).then(unsub => unlisteners.push(unsub));
-    listen<TransferProgressEvent>("transfer-failed", handleFailed).then(unsub => unlisteners.push(unsub));
-    // Offer downloads are started by the backend; this is their row.
-    listen<{
-      id: string;
-      file_name: string;
-      file_size: number;
-      peer_id: string;
-      peer_name: string | null;
-      offer_id: string;
-      file_id: string;
-    }>("transfer-started", (event) => {
-      const e = event.payload;
-      setTransfers((prev) => {
-        const row: Transfer = {
-          id: e.id,
-          fileName: e.file_name,
-          fileSize: e.file_size,
-          peerId: e.peer_id,
-          peerName: e.peer_name ?? "Unknown device",
-          direction: "download",
-          progress: 0,
-          status: "in_progress",
-          speed: 0,
-          startedAt: new Date().toISOString(),
-          offerId: e.offer_id,
-          offerFileId: e.file_id,
-        };
-        const existing = prev.find((t) => t.id === e.id);
-        return existing
-          ? prev.map((t) => (t.id === e.id ? { ...t, status: "in_progress", error: undefined } : t))
-          : [row, ...prev];
-      });
-    }).then(unsub => unlisteners.push(unsub));
-    listen<TransferProgressEvent>("transfer-paused", (event) => {
-      const { id, bytes_transferred, total_bytes, message } = event.payload;
-      setTransfers((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? {
-                ...t,
-                status: "paused",
-                speed: 0,
-                // A sender pause reports no position: keep the one we had.
-                progress: bytes_transferred || t.progress,
-                fileSize: total_bytes || t.fileSize,
-                error: message,
-              }
-            : t,
-        ),
-      );
-      delete speedTrackerRef.current[id];
-    }).then(unsub => unlisteners.push(unsub));
-
+      }),
+      // Completed or failed. A cancel or a pause is the user's own doing
+      // and is not announced.
+      listen<TransferRow>("transfer-ended", (e) => {
+        delete speedRef.current[e.payload.id];
+        const t = fromRow(e.payload);
+        if (t.status === "completed") announceFinished(t);
+        else toast.error(t.error ?? "Transfer failed", t.peerName);
+      }),
+    ];
     return () => {
-      unlisteners.forEach(unsub => unsub());
+      unlisteners.forEach((p) => p.then((fn) => fn()));
     };
   }, [announceFinished, toast]);
 
-  const startDownload = useCallback(async (peer: PeerInfo, file: FileEntry) => {
-    try {
-      // Create a temporary ID, it will be replaced by the backend UUID immediately
-      const tempId = Math.random().toString();
-      
-      const newTransfer: Transfer = {
-        id: tempId,
-        fileName: file.name,
-        fileSize: file.size,
-        peerId: peer.device_id,
-        peerName: peer.device_name || peer.device_id, // Use device_name if available, else ID
-        peerAddr: peer.addr,
-        remotePath: file.name,
-        localPath: file.name,
-        direction: "download",
-        progress: 0,
-        status: "pending",
-        speed: 0,
-        startedAt: new Date().toISOString(),
-      };
-      
-      setTransfers((prev) => [newTransfer, ...prev]);
-
-      const transferId = await invoke<string>("pull_file", {
-        peerAddr: peer.addr,
-        remotePath: file.name, // Remote path is just the filename for now
-        localFilename: file.name,
-        // Lets the backend rule out a duplicate by size before asking the peer.
-        remoteSize: file.size > 0 ? file.size : null,
-        peerId: peer.device_id,
-        peerName: peer.device_name ?? null,
-      });
-
-      // Check if we already received events for this transferId before the promise resolved
-      const earlyEvent = earlyEventsRef.current[transferId];
-      if (earlyEvent) {
-        delete earlyEventsRef.current[transferId];
+  /** Run an action, toasting what went wrong. */
+  const attempt = useCallback(
+    async (action: () => Promise<unknown>, who?: string) => {
+      try {
+        await action();
+      } catch (err) {
+        toast.error(err, who);
       }
+    },
+    [toast],
+  );
 
-      // Update the ID and status
-      setTransfers((prev) => 
-        prev.map((t) => {
-          if (t.id === tempId) {
-            return {
-              ...t,
-              id: transferId,
-              status: earlyEvent ? earlyEvent.status : "in_progress",
-              progress: earlyEvent ? earlyEvent.bytes : t.progress,
-              fileSize: earlyEvent && earlyEvent.total > 0 ? earlyEvent.total : t.fileSize,
-              skipped: earlyEvent?.skipped,
-              destName: earlyEvent?.destName,
-            };
-          }
-          return t;
-        })
-      );
+  const startDownload = useCallback(
+    (peer: PeerInfo, file: FileEntry) => attempt(() => api.pullFile(peer, file), peer.device_name),
+    [attempt],
+  );
 
-      // A small file can finish before `invoke` returns, so the listener had
-      // no row to name. Announce it from here instead, where we do.
-      if (earlyEvent) {
-        const finished = { ...newTransfer, id: transferId, destName: earlyEvent.destName };
-        if (earlyEvent.status === "completed") {
-          announceFinished(finished, earlyEvent.skipped);
-        } else if (earlyEvent.status === "failed") {
-          toast.error("Transfer failed", peer.device_name);
-        }
-      }
-    } catch (err) {
-      console.error("Failed to start download:", err);
-      toast.error(err, peer.device_name);
-    }
-  }, [announceFinished, toast]);
+  const startUpload = useCallback(
+    (peer: PeerInfo, localRelativePath: string, fileName: string) =>
+      attempt(() => api.pushFile(peer, localRelativePath, fileName), peer.device_name),
+    [attempt],
+  );
 
-  const cancelTransfer = useCallback(async (id: string) => {
-    try {
-      cancelledRef.current.add(id);
-      await invoke("cancel_transfer", { transferId: id });
-      setTransfers((prev) => 
-        prev.map((t) => (t.id === id ? { ...t, status: "failed", speed: 0 } : t))
-      );
-    } catch (err) {
-      cancelledRef.current.delete(id);
-      console.error("Failed to cancel transfer:", err);
-    }
-  }, []);
+  const cancelTransfer = useCallback((id: string) => attempt(() => api.cancelTransfer(id)), [attempt]);
+  const pauseTransfer = useCallback((id: string) => attempt(() => api.pauseTransfer(id)), [attempt]);
+  const resumeTransfer = useCallback((id: string) => attempt(() => api.resumeTransfer(id)), [attempt]);
+  const discardTransfer = useCallback((id: string) => attempt(() => api.discardTransfer(id)), [attempt]);
 
-  const startUpload = useCallback(async (peer: PeerInfo, localRelativePath: string, fileName: string, fileSize: number = 0) => {
-    try {
-      const tempId = Math.random().toString();
-      
-      const newTransfer: Transfer = {
-        id: tempId,
-        fileName,
-        fileSize,
-        peerId: peer.device_id,
-        peerName: peer.device_name || peer.device_id,
-        peerAddr: peer.addr,
-        remotePath: fileName,
-        localPath: localRelativePath,
-        direction: "upload",
-        progress: 0,
-        status: "pending",
-        speed: 0,
-        startedAt: new Date().toISOString(),
-      };
-      
-      setTransfers((prev) => [newTransfer, ...prev]);
-
-      const transferId = await invoke<string>("push_file", {
-        peerAddr: peer.addr,
-        localRelativePath,
-        remotePath: fileName,
-        peerId: peer.device_id,
-        peerName: peer.device_name ?? null,
-      });
-
-      const earlyEvent = earlyEventsRef.current[transferId];
-      if (earlyEvent) {
-        delete earlyEventsRef.current[transferId];
-      }
-
-      setTransfers((prev) => 
-        prev.map((t) => {
-          if (t.id === tempId) {
-            return {
-              ...t,
-              id: transferId,
-              status: earlyEvent ? earlyEvent.status : "in_progress",
-              progress: earlyEvent ? earlyEvent.bytes : t.progress,
-              fileSize: earlyEvent && earlyEvent.total > 0 ? earlyEvent.total : t.fileSize,
-              skipped: earlyEvent?.skipped,
-              destName: earlyEvent?.destName,
-            };
-          }
-          return t;
-        })
-      );
-
-      // A small file can finish before `invoke` returns, so the listener had
-      // no row to name. Announce it from here instead, where we do.
-      if (earlyEvent) {
-        const finished = { ...newTransfer, id: transferId, destName: earlyEvent.destName };
-        if (earlyEvent.status === "completed") {
-          announceFinished(finished, earlyEvent.skipped);
-        } else if (earlyEvent.status === "failed") {
-          toast.error("Transfer failed", peer.device_name);
-        }
-      }
-    } catch (err) {
-      console.error("Failed to start upload:", err);
-      toast.error(err, peer.device_name);
-    }
-  }, [announceFinished, toast]);
-
-  /**
-   * Retry replays the original request rather than resuming: there is no
-   * HTTP Range support yet, so a failed transfer starts over.
-   */
   const retryTransfer = useCallback(
     async (id: string) => {
       const t = transfersRef.current.find((x) => x.id === id);
-      // An offer file retries through its offer: the backend re-pulls it.
-      if (t?.offerId) {
-        try {
-          await invoke("resume_offer", { offerId: t.offerId });
-        } catch (err) {
-          toast.error(err, t.peerName);
-        }
-        return;
-      }
-      if (!t || !t.peerAddr || !t.remotePath) return;
-
-      const peer: PeerInfo = {
-        addr: t.peerAddr,
-        device_id: t.peerId,
-        device_name: t.peerName,
-        paired: true,
-      };
-
-      setTransfers((prev) => prev.filter((x) => x.id !== id));
-
-      if (t.direction === "download") {
-        await startDownload(peer, {
-          name: t.remotePath,
-          size: t.fileSize,
-          is_directory: false,
-        } as FileEntry);
-      } else {
-        await startUpload(peer, t.localPath ?? t.remotePath, t.remotePath, t.fileSize);
-      }
+      if (!t) return;
+      // A download continues from its partial file, at the front of the queue.
+      if (t.direction === "download") return resumeTransfer(id);
+      // A legacy push cannot resume: send it again.
+      const { peerAddr, remotePath } = t;
+      if (!peerAddr || !remotePath) return;
+      const peer: PeerInfo = { addr: peerAddr, device_id: t.peerId, device_name: t.peerName, paired: true };
+      await attempt(async () => {
+        await api.discardTransfer(id);
+        await api.pushFile(peer, t.localPath ?? remotePath, remotePath);
+      }, t.peerName);
     },
-    [startDownload, startUpload, toast],
+    [attempt, resumeTransfer],
   );
-
-  const pauseTransfer = useCallback(async (id: string) => {
-    try {
-      await invoke("pause_transfer", { transferId: id });
-    } catch (err) {
-      console.error("Failed to pause transfer:", err);
-    }
-  }, []);
-
-  // Pulling the same file again finds the partial and continues from it.
-  const resumeTransfer = useCallback((id: string) => retryTransfer(id), [retryTransfer]);
-
-  const discardTransfer = useCallback(async (id: string) => {
-    const t = transfersRef.current.find((x) => x.id === id);
-    if (!t) return;
-    try {
-      if (t.offerId && t.offerFileId) {
-        await invoke("skip_offer_file", { offerId: t.offerId, fileId: t.offerFileId });
-      } else {
-        await invoke("discard_partial", { localFilename: t.localPath ?? t.fileName });
-      }
-    } catch (err) {
-      console.error("Failed to discard partial download:", err);
-    }
-    setTransfers((prev) => prev.filter((x) => x.id !== id));
-  }, []);
 
   return (
     <TransferContext.Provider

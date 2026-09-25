@@ -30,7 +30,7 @@ function AppInner() {
   // watching. Pending counts too: a queued transfer is still movement, and
   // an offer waiting for an answer is something to act on.
   const activeTransfers =
-    transfers.filter((t) => t.status === "in_progress" || t.status === "pending").length +
+    transfers.filter((t) => t.status === "in_progress" || t.status === "queued").length +
     pendingIncoming.length;
 
   // Pairing state
@@ -138,7 +138,7 @@ function AppInner() {
           } else {
             // A peer from before offers: push them the old way.
             for (const name of imported) {
-              await startUpload(target, name, name, 0);
+              await startUpload(target, name, name);
             }
             toast.success(`Sending ${plural}`, `To ${who}.`);
           }

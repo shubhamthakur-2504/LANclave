@@ -34,6 +34,7 @@ async fn start_server(
         settings: Arc::new(std::sync::RwLock::new(crate::settings::AppSettings {
             display_name: "Test Node".to_string(),
             sandbox_path: root.to_string_lossy().into_owned(),
+            ..Default::default()
         })),
         device_id: "test-device".to_string(),
         identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
@@ -58,8 +59,8 @@ async fn start_server(
 }
 
 fn cancel_channel() -> (
-    tokio::sync::oneshot::Sender<super::StopReason>,
-    tokio::sync::oneshot::Receiver<super::StopReason>,
+    tokio::sync::oneshot::Sender<super::pull::StopReason>,
+    tokio::sync::oneshot::Receiver<super::pull::StopReason>,
 ) {
     tokio::sync::oneshot::channel()
 }

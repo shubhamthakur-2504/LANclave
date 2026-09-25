@@ -14,8 +14,12 @@ import java.util.concurrent.Executors
  * Mirrors the desktop's pull (`client/pull.rs`) step for step:
  * dedupe → resumable pull into a hidden partial file → verify SHA-256
  * against the sender → rename to a free name (never overwrite).
- * One download at a time; the foreground service keeps the process alive
- * while anything is queued or running.
+ *
+ * One scheduler for every download (P6), same rules as the desktop's
+ * `transfers.rs`: at most [maxDownloads] run at once (default 2); pausing
+ * frees the slot; resuming goes to the front of the queue; a download the
+ * sender paused steps out and rejoins after 5 s. The foreground service
+ * keeps the process alive while anything is queued or running.
  */
 object TransferEngine {
     enum class Status { QUEUED, IN_PROGRESS, VERIFYING, PAUSED, COMPLETED, SKIPPED, FAILED }
@@ -44,8 +48,11 @@ object TransferEngine {
         @Volatile var destName: String? = null
         @Volatile var stop: Stop? = null
         @Volatile var pausedBySender = false
+        /** A sender pause holds it back until this time (ms). */
+        @Volatile var notBefore = 0L
 
-        fun toMap(): Map<String, Any?> = mapOf(
+        /** `ahead`: downloads waiting in front of this one, if it waits. */
+        fun toMap(ahead: Int? = null): Map<String, Any?> = mapOf(
             "id" to id,
             "fileName" to name,
             "peerId" to peerId,
@@ -58,15 +65,31 @@ object TransferEngine {
             "offerId" to offerId,
             "fileId" to fileId,
             "pausedBySender" to pausedBySender,
+            "ahead" to ahead,
         )
     }
 
+    /** Every job; also the lock for [queue]. */
     private val jobs = LinkedHashMap<String, Job>()
-    private val runner = Executors.newSingleThreadExecutor { r -> Thread(r, "lanclave-transfers").apply { isDaemon = true } }
-    /** Re-queues jobs a sender paused, without holding up the rest. */
+    /** Queued and running downloads, by the rules above. */
+    private val queue = Scheduler<String>()
+    private val workers = Executors.newCachedThreadPool { r -> Thread(r, "lanclave-transfers").apply { isDaemon = true } }
+    /** Wakes the queue when a download the sender paused may ask again. */
     private val later = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "lanclave-retry").apply { isDaemon = true } }
     @Volatile private var app: Context? = null
     @Volatile private var sandboxPath: String? = null
+
+    private const val PREFS = "lanclave_transfers"
+    private const val SENDER_PAUSE_MS = 5_000L
+
+    /** Downloads that run at once; the rest wait their turn. */
+    var maxDownloads: Int
+        get() = synchronized(jobs) { queue.max }
+        set(value) {
+            synchronized(jobs) { queue.max = value.coerceIn(1, 8) }
+            app?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()?.putInt("max_downloads", value)?.apply()
+            pump()
+        }
 
     /** Called whenever a job ends: offers report results from here. */
     @Volatile var onJobEnded: ((Job) -> Unit)? = null
@@ -74,9 +97,11 @@ object TransferEngine {
     fun configure(context: Context, sandbox: String) {
         app = context.applicationContext
         sandboxPath = sandbox
+        val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("max_downloads", 2)
+        synchronized(jobs) { queue.max = saved.coerceIn(1, 8) }
     }
 
-    fun snapshot(): List<Map<String, Any?>> = synchronized(jobs) { jobs.values.map { it.toMap() } }
+    fun snapshot(): List<Map<String, Any?>> = synchronized(jobs) { jobs.values.map { it.toMap(queue.ahead(it.id)) } }
 
     /** Queued or running, i.e. reasons to keep the service up. */
     fun active(): List<Job> = synchronized(jobs) {
@@ -104,19 +129,49 @@ object TransferEngine {
         return job.id
     }
 
-    fun enqueue(job: Job) {
-        synchronized(jobs) { jobs[job.id] = job }
-        job.status = Status.QUEUED
-        job.stop = null
+    /** Put a download in line; it starts when a slot is free. */
+    fun enqueue(job: Job, front: Boolean = false) {
+        synchronized(jobs) {
+            jobs[job.id] = job
+            job.status = Status.QUEUED
+            job.stop = null
+            job.notBefore = 0L
+            queue.add(job.id, front)
+        }
         emit(job)
-        runner.execute { run(job) }
+        pump()
     }
 
+    /** Start what the free slots allow; tell waiting rows their place. */
+    private fun pump() {
+        val now = System.currentTimeMillis()
+        val start = synchronized(jobs) { queue.take(now).mapNotNull { jobs[it] } }
+        for (job in start) {
+            workers.execute {
+                try {
+                    run(job)
+                } finally {
+                    synchronized(jobs) { queue.finished(job.id) }
+                    pump()
+                }
+            }
+        }
+        val waiting = synchronized(jobs) { jobs.values.filter { it.status == Status.QUEUED }.map { it.toMap(queue.ahead(it.id)) } }
+        waiting.forEach { Events.emit("onTransferProgress", it) }
+    }
+
+    /** Stop a download, keeping what arrived; a waiting one leaves the line. */
     fun pause(id: String) {
         val job = get(id) ?: return
-        if (job.status == Status.QUEUED) {
+        val waiting = synchronized(jobs) {
+            (job.status == Status.QUEUED && !queue.isRunning(id)).also { if (it) queue.remove(id) }
+        }
+        if (waiting) {
             job.status = Status.PAUSED
+            job.message = null
+            job.pausedBySender = false
             emit(job)
+            pump() // the rest move up
         } else {
             job.stop = Stop.PAUSE
         }
@@ -124,20 +179,24 @@ object TransferEngine {
 
     fun cancel(id: String) {
         val job = get(id) ?: return
-        when (job.status) {
-            Status.QUEUED, Status.PAUSED, Status.FAILED -> {
-                job.stop = Stop.CANCEL
-                discardPartial(job)
-                finish(job, Status.FAILED, "Transfer cancelled")
-            }
-            else -> job.stop = Stop.CANCEL
+        val idle = synchronized(jobs) {
+            (job.status in listOf(Status.QUEUED, Status.PAUSED, Status.FAILED) && !queue.isRunning(id))
+                .also { if (it) queue.remove(id) }
+        }
+        if (idle) {
+            job.stop = Stop.CANCEL
+            discardPartial(job)
+            finish(job, Status.FAILED, "Transfer cancelled")
+            pump()
+        } else {
+            job.stop = Stop.CANCEL
         }
     }
 
-    /** Continue a paused or failed download from its partial file. */
+    /** Continue a paused or failed download: to the front of the line. */
     fun resume(id: String) {
         val job = get(id) ?: return
-        if (job.status == Status.PAUSED || job.status == Status.FAILED) enqueue(job)
+        if (job.status == Status.PAUSED || job.status == Status.FAILED) enqueue(job, front = true)
     }
 
     /** Stop the offer's downloads (the sender withdrew it). */
@@ -166,7 +225,8 @@ object TransferEngine {
     }
 
     private fun run(job: Job) {
-        if (job.status != Status.QUEUED || job.stop != null) return // paused or cancelled while queued
+        if (job.status != Status.QUEUED) return
+        if (job.stop != null) return stopped(job) // paused or cancelled as it took its slot
         val ctx = app ?: return finish(job, Status.FAILED, "Not ready")
         val sandbox = Sandbox(ctx, sandboxPath ?: return finish(job, Status.FAILED, "No sandbox"))
         if (!Identity.isSet) return finish(job, Status.FAILED, "Identity not ready")
@@ -183,15 +243,15 @@ object TransferEngine {
             try {
                 return pullOnce(ctx, sandbox, job)
             } catch (e: SenderPaused) {
-                // Step aside: other downloads run meanwhile; this one is
-                // queued again in 5 s (pause / cancel still apply).
+                // Step out of the slot: other downloads run meanwhile; this
+                // one waits at the back of the line for 5 s (pause and
+                // cancel still apply).
                 job.pausedBySender = true
                 job.message = "Paused by sender"
                 job.status = Status.QUEUED
+                synchronized(jobs) { queue.later(job.id, System.currentTimeMillis() + SENDER_PAUSE_MS) }
                 emit(job)
-                later.schedule({
-                    if (job.status == Status.QUEUED && job.stop == null) runner.execute { run(job) }
-                }, 5, java.util.concurrent.TimeUnit.SECONDS)
+                later.schedule({ pump() }, SENDER_PAUSE_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
                 return
             } catch (e: IOException) {
                 if (job.stop != null) return stopped(job)
@@ -392,7 +452,7 @@ object TransferEngine {
     }
 
     private fun emit(job: Job) {
-        Events.emit("onTransferProgress", job.toMap())
+        Events.emit("onTransferProgress", job.toMap(synchronized(jobs) { queue.ahead(job.id) }))
         TransferService.refresh(app)
     }
 }

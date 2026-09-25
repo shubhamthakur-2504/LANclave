@@ -49,6 +49,9 @@ class ExpoNativeServerModule : Module() {
     Function("resumeTransfer") { id: String -> TransferEngine.resume(id) }
     Function("cancelTransfer") { id: String -> TransferEngine.cancel(id) }
     Function("getTransfers") { TransferEngine.snapshot() }
+    /** Downloads that run at once (1-8, default 2); kept across restarts. */
+    Function("getMaxDownloads") { TransferEngine.maxDownloads }
+    Function("setMaxDownloads") { n: Int -> TransferEngine.maxDownloads = n }
 
     // ---- Offers --------------------------------------------------------
 

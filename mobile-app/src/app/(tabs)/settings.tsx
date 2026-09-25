@@ -15,10 +15,21 @@ import { Paths } from "expo-file-system";
 import { C } from "@/constants/colors";
 import { AppSettings, getSettings, saveSettings } from "@/services/settings";
 import { startServer, isServerRunning } from "@/services/server";
+import ExpoNativeServerModule from "../../../modules/expo-native-server/src/ExpoNativeServerModule";
+
+/** The native engine's download limit; null where there is no engine. */
+function readMaxDownloads(): number | null {
+  try {
+    return ExpoNativeServerModule.getMaxDownloads();
+  } catch {
+    return null; // iOS, or an older native build
+  }
+}
 
 export default function SettingsScreen() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [saving, setSaving] = useState(false);
+  const [maxDownloads, setMaxDownloads] = useState<number | null>(readMaxDownloads);
   
   // Local state for the text input to show save/cancel buttons
   const [localDisplayName, setLocalDisplayName] = useState("");
@@ -186,6 +197,31 @@ export default function SettingsScreen() {
               )}
             </View>
           </View>
+
+          {maxDownloads !== null && (
+            <View style={styles.section}>
+              <Text style={styles.label}>Downloads at once</Text>
+              <Text style={styles.hint}>
+                The rest wait their turn. Two fill a Wi-Fi connection without spreading it thin.
+              </Text>
+              <View style={styles.btnRow}>
+                {[1, 2, 3, 4].map((n) => (
+                  <TouchableOpacity
+                    key={n}
+                    style={[styles.btn, n === maxDownloads ? styles.btnPrimary : styles.btnSecondary]}
+                    onPress={() => {
+                      ExpoNativeServerModule.setMaxDownloads(n);
+                      setMaxDownloads(n);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: n === maxDownloads }}
+                  >
+                    <Text style={n === maxDownloads ? styles.btnTextPrimary : styles.btnTextSecondary}>{n}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
         </View>
       </SafeAreaView>
     </View>

@@ -33,8 +33,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::client::pull::{PullSource, StopReason, TransferOutcome};
-use crate::client::{transport, ClientError};
+use crate::client::transport;
 use crate::history::{Direction, HistoryEntry, Initiator, Outcome};
 use crate::presence::now_ms;
 use crate::server::AppState;
@@ -133,8 +132,6 @@ pub struct IncomingOffer {
     pub state: OfferState,
     pub accepted: Vec<String>,
     pub results: HashMap<String, FileResult>,
-    /// True while the pull queue is running.
-    pub receiving: bool,
     pub received_ms: u64,
     pub expires_ms: u64,
 }
@@ -218,8 +215,10 @@ impl OfferStore {
         }
         {
             let mut inc = self.incoming.lock().unwrap();
+            // An accepted offer past its time is refused by the sender
+            // anyway; its unfinished downloads fail when they next start.
             for offer in inc.values_mut() {
-                if !offer.state.is_final() && now >= offer.expires_ms && !offer.receiving {
+                if !offer.state.is_final() && now >= offer.expires_ms {
                     offer.state = OfferState::Expired;
                 }
             }
@@ -286,7 +285,6 @@ pub async fn receive_offer(
         state: OfferState::Waiting,
         accepted: Vec::new(),
         results: HashMap::new(),
-        receiving: false,
         received_ms: now,
         expires_ms: now + PENDING_TTL_MS,
     };
@@ -346,7 +344,10 @@ pub async fn offer_withdrawn(
     });
     // Stop whatever is being pulled for it.
     if let Some(app) = &state.app_handle {
-        stop_offer_pulls(app, &offer, StopReason::Cancel);
+        use tauri::Manager;
+        if let Some(transfers) = app.try_state::<Arc<crate::transfers::TransferManager>>() {
+            transfers.cancel_offer(&offer.id);
+        }
     }
     state.offers.emit_changed();
     Ok(StatusCode::OK)
@@ -761,38 +762,13 @@ pub fn list_offers(offers: tauri::State<'_, Arc<OfferStore>>) -> OffersSnapshot 
 // Commands: receiving
 // ---------------------------------------------------------------------------
 
-/// Everything the pull queue needs, cloned out of Tauri state.
-#[derive(Clone)]
-struct ReceiveCtx {
-    app: tauri::AppHandle,
-    offers: Arc<OfferStore>,
-    history: Arc<crate::history::HistoryStore>,
-    presence: Arc<crate::presence::PresenceStore>,
-    sandbox_root: PathBuf,
-    device_id: String,
-    key: ed25519_dalek::SigningKey,
-}
-
-impl ReceiveCtx {
-    fn from(app: &tauri::AppHandle, state: &crate::commands::CliState, offers: &Arc<OfferStore>) -> Result<Self, String> {
-        Ok(Self {
-            app: app.clone(),
-            offers: offers.clone(),
-            history: state.history.clone(),
-            presence: state.presence.clone(),
-            sandbox_root: PathBuf::from(&state.settings.read().map_err(|e| e.to_string())?.sandbox_path),
-            device_id: state.device_id.clone(),
-            key: state.identity_key.clone(),
-        })
-    }
-}
-
-/// Take some or all files of an incoming offer and start pulling them.
+/// Take some or all files of an incoming offer: each goes into the
+/// download queue, which pulls them as slots come free.
 #[tauri::command]
 pub async fn accept_offer(
-    app: tauri::AppHandle,
     state: tauri::State<'_, crate::commands::CliState>,
     offers: tauri::State<'_, Arc<OfferStore>>,
+    transfers: tauri::State<'_, Arc<crate::transfers::TransferManager>>,
     offer_id: String,
     file_ids: Vec<String>,
 ) -> Result<(), String> {
@@ -805,9 +781,9 @@ pub async fn accept_offer(
         return Err("choose at least one file".into());
     }
 
-    let ctx = ReceiveCtx::from(&app, &state, &offers)?;
+    let sandbox_root = PathBuf::from(&state.settings.read().map_err(|e| e.to_string())?.sandbox_path);
     let needed: u64 = chosen.iter().map(|f| f.size).sum();
-    if let Ok(free) = fs2::available_space(&ctx.sandbox_root) {
+    if let Ok(free) = fs2::available_space(&sandbox_root) {
         // Leave a little room: a disk filled to the last byte breaks more
         // than this download.
         if needed.saturating_add(64 * 1024 * 1024) > free {
@@ -821,7 +797,7 @@ pub async fn accept_offer(
 
     let path = format!("/api/offers/{offer_id}/accept");
     let ids: Vec<&str> = chosen.iter().map(|f| f.id.as_str()).collect();
-    let status = transport::post_json(&offer.peer_addr, &path, &serde_json::json!({ "file_ids": ids }), &ctx.device_id, &ctx.key)
+    let status = transport::post_json(&offer.peer_addr, &path, &serde_json::json!({ "file_ids": ids }), &state.device_id, &state.identity_key)
         .await
         .map_err(|e| e.to_string())?;
     if !status.is_success() {
@@ -834,48 +810,27 @@ pub async fn accept_offer(
         o.expires_ms = now_ms() + ACCEPTED_TTL_MS;
     });
     offers.emit_changed();
-    spawn_queue(ctx, offer_id);
-    Ok(())
-}
-
-/// Continue an accepted offer's remaining files (after a pause or failure).
-#[tauri::command]
-pub fn resume_offer(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, crate::commands::CliState>,
-    offers: tauri::State<'_, Arc<OfferStore>>,
-    offer_id: String,
-) -> Result<(), String> {
-    let offer = offers.incoming(&offer_id).ok_or("this offer is gone")?;
-    if offer.state != OfferState::Accepted {
-        return Err("this offer is no longer active".into());
+    for file in &chosen {
+        transfers.enqueue(crate::transfers::Transfer::offer_file(&offer, file));
     }
-    // A file that failed is given another go.
-    offers.update_incoming(&offer_id, |o| o.results.retain(|_, r| r.outcome != "failed"));
-    spawn_queue(ReceiveCtx::from(&app, &state, &offers)?, offer_id);
     Ok(())
 }
 
-/// Skip one file of an accepted offer: discard its partial download.
-#[tauri::command]
-pub async fn skip_offer_file(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, crate::commands::CliState>,
-    offers: tauri::State<'_, Arc<OfferStore>>,
-    offer_id: String,
-    file_id: String,
-) -> Result<(), String> {
-    let offer = offers.incoming(&offer_id).ok_or("this offer is gone")?;
-    let file = offer.files.iter().find(|f| f.id == file_id).ok_or("no such file")?.clone();
-    let ctx = ReceiveCtx::from(&app, &state, &offers)?;
-    crate::client::pull::discard_partial_for(&ctx.sandbox_root.join(&file.name)).await;
-    offers.update_incoming(&offer_id, |o| {
-        o.results.insert(file_id.clone(), FileResult { outcome: "cancelled".into(), dest_name: None, error: None });
-    });
+/// Let a failed file of an accepted offer be pulled again.
+pub fn reopen_file(offers: &OfferStore, offer_id: &str, file_id: &str) -> Result<(), String> {
+    offers
+        .update_incoming(offer_id, |o| {
+            if o.state != OfferState::Accepted {
+                return Err("this offer is no longer active".to_string());
+            }
+            // Only a failure is undone; a finished file stays finished.
+            if o.results.get(file_id).is_some_and(|r| r.outcome == "failed") {
+                o.results.remove(file_id);
+            }
+            Ok(())
+        })
+        .ok_or("this offer is gone")??;
     offers.emit_changed();
-    if offer.state == OfferState::Accepted {
-        spawn_queue(ctx, offer_id);
-    }
     Ok(())
 }
 
@@ -894,182 +849,36 @@ pub async fn decline_offer(
     Ok(())
 }
 
-/// Stop every pull of `offer` that is running.
-fn stop_offer_pulls(app: &tauri::AppHandle, offer: &IncomingOffer, reason: StopReason) {
-    use tauri::Manager;
-    let Some(transfers) = app.try_state::<crate::commands::TransferState>() else { return };
-    for f in &offer.files {
-        let id = transfer_id(&offer.id, &f.id);
-        if let Some(crate::commands::CancelHandle::Pull(tx)) = transfers.cancellations.write().unwrap().remove(&id) {
-            let _ = tx.send(reason);
-        }
-    }
-}
-
 pub fn transfer_id(offer_id: &str, file_id: &str) -> String {
     format!("offer:{offer_id}:{file_id}")
 }
 
-/// Run the offer's remaining files one after another, then report.
-fn spawn_queue(ctx: ReceiveCtx, offer_id: String) {
-    let already = ctx
-        .offers
-        .update_incoming(&offer_id, |o| std::mem::replace(&mut o.receiving, true))
-        .unwrap_or(true);
-    if already {
-        return; // a queue is running for it
-    }
-    ctx.offers.emit_changed();
-
-    tauri::async_runtime::spawn(async move {
-        loop {
-            let Some(offer) = ctx.offers.incoming(&offer_id) else { break };
-            if offer.state != OfferState::Accepted {
-                break;
-            }
-            let Some(file) = offer.remaining().into_iter().next() else { break };
-            match receive_file(&ctx, &offer, &file).await {
-                Some(result) => {
-                    ctx.offers.update_incoming(&offer_id, |o| {
-                        o.results.insert(file.id.clone(), result);
-                    });
-                    ctx.offers.emit_changed();
-                }
-                // Paused: the queue waits for Resume.
-                None => break,
-            }
+/// A download of an offered file ended. Once every accepted file has, tell
+/// the sender how each went -- again after a retry, which the sender
+/// accepts for files that had failed.
+pub fn file_ended(app: &tauri::AppHandle, offer_id: &str, file_id: &str, result: FileResult) {
+    use tauri::Manager;
+    let offers = app.state::<Arc<OfferStore>>().inner().clone();
+    let offer = offers.update_incoming(offer_id, |o| {
+        o.results.insert(file_id.to_string(), result);
+        // Failures keep it open, so Retry can pull them again.
+        if o.state == OfferState::Accepted && all_settled(&o.accepted, &o.results) {
+            o.state = OfferState::Done;
         }
-
-        let offer = ctx.offers.update_incoming(&offer_id, |o| {
-            o.receiving = false;
-            // Failures keep it open, so Retry can pull them again.
-            if o.state == OfferState::Accepted && all_settled(&o.accepted, &o.results) {
-                o.state = OfferState::Done;
-            }
-            o.clone()
-        });
-        ctx.offers.emit_changed();
-
-        // Tell the sender how its files ended, once all have -- again after
-        // a retry, which the sender accepts for files that had failed.
-        let ended = |o: &IncomingOffer| {
-            matches!(o.state, OfferState::Accepted | OfferState::Done) && o.remaining().is_empty()
-        };
-        if let Some(offer) = offer.filter(ended) {
-            let body = serde_json::json!({ "results": offer.results });
-            let path = format!("/api/offers/{}/report", offer.id);
-            let addr = ctx.presence.addr_of(&offer.peer_id).unwrap_or(offer.peer_addr.clone());
-            let _ = transport::post_json(&addr, &path, &body, &ctx.device_id, &ctx.key).await;
-        }
+        o.clone()
     });
-}
+    offers.emit_changed();
 
-/// Pull one offered file, retrying through network trouble and sender
-/// pauses. `None` when the user paused it (the queue then stops).
-async fn receive_file(ctx: &ReceiveCtx, offer: &IncomingOffer, file: &OfferFile) -> Option<FileResult> {
-    use tauri::{Emitter, Manager};
-    let id = transfer_id(&offer.id, &file.id);
-    let _ = ctx.app.emit(
-        "transfer-started",
-        serde_json::json!({
-            "id": id,
-            "file_name": file.name,
-            "file_size": file.size,
-            "peer_id": offer.peer_id,
-            "peer_name": offer.peer_name,
-            "direction": "download",
-            "offer_id": offer.id,
-            "file_id": file.id,
-        }),
-    );
-
-    let source = PullSource {
-        path: format!("/api/offers/{}/files/{}", offer.id, file.id),
-        fingerprint_path: Some(format!("/api/offers/{}/files/{}/fingerprint", offer.id, file.id)),
-    };
-    let dest = ctx.sandbox_root.join(&file.name);
-    let mut network_retries = 0u32;
-
-    let result = loop {
-        // Still wanted?
-        match ctx.offers.incoming(&offer.id).map(|o| o.state) {
-            Some(OfferState::Accepted) => {}
-            _ => break Err(ClientError::IoError("Transfer cancelled".into())),
-        }
-
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        if let Some(transfers) = ctx.app.try_state::<crate::commands::TransferState>() {
-            transfers.cancellations.write().unwrap().insert(id.clone(), crate::commands::CancelHandle::Pull(tx));
-        }
-        // The sender's address can change mid-offer (hotspot DHCP);
-        // presence follows it.
-        let addr = ctx.presence.addr_of(&offer.peer_id).unwrap_or(offer.peer_addr.clone());
-        let app = ctx.app.clone();
-        let attempt = crate::client::pull::pull_from_source(
-            &id, &addr, &source, &dest, Some(file.size), &ctx.device_id, &ctx.key, rx,
-            |e| {
-                let _ = app.emit(crate::client::pull::event_name(&e.status), e.clone());
-            },
-        )
-        .await;
-        if let Some(transfers) = ctx.app.try_state::<crate::commands::TransferState>() {
-            transfers.cancellations.write().unwrap().remove(&id);
-        }
-
-        match attempt {
-            Err(ClientError::ServerRejected(503)) => {
-                // Paused by the sender: say so, then check back.
-                let _ = ctx.app.emit(
-                    "transfer-paused",
-                    serde_json::json!({ "id": id, "bytes_transferred": 0, "total_bytes": file.size,
-                        "status": "paused", "message": "Paused by sender" }),
-                );
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            }
-            Err(ClientError::ConnectionFailed(_)) | Err(ClientError::HttpError(_)) if network_retries < 5 => {
-                // Waiting for network: back off, then resume from the partial.
-                network_retries += 1;
-                tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(network_retries).min(30))).await;
-            }
-            other => break other,
-        }
-    };
-
-    let (history_outcome, file_result) = match &result {
-        Ok(r) if r.outcome == TransferOutcome::Paused => return None,
-        Ok(r) => {
-            let outcome = if r.outcome == TransferOutcome::AlreadyPresent { "skipped" } else { "completed" };
-            (
-                if outcome == "skipped" { Outcome::Skipped } else { Outcome::Completed },
-                FileResult { outcome: outcome.into(), dest_name: Some(r.dest_name.clone()), error: None },
-            )
-        }
-        Err(e) if e.to_string().contains("cancelled") => (
-            Outcome::Cancelled,
-            FileResult { outcome: "cancelled".into(), dest_name: None, error: None },
-        ),
-        Err(e) => (
-            Outcome::Failed,
-            FileResult { outcome: "failed".into(), dest_name: None, error: Some(e.to_string()) },
-        ),
-    };
-
-    let mut entry = HistoryEntry::new(
-        Direction::Received,
-        Initiator::Peer,
-        offer.peer_id.clone(),
-        offer.peer_name.clone(),
-        file.name.clone(),
-    );
-    entry.outcome = history_outcome;
-    entry.bytes = match &result {
-        Ok(r) => r.bytes,
-        Err(_) => 0,
-    };
-    entry.dest_name = file_result.dest_name.clone().filter(|d| *d != file.name);
-    entry.error = file_result.error.clone();
-    ctx.history.record(entry);
-    Some(file_result)
+    let ended = |o: &IncomingOffer| matches!(o.state, OfferState::Accepted | OfferState::Done) && o.remaining().is_empty();
+    let Some(offer) = offer.filter(ended) else { return };
+    let cli = app.state::<crate::commands::CliState>();
+    let (device_id, key) = (cli.device_id.clone(), cli.identity_key.clone());
+    let addr = cli.presence.addr_of(&offer.peer_id).unwrap_or(offer.peer_addr.clone());
+    tauri::async_runtime::spawn(async move {
+        let body = serde_json::json!({ "results": offer.results });
+        let path = format!("/api/offers/{}/report", offer.id);
+        let _ = transport::post_json(&addr, &path, &body, &device_id, &key).await;
+    });
 }
 
 /// Run every 30 s: expire lapsed offers, and log unanswered ones we sent.
@@ -1134,6 +943,7 @@ mod tests {
             settings: Arc::new(std::sync::RwLock::new(crate::settings::AppSettings {
                 display_name: "Sender".into(),
                 sandbox_path: dir.path().to_string_lossy().into_owned(),
+                ..Default::default()
             })),
             device_id: "sender".into(),
             identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),

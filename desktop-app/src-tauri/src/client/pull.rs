@@ -162,6 +162,7 @@ impl Partial {
 
 /// Stream a file from the peer's sandbox into `local_save_path`; see
 /// [`pull_from_source`].
+#[cfg(test)]
 pub(crate) async fn pull_file_to_disk(
     transfer_id: &str,
     peer_addr: &str,
@@ -474,45 +475,4 @@ fn stopped_before_start(reason: Result<StopReason, oneshot::error::RecvError>) -
 /// Delete the partial download for `dest`, if any.
 pub async fn discard_partial_for(dest: &Path) {
     Partial::for_destination(dest).discard().await;
-}
-
-/// Tauri-facing wrapper around [`pull_file_to_disk`] that re-emits progress
-/// events as Tauri events for the React frontend.
-pub async fn pull_file_from_peer(
-    app: tauri::AppHandle,
-    transfer_id: String,
-    peer_addr: &str,
-    remote_path: &str,
-    local_save_path: &Path,
-    remote_size: Option<u64>,
-    device_id: &str,
-    signing_key: &SigningKey,
-    stop_rx: oneshot::Receiver<StopReason>,
-) -> Result<TransferReport, ClientError> {
-    use tauri::Emitter;
-
-    pull_file_to_disk(
-        &transfer_id,
-        peer_addr,
-        remote_path,
-        local_save_path,
-        remote_size,
-        device_id,
-        signing_key,
-        stop_rx,
-        |event| {
-            let _ = app.emit(event_name(&event.status), (*event).clone());
-        },
-    )
-    .await
-}
-
-/// The frontend event a progress status is delivered as.
-pub fn event_name(status: &str) -> &'static str {
-    match status {
-        "in_progress" | "verifying" => "transfer-progress",
-        "completed" | "skipped" => "transfer-completed",
-        "paused" => "transfer-paused",
-        _ => "transfer-failed",
-    }
 }

@@ -94,44 +94,6 @@ impl HistoryEntry {
     }
 }
 
-/// The entry for a transfer this device started, from how it ended.
-pub fn entry_for_local_transfer(
-    direction: Direction,
-    peer_id: String,
-    peer_name: Option<String>,
-    file_name: String,
-    result: &Result<crate::client::pull::TransferReport, crate::client::ClientError>,
-) -> HistoryEntry {
-    use crate::client::pull::TransferOutcome;
-
-    let mut entry = HistoryEntry::new(direction, Initiator::Me, peer_id, peer_name, file_name);
-    match result {
-        Ok(report) => {
-            entry.bytes = report.bytes;
-            entry.outcome = match report.outcome {
-                TransferOutcome::Transferred => Outcome::Completed,
-                TransferOutcome::AlreadyPresent => Outcome::Skipped,
-                // Callers do not log pauses; if one slips through, it did
-                // not finish.
-                TransferOutcome::Paused => Outcome::Cancelled,
-            };
-            if report.dest_name != entry.file_name {
-                entry.dest_name = Some(report.dest_name.clone());
-            }
-        }
-        Err(err) => {
-            let message = err.to_string();
-            entry.outcome = if message.contains("cancelled") {
-                Outcome::Cancelled
-            } else {
-                Outcome::Failed
-            };
-            entry.error = Some(message);
-        }
-    }
-    entry
-}
-
 /// Logs one transfer a peer started against our server, whenever and however
 /// it ends: success, an early error return, or the peer dropping the
 /// connection mid-stream (which drops the handler's future, and this with it).

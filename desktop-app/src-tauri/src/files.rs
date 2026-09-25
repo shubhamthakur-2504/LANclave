@@ -344,6 +344,7 @@ mod tests {
             settings: Arc::new(std::sync::RwLock::new(crate::settings::AppSettings {
                 display_name: "Test Node".to_string(),
                 sandbox_path: dir.path().to_string_lossy().into_owned(),
+                ..Default::default()
             })),
             device_id: "test-device".to_string(),
             identity_key: ed25519_dalek::SigningKey::generate(&mut OsRng),

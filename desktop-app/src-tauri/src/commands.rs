@@ -48,16 +48,6 @@ pub struct CliState {
     pub offers: Arc<crate::offers::OfferStore>,
 }
 
-pub enum CancelHandle {
-    Pull(tokio::sync::oneshot::Sender<client::StopReason>),
-    Push(std::sync::Arc<std::sync::atomic::AtomicBool>),
-}
-
-#[derive(Default)]
-pub struct TransferState {
-    pub cancellations: RwLock<std::collections::HashMap<String, CancelHandle>>,
-}
-
 // ---------------------------------------------------------------------------
 // Serializable types
 // ---------------------------------------------------------------------------
@@ -490,8 +480,8 @@ struct RemoteFileEntry {
 
 #[tauri::command]
 pub async fn pull_file(
-    app: tauri::AppHandle,
     state: State<'_, CliState>,
+    transfers: State<'_, Arc<crate::transfers::TransferManager>>,
     peer_addr: String,
     remote_path: String,
     local_filename: String,
@@ -502,104 +492,29 @@ pub async fn pull_file(
     peer_id: Option<String>,
     peer_name: Option<String>,
 ) -> Result<String, String> {
-    let safe_path = {
+    {
         let settings = state.settings.read().map_err(|e| e.to_string())?;
         let sandbox_root = PathBuf::from(&settings.sandbox_path);
         sandbox::verify_sandboxed_path(&sandbox_root, &local_filename)
-            .map_err(|e| format!("invalid save path: {e}"))?
-    };
-
-    let transfer_id = uuid::Uuid::new_v4().to_string();
-    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
-
-    let transfer_state: State<'_, TransferState> = app.state();
-    transfer_state.cancellations.write().unwrap().insert(transfer_id.clone(), CancelHandle::Pull(cancel_tx));
-
-    let device_id = state.device_id.clone();
-    let identity_key = state.identity_key.clone();
-    let transfer_id_clone = transfer_id.clone();
-    let (peer_id, peer_name) = peer_identity(&state, &peer_addr, peer_id, peer_name);
-    let history = state.history.clone();
-
-    tokio::spawn(async move {
-        let result = client::pull_file_from_peer(
-            app.clone(),
-            transfer_id_clone.clone(),
-            &peer_addr,
-            &remote_path,
-            &safe_path,
-            remote_size,
-            &device_id,
-            &identity_key,
-            cancel_rx,
-        )
-        .await;
-
-        forget_transfer(&app, &transfer_id_clone);
-        // A pause is not an ending: the resumed pull logs the outcome.
-        let paused = matches!(&result, Ok(r) if r.outcome == client::pull::TransferOutcome::Paused);
-        if !paused {
-            history.record(crate::history::entry_for_local_transfer(
-                crate::history::Direction::Received,
-                peer_id,
-                peer_name,
-                remote_path,
-                &result,
-            ));
-        }
-    });
-
-    Ok(transfer_id)
-}
-
-#[tauri::command]
-pub fn cancel_transfer(
-    transfer_state: State<'_, TransferState>,
-    transfer_id: String,
-) {
-    stop_transfer(&transfer_state, &transfer_id, client::StopReason::Cancel);
-}
-
-/// Stop a download but keep what arrived, so pulling the same file again
-/// resumes where it stopped. Uploads cannot resume, so pausing one cancels it.
-#[tauri::command]
-pub fn pause_transfer(
-    transfer_state: State<'_, TransferState>,
-    transfer_id: String,
-) {
-    stop_transfer(&transfer_state, &transfer_id, client::StopReason::Pause);
-}
-
-/// Throw away a paused download's partial file (the user chose Discard).
-#[tauri::command]
-pub async fn discard_partial(state: State<'_, CliState>, local_filename: String) -> Result<(), String> {
-    let sandbox_root = {
-        let settings = state.settings.read().map_err(|e| e.to_string())?;
-        PathBuf::from(&settings.sandbox_path)
-    };
-    let dest = sandbox::validate_sandboxed_path(&sandbox_root, &local_filename)
-        .map_err(|e| format!("invalid path: {e}"))?;
-    client::pull::discard_partial_for(&dest).await;
-    Ok(())
-}
-
-fn stop_transfer(transfer_state: &TransferState, transfer_id: &str, reason: client::StopReason) {
-    if let Some(handle) = transfer_state.cancellations.write().unwrap().remove(transfer_id) {
-        match handle {
-            CancelHandle::Pull(tx) => {
-                let _ = tx.send(reason);
-            }
-            CancelHandle::Push(flag) => {
-                flag.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
+            .map_err(|e| format!("invalid save path: {e}"))?;
     }
+
+    // Asking again for a file already on its way continues that download
+    // rather than starting a second one into the same partial file.
+    if let Some(open) = transfers.open_pull_into(&local_filename) {
+        transfers.resume(&open.id)?;
+        return Ok(open.id);
+    }
+
+    let (peer_id, peer_name) = peer_identity(&state, &peer_addr, peer_id, peer_name);
+    let row = crate::transfers::Transfer::sandbox_pull(peer_addr, peer_id, peer_name, remote_path, local_filename, remote_size);
+    Ok(transfers.enqueue(row))
 }
 
 #[tauri::command]
 pub async fn push_file(
-    app: tauri::AppHandle,
     state: State<'_, CliState>,
+    transfers: State<'_, Arc<crate::transfers::TransferManager>>,
     peer_addr: String,
     local_relative_path: String,
     remote_path: String,
@@ -613,50 +528,35 @@ pub async fn push_file(
         sandbox::verify_sandboxed_path(&sandbox_root, &local_relative_path)
             .map_err(|e| format!("invalid source path: {e}"))?
     };
+    let size = std::fs::metadata(&safe_local_path).map(|m| m.len()).unwrap_or(0);
 
-    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let (peer_id, peer_name) = peer_identity(&state, &peer_addr, peer_id, peer_name);
+    let row = crate::transfers::Transfer::upload(peer_addr.clone(), peer_id, peer_name, local_relative_path, remote_path.clone(), size);
+    let transfer_id = row.id.clone();
     let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-    let transfer_state: State<'_, TransferState> = app.state();
-    transfer_state.cancellations.write().unwrap().insert(transfer_id.clone(), CancelHandle::Push(cancel_flag.clone()));
+    transfers.add_upload(row, cancel_flag.clone());
 
     let device_id = state.device_id.clone();
     let identity_key = state.identity_key.clone();
-    let transfer_id_clone = transfer_id.clone();
-    let (peer_id, peer_name) = peer_identity(&state, &peer_addr, peer_id, peer_name);
-    let history = state.history.clone();
-
+    let manager = transfers.inner().clone();
+    let id = transfer_id.clone();
     tokio::spawn(async move {
-        let result = crate::client::push::push_file_to_peer_managed(
-            app.clone(),
-            transfer_id_clone.clone(),
+        let progress = manager.clone();
+        let result = crate::client::push::push_file_with_progress(
+            &id,
             &peer_addr,
             &safe_local_path,
             &remote_path,
             &device_id,
             &identity_key,
             cancel_flag,
+            move |e| progress.on_event(e),
         )
         .await;
-
-        forget_transfer(&app, &transfer_id_clone);
-        history.record(crate::history::entry_for_local_transfer(
-            crate::history::Direction::Sent,
-            peer_id,
-            peer_name,
-            remote_path,
-            &result,
-        ));
+        manager.end(&id, crate::transfers::upload_end(&result));
     });
 
     Ok(transfer_id)
-}
-
-/// Drop a finished transfer's cancel handle; nothing is left to cancel.
-fn forget_transfer(app: &tauri::AppHandle, transfer_id: &str) {
-    if let Some(ts) = app.try_state::<TransferState>() {
-        ts.cancellations.write().unwrap().remove(transfer_id);
-    }
 }
 
 /// Resolve the peer at `addr` to a device id and display name for the
@@ -897,13 +797,15 @@ pub async fn get_settings(state: State<'_, CliState>) -> Result<AppSettings, Str
 #[tauri::command]
 pub async fn update_settings(
     state: State<'_, CliState>,
+    transfers: State<'_, Arc<crate::transfers::TransferManager>>,
     new_settings: AppSettings,
 ) -> Result<(), String> {
     save_settings(&state.app_data_dir, &new_settings)?;
-    
+
     // Update active settings
-    let mut current = state.settings.write().map_err(|e| e.to_string())?;
-    *current = new_settings;
+    *state.settings.write().map_err(|e| e.to_string())? = new_settings;
+    // A higher download limit starts waiting downloads now.
+    transfers.pump();
     Ok(())
 }
 

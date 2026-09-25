@@ -99,7 +99,9 @@ export default function TransfersScreen() {
                       ? 'ALREADY THERE'
                       : item.status === 'verifying'
                         ? 'CHECKING'
-                        : item.status.replace('_', ' ').toUpperCase()}
+                        : item.status === 'pending' && item.native
+                          ? 'WAITING'
+                          : item.status.replace('_', ' ').toUpperCase()}
                   </Text>
                 </View>
 
@@ -137,7 +139,7 @@ export default function TransfersScreen() {
 
                 {(inProgress || item.status === 'pending') && (
                   <View style={[styles.actions, styles.actionRow]}>
-                    {item.native && item.status === 'in_progress' && (
+                    {item.native && (item.status === 'in_progress' || item.status === 'pending') && (
                       <Pressable style={styles.pauseBtn} onPress={() => pauseTransfer(item.id)}>
                         <Text style={styles.pauseText}>Pause</Text>
                       </Pressable>

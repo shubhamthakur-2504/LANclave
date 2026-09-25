@@ -62,9 +62,15 @@ function fromNative(job: NativeTransfer, prev?: Transfer): Transfer {
     peerAddr: prev?.peerAddr,
     remoteName: prev?.remoteName ?? job.fileName,
     native: true,
-    message: job.pausedBySender ? 'Paused by sender' : job.message ?? undefined,
+    message: job.pausedBySender ? 'Paused by sender' : job.message ?? placeInLine(job),
     offerId: job.offerId ?? undefined,
   };
+}
+
+/** A waiting download's place: "Next in line", "2 ahead". */
+function placeInLine(job: NativeTransfer): string | undefined {
+  if (job.status !== 'queued' || job.ahead == null) return undefined;
+  return job.ahead === 0 ? 'Next in line' : `${job.ahead} ahead`;
 }
 
 /** Last path segment of a SAF document URI, e.g. ".../LANclave%2Fphoto%20(1).jpg" → "photo (1).jpg". */

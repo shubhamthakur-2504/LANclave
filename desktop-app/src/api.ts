@@ -5,7 +5,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import type { PeerInfo, FileEntry, SandboxFile, HistoryEntry, OffersSnapshot } from "./types";
+import type { PeerInfo, FileEntry, SandboxFile, HistoryEntry, OffersSnapshot, TransferRow } from "./types";
 
 // ── Dialogs ────────────────────────────────────────────────────────
 
@@ -68,25 +68,54 @@ export async function listPeerFiles(peerAddr: string): Promise<FileEntry[]> {
   return await invoke("list_peer_files", { peerAddr });
 }
 
-export async function pullFile(
-  peerAddr: string,
-  remotePath: string,
-  localFilename: string,
-  remoteSize?: number,
-): Promise<string> {
-  return await invoke("pull_file", { peerAddr, remotePath, localFilename, remoteSize });
+/** Queue a download from a peer's sandbox; resolves to the transfer id. */
+export async function pullFile(peer: PeerInfo, file: FileEntry): Promise<string> {
+  return await invoke("pull_file", {
+    peerAddr: peer.addr,
+    remotePath: file.name,
+    localFilename: file.name,
+    // Lets the backend rule out a duplicate by size before asking the peer.
+    remoteSize: file.size > 0 ? file.size : null,
+    peerId: peer.device_id,
+    peerName: peer.device_name ?? null,
+  });
 }
 
-export async function pushFile(
-  peerAddr: string,
-  localRelativePath: string,
-  remotePath: string,
-): Promise<string> {
-  return await invoke("push_file", { peerAddr, localRelativePath, remotePath });
+/** Push a sandbox file the old way (peers without offers). */
+export async function pushFile(peer: PeerInfo, localRelativePath: string, remotePath: string): Promise<string> {
+  return await invoke("push_file", {
+    peerAddr: peer.addr,
+    localRelativePath,
+    remotePath,
+    peerId: peer.device_id,
+    peerName: peer.device_name ?? null,
+  });
+}
+
+// ── Transfers ──────────────────────────────────────────────────────
+
+/** Every transfer the backend knows of, newest first. */
+export async function listTransfers(): Promise<TransferRow[]> {
+  return await invoke("list_transfers");
 }
 
 export async function cancelTransfer(transferId: string): Promise<void> {
   await invoke("cancel_transfer", { transferId });
+}
+
+/** Stop a download, keeping what arrived; a waiting one leaves the queue. */
+export async function pauseTransfer(transferId: string): Promise<void> {
+  await invoke("pause_transfer", { transferId });
+}
+
+/** Continue a paused download, or retry a failed one: to the front of the queue. */
+export async function resumeTransfer(transferId: string): Promise<void> {
+  await invoke("resume_transfer", { transferId });
+}
+
+/** Forget a transfer and throw away its partial file. */
+export async function discardTransfer(transferId: string): Promise<void> {
+  await invoke("discard_transfer", { transferId });
 }
 
 // ── Offers ─────────────────────────────────────────────────────────
@@ -122,14 +151,6 @@ export async function cancelOffer(offerId: string): Promise<void> {
 
 export async function pauseOffer(offerId: string, paused: boolean): Promise<void> {
   await invoke("pause_offer", { offerId, paused });
-}
-
-export async function resumeOffer(offerId: string): Promise<void> {
-  await invoke("resume_offer", { offerId });
-}
-
-export async function skipOfferFile(offerId: string, fileId: string): Promise<void> {
-  await invoke("skip_offer_file", { offerId, fileId });
 }
 
 // ── History ────────────────────────────────────────────────────────

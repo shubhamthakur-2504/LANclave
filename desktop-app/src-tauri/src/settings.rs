@@ -6,6 +6,14 @@ use std::path::{Path, PathBuf};
 pub struct AppSettings {
     pub display_name: String,
     pub sandbox_path: String,
+    /// Downloads that run at once; the rest wait their turn. Two fill a
+    /// Wi-Fi link without spreading it thin.
+    #[serde(default = "default_max_downloads")]
+    pub max_downloads: usize,
+}
+
+fn default_max_downloads() -> usize {
+    2
 }
 
 impl Default for AppSettings {
@@ -14,6 +22,7 @@ impl Default for AppSettings {
             display_name: "Desktop Workstation".to_string(),
             // The default path will be populated dynamically if loaded empty
             sandbox_path: "".to_string(),
+            max_downloads: default_max_downloads(),
         }
     }
 }

@@ -13,6 +13,7 @@ mod range;
 mod sandbox;
 mod server;
 mod settings;
+mod transfers;
 mod tray;
 
 use commands::CliState;
@@ -57,6 +58,7 @@ pub fn run() {
     let server_controller = Arc::new(ServerController::new());
     let history = Arc::new(history::HistoryStore::load(&app_data_dir));
     let offers = Arc::new(offers::OfferStore::default());
+    let transfers = Arc::new(transfers::TransferManager::new(settings.clone(), history.clone()));
     let presence = Arc::new(presence::PresenceStore::new());
 
     // Seed presence with the addresses we knew last run so paired peers can be
@@ -100,7 +102,7 @@ pub fn run() {
             offers: offers.clone(),
         })
         .manage(offers.clone())
-        .manage(commands::TransferState::default())
+        .manage(transfers.clone())
         .on_window_event(tray::on_window_event)
         .setup(move |app| {
             tray::install(app)?;
@@ -120,6 +122,7 @@ pub fn run() {
             ctx.app_handle = Some(app.handle().clone());
             history.set_app_handle(app.handle().clone());
             offers.set_app_handle(app.handle().clone());
+            transfers.set_app_handle(app.handle().clone());
             offers::spawn_sweeper(offers.clone(), history.clone());
 
             // Announce ourselves to every paired peer, then poll them on a
@@ -148,9 +151,11 @@ pub fn run() {
             commands::list_peer_files,
             commands::pull_file,
             commands::push_file,
-            commands::cancel_transfer,
-            commands::pause_transfer,
-            commands::discard_partial,
+            transfers::list_transfers,
+            transfers::cancel_transfer,
+            transfers::pause_transfer,
+            transfers::resume_transfer,
+            transfers::discard_transfer,
             // History
             commands::get_transfer_history,
             // Offers
@@ -159,8 +164,6 @@ pub fn run() {
             offers::pause_offer,
             offers::list_offers,
             offers::accept_offer,
-            offers::resume_offer,
-            offers::skip_offer_file,
             offers::decline_offer,
             commands::clear_transfer_history,
             // Pairing

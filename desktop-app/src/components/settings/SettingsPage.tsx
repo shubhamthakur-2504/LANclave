@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 interface AppSettings {
   display_name: string;
   sandbox_path: string;
+  /** Downloads that run at once; the rest wait their turn. */
+  max_downloads: number;
 }
 
 export function SettingsPage() {
@@ -104,6 +106,28 @@ export function SettingsPage() {
               Browse...
             </button>
           </div>
+        </section>
+
+        <section>
+          <label htmlFor="max-downloads" className="block text-lg font-semibold text-content mb-1">
+            Downloads at once
+          </label>
+          <p className="text-sm text-content-muted mb-3">
+            The rest wait their turn. Two fill a Wi-Fi connection without spreading it thin.
+          </p>
+          <select
+            id="max-downloads"
+            className="bg-surface-inset border border-border rounded-xl px-4 py-3 text-content focus:outline-none focus:border-action transition-colors"
+            value={settings.max_downloads}
+            disabled={saving}
+            onChange={(e) => handleSave({ ...settings, max_downloads: Number(e.target.value) })}
+          >
+            {[1, 2, 3, 4].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
         </section>
       </div>
     </div>

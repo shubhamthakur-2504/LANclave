@@ -64,6 +64,13 @@ function calcEta(transfer: Transfer): string {
   return `~${Math.round(seconds / 60)}m remaining`;
 }
 
+/** Why a row is waiting or paused, or its place in the queue. */
+function waitingNote(t: Transfer): string | undefined {
+  if (t.message) return t.message;
+  if (t.status !== "queued" || t.ahead === undefined) return undefined;
+  return t.ahead === 0 ? "Next in line" : `${t.ahead} ahead`;
+}
+
 function statusBadge(status: Transfer["status"], skipped?: boolean): React.ReactNode {
   if (status === "completed" && skipped) {
     return (
@@ -112,10 +119,10 @@ function statusBadge(status: Transfer["status"], skipped?: boolean): React.React
           Paused
         </span>
       );
-    case "pending":
+    case "queued":
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-content-muted/10 px-2 py-0.5 text-[11px] font-medium text-content-muted">
-          Pending
+          Waiting
         </span>
       );
   }
@@ -134,7 +141,7 @@ export default function TransferListPanel({
     activeFilter === "all"
       ? transfers
       : activeFilter === "active"
-        ? transfers.filter((t) => ["in_progress", "pending", "verifying", "paused"].includes(t.status))
+        ? transfers.filter((t) => ["in_progress", "queued", "verifying", "paused"].includes(t.status))
         : transfers.filter((t) => t.status === activeFilter);
 
   return (
@@ -204,8 +211,8 @@ export default function TransferListPanel({
                       </span>
                     </div>
                     
-                    {t.status === "paused" && t.error && (
-                      <p className="mt-1 truncate text-xs text-content-muted">{t.error}</p>
+                    {t.status !== "failed" && waitingNote(t) && (
+                      <p className="mt-1 truncate text-xs text-content-muted">{waitingNote(t)}</p>
                     )}
                     {t.status === "failed" && (
                       <p className="mt-1 truncate text-xs text-danger">
@@ -213,7 +220,7 @@ export default function TransferListPanel({
                       </p>
                     )}
 
-                    {(t.status === "in_progress" || t.status === "pending" || t.status === "paused") && (
+                    {(t.status === "in_progress" || t.status === "queued" || t.status === "paused") && (
                       <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-surface-active">
                         <div
                           className="h-full rounded-full bg-action transition-all duration-300"
@@ -245,7 +252,7 @@ export default function TransferListPanel({
                     
                     {/* Actions */}
                     <div className="mt-4 flex gap-2">
-                      {t.status === "in_progress" && (
+                      {(t.status === "in_progress" || t.status === "queued") && (
                         <>
                           <button
                             onClick={(e) => { e.stopPropagation(); pauseTransfer(t.id); }}
@@ -307,7 +314,7 @@ export default function TransferListPanel({
                               e.stopPropagation();
                               retryTransfer(t.id);
                             }}
-                            disabled={!t.peerAddr || !t.remotePath}
+                            disabled={t.direction === "upload" && (!t.peerAddr || !t.remotePath)}
                             className="flex w-full items-center justify-center gap-2 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active disabled:opacity-40"
                           >
                             <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />

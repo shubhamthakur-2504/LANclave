@@ -46,6 +46,8 @@ export interface NativeTransfer {
   offerId: string | null;
   fileId: string | null;
   pausedBySender: boolean;
+  /** Queued downloads: how many wait in front of this one. */
+  ahead: number | null;
 }
 
 export interface PairingRequestEvent {
@@ -89,6 +91,9 @@ declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
   resumeTransfer(id: string): void;
   cancelTransfer(id: string): void;
   getTransfers(): NativeTransfer[];
+  /** Downloads that run at once (default 2); the rest wait in line. */
+  getMaxDownloads(): number;
+  setMaxDownloads(n: number): void;
   /** Offers snapshot as JSON: `{ outgoing: [...], incoming: [...] }`. */
   listOffers(): string;
   /** Offer files (`[{uri, name, size}]` as JSON); the offer id, or null if the peer predates offers. */

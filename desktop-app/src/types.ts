@@ -28,8 +28,9 @@ export interface FileEntry {
 // Local sandbox list (same shape as FileEntry from list_sandbox_files)
 export type SandboxFile = FileEntry;
 
-// Transfers (UI-only for now — no backend)
-export type TransferStatus = "pending" | "in_progress" | "verifying" | "paused" | "completed" | "failed";
+// Transfers -- the backend holds the list (`transfers.rs`); the page shows it.
+/** "queued": waiting for one of the download slots. */
+export type TransferStatus = "queued" | "in_progress" | "verifying" | "paused" | "completed" | "failed";
 export type TransferDirection = "upload" | "download";
 export type TransferFilter = "all" | "active" | "completed" | "failed";
 
@@ -54,6 +55,10 @@ export interface Transfer {
   destName?: string;
   /** Why it failed, for the failure state. Absent unless status is failed. */
   error?: string;
+  /** Why it is waiting or paused: "Paused by sender", "Waiting for network". */
+  message?: string;
+  /** Queued downloads: how many wait ahead of this one. */
+  ahead?: number;
   /** Set when this download is a file of an incoming offer. */
   offerId?: string;
   offerFileId?: string;
@@ -61,6 +66,29 @@ export interface Transfer {
   peerAddr?: string;
   remotePath?: string;
   localPath?: string;
+}
+
+/** A row as `transfers.rs` sends it. */
+export interface TransferRow {
+  id: string;
+  file_name: string;
+  file_size: number;
+  peer_id: string;
+  peer_name: string | null;
+  direction: TransferDirection;
+  progress: number;
+  status: TransferStatus;
+  skipped: boolean;
+  dest_name: string | null;
+  error: string | null;
+  message: string | null;
+  started_ms: number;
+  ahead: number | null;
+  peer_addr: string | null;
+  remote_path: string | null;
+  local_path: string | null;
+  offer_id: string | null;
+  offer_file_id: string | null;
 }
 
 // Transfer history (30 days) -- mirrors `history.rs`'s HistoryEntry.
@@ -122,7 +150,6 @@ export interface IncomingOffer {
   state: OfferState;
   accepted: string[];
   results: Record<string, FileResult>;
-  receiving: boolean;
   received_ms: number;
   expires_ms: number;
 }
