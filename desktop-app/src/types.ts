@@ -54,6 +54,9 @@ export interface Transfer {
   destName?: string;
   /** Why it failed, for the failure state. Absent unless status is failed. */
   error?: string;
+  /** Set when this download is a file of an incoming offer. */
+  offerId?: string;
+  offerFileId?: string;
   /** Kept so a failed transfer can be retried without re-picking anything. */
   peerAddr?: string;
   remotePath?: string;
@@ -79,6 +82,54 @@ export interface HistoryEntry {
   bytes: number;
   outcome: HistoryOutcome;
   error: string | null;
+}
+
+// Offers -- mirrors `offers.rs`.
+export type OfferState = "waiting" | "accepted" | "declined" | "cancelled" | "expired" | "done";
+
+export interface OfferFile {
+  id: string;
+  name: string;
+  size: number;
+  modified?: number | null;
+}
+
+export interface FileResult {
+  outcome: "completed" | "skipped" | "failed" | "cancelled";
+  dest_name?: string | null;
+  error?: string | null;
+}
+
+export interface OutgoingOffer {
+  id: string;
+  peer_id: string;
+  peer_name: string | null;
+  files: OfferFile[];
+  state: OfferState;
+  paused: boolean;
+  accepted: string[];
+  served: Record<string, number>;
+  results: Record<string, FileResult>;
+  created_ms: number;
+  expires_ms: number;
+}
+
+export interface IncomingOffer {
+  id: string;
+  peer_id: string;
+  peer_name: string | null;
+  files: OfferFile[];
+  state: OfferState;
+  accepted: string[];
+  results: Record<string, FileResult>;
+  receiving: boolean;
+  received_ms: number;
+  expires_ms: number;
+}
+
+export interface OffersSnapshot {
+  outgoing: OutgoingOffer[];
+  incoming: IncomingOffer[];
 }
 
 // Connection / pairing

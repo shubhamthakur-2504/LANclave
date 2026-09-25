@@ -7,6 +7,8 @@ import PeersPage from "./components/peers/PeersPage";
 import FilesPage from "./components/files/FilesPage";
 import TransfersPage from "./components/transfers/TransfersPage";
 import ConnectionModal from "./components/connection/ConnectionModal";
+import IncomingOfferModal from "./components/offers/IncomingOfferModal";
+import { OffersProvider, useOffers } from "./contexts/OffersContext";
 import RemoteFilesPage from "./components/files/RemoteFilesPage";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { TransferProvider, useTransfers } from "./contexts/TransferContext";
@@ -22,12 +24,14 @@ function AppInner() {
   const [localFiles, setLocalFiles] = useState<FileEntry[]>([]);
   const toast = useToast();
   const { startUpload, transfers } = useTransfers();
+  const { sendFiles, pendingIncoming } = useOffers();
 
   // Badges the Transfers nav item, so the page is for detail rather than for
-  // watching. Pending counts too: a queued transfer is still movement.
-  const activeTransfers = transfers.filter(
-    (t) => t.status === "in_progress" || t.status === "pending",
-  ).length;
+  // watching. Pending counts too: a queued transfer is still movement, and
+  // an offer waiting for an answer is something to act on.
+  const activeTransfers =
+    transfers.filter((t) => t.status === "in_progress" || t.status === "pending").length +
+    pendingIncoming.length;
 
   // Pairing state
   const [pairPeer, setPairPeer] = useState<PeerInfo | null>(null);
@@ -126,13 +130,18 @@ function AppInner() {
           : undefined;
 
         if (target) {
-          for (const name of imported) {
-            await startUpload(target, name, name, 0);
+          const plural = `${imported.length} file${imported.length > 1 ? "s" : ""}`;
+          const who = target.device_name || "peer";
+          // One offer for the whole drop: one prompt on the other side.
+          if ((await sendFiles(target, imported)) === "offer") {
+            toast.success(`Offered ${plural} to ${who}.`, "They'll be sent once accepted.");
+          } else {
+            // A peer from before offers: push them the old way.
+            for (const name of imported) {
+              await startUpload(target, name, name, 0);
+            }
+            toast.success(`Sending ${plural}`, `To ${who}.`);
           }
-          toast.success(
-            `Sending ${imported.length} file${imported.length > 1 ? "s" : ""}`,
-            `To ${target.device_name || "peer"}.`,
-          );
         } else {
           toast.success(
             `Added ${imported.length} file${imported.length > 1 ? "s" : ""}`,
@@ -143,7 +152,7 @@ function AppInner() {
         toast.error(e);
       }
     },
-    [peerUnder, refreshFiles, peers, startUpload, toast],
+    [peerUnder, refreshFiles, peers, sendFiles, startUpload, toast],
   );
 
   const { isDragging, position: dragPosition } = useFileDrop(handleDrop);
@@ -364,6 +373,7 @@ function AppInner() {
           }}
           onPaired={handlePaired}
         />
+        <IncomingOfferModal />
       </div>
   );
 }
@@ -375,7 +385,9 @@ export default function App() {
   return (
     <ToastProvider>
       <TransferProvider>
-        <AppInner />
+        <OffersProvider>
+          <AppInner />
+        </OffersProvider>
       </TransferProvider>
     </ToastProvider>
   );

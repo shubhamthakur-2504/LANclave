@@ -3,6 +3,7 @@ import type { TransferFilter } from "../../types";
 import { useTransfers } from "../../contexts/TransferContext";
 import TransferListPanel from "./TransferListPanel";
 import HistoryPanel from "./HistoryPanel";
+import OffersSection from "../offers/OffersSection";
 
 type View = "activity" | "history";
 
@@ -36,11 +37,16 @@ export default function TransfersPage() {
       </div>
       <div className="min-h-0 flex-1">
         {view === "activity" ? (
-          <TransferListPanel
-            transfers={transfers}
-            activeFilter={activeFilter}
-            onFilterChange={setActiveFilter}
-          />
+          <div className="flex h-full flex-col">
+            <OffersSection />
+            <div className="min-h-0 flex-1">
+              <TransferListPanel
+                transfers={transfers}
+                activeFilter={activeFilter}
+                onFilterChange={setActiveFilter}
+              />
+            </div>
+          </div>
         ) : (
           <HistoryPanel />
         )}

@@ -5,7 +5,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import type { PeerInfo, FileEntry, SandboxFile, HistoryEntry } from "./types";
+import type { PeerInfo, FileEntry, SandboxFile, HistoryEntry, OffersSnapshot } from "./types";
 
 // ── Dialogs ────────────────────────────────────────────────────────
 
@@ -87,6 +87,49 @@ export async function pushFile(
 
 export async function cancelTransfer(transferId: string): Promise<void> {
   await invoke("cancel_transfer", { transferId });
+}
+
+// ── Offers ─────────────────────────────────────────────────────────
+
+/** Offer sandbox files to a peer. `legacy`: it predates offers; push instead. */
+export async function sendFiles(
+  peer: PeerInfo,
+  localNames: string[],
+): Promise<{ kind: "offer"; offer_id: string } | { kind: "legacy" }> {
+  return await invoke("send_files", {
+    peerAddr: peer.addr,
+    peerId: peer.device_id,
+    peerName: peer.device_name ?? null,
+    localNames,
+  });
+}
+
+export async function listOffers(): Promise<OffersSnapshot> {
+  return await invoke("list_offers");
+}
+
+export async function acceptOffer(offerId: string, fileIds: string[]): Promise<void> {
+  await invoke("accept_offer", { offerId, fileIds });
+}
+
+export async function declineOffer(offerId: string): Promise<void> {
+  await invoke("decline_offer", { offerId });
+}
+
+export async function cancelOffer(offerId: string): Promise<void> {
+  await invoke("cancel_offer", { offerId });
+}
+
+export async function pauseOffer(offerId: string, paused: boolean): Promise<void> {
+  await invoke("pause_offer", { offerId, paused });
+}
+
+export async function resumeOffer(offerId: string): Promise<void> {
+  await invoke("resume_offer", { offerId });
+}
+
+export async function skipOfferFile(offerId: string, fileId: string): Promise<void> {
+  await invoke("skip_offer_file", { offerId, fileId });
 }
 
 // ── History ────────────────────────────────────────────────────────

@@ -182,6 +182,38 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     listen<TransferProgressEvent>("transfer-progress", handleProgress).then(unsub => unlisteners.push(unsub));
     listen<TransferProgressEvent>("transfer-completed", handleCompleted).then(unsub => unlisteners.push(unsub));
     listen<TransferProgressEvent>("transfer-failed", handleFailed).then(unsub => unlisteners.push(unsub));
+    // Offer downloads are started by the backend; this is their row.
+    listen<{
+      id: string;
+      file_name: string;
+      file_size: number;
+      peer_id: string;
+      peer_name: string | null;
+      offer_id: string;
+      file_id: string;
+    }>("transfer-started", (event) => {
+      const e = event.payload;
+      setTransfers((prev) => {
+        const row: Transfer = {
+          id: e.id,
+          fileName: e.file_name,
+          fileSize: e.file_size,
+          peerId: e.peer_id,
+          peerName: e.peer_name ?? "Unknown device",
+          direction: "download",
+          progress: 0,
+          status: "in_progress",
+          speed: 0,
+          startedAt: new Date().toISOString(),
+          offerId: e.offer_id,
+          offerFileId: e.file_id,
+        };
+        const existing = prev.find((t) => t.id === e.id);
+        return existing
+          ? prev.map((t) => (t.id === e.id ? { ...t, status: "in_progress", error: undefined } : t))
+          : [row, ...prev];
+      });
+    }).then(unsub => unlisteners.push(unsub));
     listen<TransferProgressEvent>("transfer-paused", (event) => {
       const { id, bytes_transferred, total_bytes } = event.payload;
       setTransfers((prev) =>
@@ -360,6 +392,15 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
   const retryTransfer = useCallback(
     async (id: string) => {
       const t = transfersRef.current.find((x) => x.id === id);
+      // An offer file retries through its offer: the backend re-pulls it.
+      if (t?.offerId) {
+        try {
+          await invoke("resume_offer", { offerId: t.offerId });
+        } catch (err) {
+          toast.error(err, t.peerName);
+        }
+        return;
+      }
       if (!t || !t.peerAddr || !t.remotePath) return;
 
       const peer: PeerInfo = {
@@ -381,7 +422,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         await startUpload(peer, t.localPath ?? t.remotePath, t.remotePath, t.fileSize);
       }
     },
-    [startDownload, startUpload],
+    [startDownload, startUpload, toast],
   );
 
   const pauseTransfer = useCallback(async (id: string) => {
@@ -399,7 +440,11 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     const t = transfersRef.current.find((x) => x.id === id);
     if (!t) return;
     try {
-      await invoke("discard_partial", { localFilename: t.localPath ?? t.fileName });
+      if (t.offerId && t.offerFileId) {
+        await invoke("skip_offer_file", { offerId: t.offerId, fileId: t.offerFileId });
+      } else {
+        await invoke("discard_partial", { localFilename: t.localPath ?? t.fileName });
+      }
     } catch (err) {
       console.error("Failed to discard partial download:", err);
     }
