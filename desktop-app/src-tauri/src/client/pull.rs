@@ -476,3 +476,37 @@ fn stopped_before_start(reason: Result<StopReason, oneshot::error::RecvError>) -
 pub async fn discard_partial_for(dest: &Path) {
     Partial::for_destination(dest).discard().await;
 }
+
+/// Delete partial downloads, and their notes, that nothing has written to
+/// for `max_age`, anywhere under `root`. Returns how many files went.
+/// Blocking: run it off the async runtime.
+pub fn sweep_stale_partials(root: &Path, max_age: std::time::Duration) -> usize {
+    fn walk(dir: &Path, depth: u32, cutoff: std::time::SystemTime, removed: &mut usize) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            // Not followed: a link out of the sandbox is not ours to clean.
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                if depth < 8 {
+                    walk(&entry.path(), depth + 1, cutoff, removed);
+                }
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let partial = name.starts_with('.')
+                && (name.ends_with(".lanclave-part") || name.ends_with(".lanclave-part.json"));
+            if !kind.is_file() || !partial {
+                continue;
+            }
+            let old = entry.metadata().and_then(|m| m.modified()).is_ok_and(|t| t < cutoff);
+            if old && std::fs::remove_file(entry.path()).is_ok() {
+                *removed += 1;
+            }
+        }
+    }
+    let Some(cutoff) = std::time::SystemTime::now().checked_sub(max_age) else { return 0 };
+    let mut removed = 0;
+    walk(root, 0, cutoff, &mut removed);
+    removed
+}

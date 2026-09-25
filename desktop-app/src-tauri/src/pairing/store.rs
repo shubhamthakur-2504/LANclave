@@ -29,6 +29,10 @@ pub struct PairedDevice {
     /// so every use re-confirms the peer's identity via `/health`.
     #[serde(default)]
     pub last_addr: Option<String>,
+    /// Take its offers without asking ("Always accept from this device").
+    /// Pairing again starts from asking.
+    #[serde(default)]
+    pub auto_accept: bool,
 }
 
 /// In-memory store of paired devices.
@@ -96,6 +100,7 @@ impl DeviceStore {
                 device_name,
                 device_type: None,
                 last_addr: None,
+                auto_accept: false,
             },
         );
         Ok(())

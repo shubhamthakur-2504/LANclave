@@ -1,6 +1,7 @@
 package expo.modules.nativeserver
 
 import android.content.Context
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
@@ -20,6 +21,11 @@ import java.util.concurrent.Executors
  * frees the slot; resuming goes to the front of the queue; a download the
  * sender paused steps out and rejoins after 5 s. The foreground service
  * keeps the process alive while anything is queued or running.
+ *
+ * Unfinished downloads are kept in `transfers.json` (P5): after the app is
+ * closed or killed, paused ones come back paused, and ones that were
+ * running or waiting go back in line. Week-old ones, and their partial
+ * files, are cleared away.
  */
 object TransferEngine {
     enum class Status { QUEUED, IN_PROGRESS, VERIFYING, PAUSED, COMPLETED, SKIPPED, FAILED }
@@ -50,6 +56,15 @@ object TransferEngine {
         @Volatile var pausedBySender = false
         /** A sender pause holds it back until this time (ms). */
         @Volatile var notBefore = 0L
+        @Volatile var startedMs = System.currentTimeMillis()
+
+        fun toJson(): JSONObject = JSONObject()
+            .put("id", id).put("peerAddr", peerAddr).put("peerId", peerId)
+            .put("peerName", peerName ?: JSONObject.NULL).put("name", name).put("size", size ?: JSONObject.NULL)
+            .put("path", path).put("fingerprintPath", fingerprintPath ?: JSONObject.NULL)
+            .put("initiatedBy", initiatedBy).put("offerId", offerId ?: JSONObject.NULL).put("fileId", fileId ?: JSONObject.NULL)
+            .put("status", status.name).put("bytes", bytes).put("total", total)
+            .put("message", message ?: JSONObject.NULL).put("startedMs", startedMs)
 
         /** `ahead`: downloads waiting in front of this one, if it waits. */
         fun toMap(ahead: Int? = null): Map<String, Any?> = mapOf(
@@ -81,6 +96,11 @@ object TransferEngine {
 
     private const val PREFS = "lanclave_transfers"
     private const val SENDER_PAUSE_MS = 5_000L
+    private const val JOBS_FILE = "transfers.json"
+    /** Unfinished downloads and partial files are given up after a week. */
+    const val STALE_AFTER_MS = 7L * 24 * 60 * 60 * 1000
+    @Volatile private var loaded = false
+    private val saveLock = Any()
 
     /** Downloads that run at once; the rest wait their turn. */
     var maxDownloads: Int
@@ -99,6 +119,79 @@ object TransferEngine {
         sandboxPath = sandbox
         val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("max_downloads", 2)
         synchronized(jobs) { queue.max = saved.coerceIn(1, 8) }
+        if (!loaded) {
+            loaded = true
+            restore(context.applicationContext)
+            Thread({ sweepStale(context.applicationContext, sandbox) }, "lanclave-cleanup").apply { isDaemon = true }.start()
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Kept on disk
+    // ------------------------------------------------------------------
+
+    /** Keep the unfinished downloads; finished ones are in the history. */
+    private fun save() {
+        val ctx = app ?: return
+        val keep = synchronized(jobs) {
+            jobs.values.filter { it.status != Status.COMPLETED && it.status != Status.SKIPPED }.map { it.toJson() }
+        }
+        synchronized(saveLock) {
+            runCatching {
+                val tmp = File(ctx.filesDir, "$JOBS_FILE.tmp")
+                tmp.writeText(JSONArray(keep).toString())
+                tmp.renameTo(File(ctx.filesDir, JOBS_FILE))
+            }
+        }
+    }
+
+    private fun jobFrom(j: JSONObject): Job {
+        fun opt(key: String) = j.optString(key).takeIf { it.isNotEmpty() && it != "null" }
+        return Job(
+            id = j.getString("id"),
+            peerAddr = j.getString("peerAddr"),
+            peerId = j.getString("peerId"),
+            peerName = opt("peerName"),
+            name = j.getString("name"),
+            size = if (j.isNull("size")) null else j.optLong("size"),
+            path = j.getString("path"),
+            fingerprintPath = opt("fingerprintPath"),
+            initiatedBy = j.getString("initiatedBy"),
+            offerId = opt("offerId"),
+            fileId = opt("fileId"),
+        ).apply {
+            status = Status.valueOf(j.getString("status"))
+            bytes = j.optLong("bytes")
+            total = j.optLong("total")
+            message = opt("message")
+            startedMs = j.optLong("startedMs", System.currentTimeMillis())
+        }
+    }
+
+    /** What was running or waiting waits again, oldest first; paused stays paused. */
+    private fun restore(ctx: Context) {
+        val arr = runCatching { JSONArray(File(ctx.filesDir, JOBS_FILE).readText()) }.getOrNull() ?: return
+        val now = System.currentTimeMillis()
+        val restored = (0 until arr.length())
+            .mapNotNull { runCatching { jobFrom(arr.getJSONObject(it)) }.getOrNull() }
+            .filterNot { (it.status == Status.PAUSED || it.status == Status.FAILED) && now - it.startedMs > STALE_AFTER_MS }
+        synchronized(jobs) { restored.forEach { jobs[it.id] = it } }
+        for (job in restored) {
+            if (job.status in listOf(Status.QUEUED, Status.IN_PROGRESS, Status.VERIFYING)) {
+                job.message = null
+                enqueue(job)
+            } else {
+                emit(job)
+            }
+        }
+        save()
+    }
+
+    /** Partial files nothing has written to in a week, and their notes. */
+    private fun sweepStale(ctx: Context, sandbox: String) {
+        runCatching { Sandbox(ctx, sandbox).sweepStalePartials(STALE_AFTER_MS) }
+        val cutoff = System.currentTimeMillis() - STALE_AFTER_MS
+        File(ctx.filesDir, "partials").listFiles()?.filter { it.lastModified() < cutoff }?.forEach { it.delete() }
     }
 
     fun snapshot(): List<Map<String, Any?>> = synchronized(jobs) { jobs.values.map { it.toMap(queue.ahead(it.id)) } }
@@ -139,6 +232,7 @@ object TransferEngine {
             queue.add(job.id, front)
         }
         emit(job)
+        save()
         pump()
     }
 
@@ -171,6 +265,7 @@ object TransferEngine {
             job.message = null
             job.pausedBySender = false
             emit(job)
+            save()
             pump() // the rest move up
         } else {
             job.stop = Stop.PAUSE
@@ -251,6 +346,7 @@ object TransferEngine {
                 job.status = Status.QUEUED
                 synchronized(jobs) { queue.later(job.id, System.currentTimeMillis() + SENDER_PAUSE_MS) }
                 emit(job)
+                save()
                 later.schedule({ pump() }, SENDER_PAUSE_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
                 return
             } catch (e: IOException) {
@@ -416,6 +512,7 @@ object TransferEngine {
                 job.status = Status.PAUSED
                 job.message = null
                 emit(job)
+                save()
                 TransferService.refresh(app)
             }
             else -> {
@@ -429,6 +526,7 @@ object TransferEngine {
         job.status = status
         job.message = message
         emit(job)
+        save()
         record(job)
         onJobEnded?.invoke(job)
         TransferService.refresh(app)

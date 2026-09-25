@@ -8,6 +8,7 @@ import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoHTTPD.Response
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -17,6 +18,9 @@ import java.util.concurrent.ConcurrentHashMap
  * offers only from paired devices; an offered file served only to the
  * device it was offered to, only after it accepted, only until the offer
  * expires, only by random id; offered names reduced to a bare file name.
+ *
+ * Kept in `offers.json` (P5), so open offers survive the app being closed
+ * or killed: an accepted offer stays pullable and resumable on both sides.
  */
 object Offers {
     const val PENDING_TTL_MS = 10 * 60 * 1000L
@@ -80,12 +84,106 @@ object Offers {
     @Volatile private var app: Context? = null
     @Volatile private var sandboxPath: String? = null
     @Volatile private var deviceName: String = "Phone"
+    @Volatile private var loaded = false
+    private val saveLock = Any()
 
     fun configure(context: Context, sandbox: String, name: String) {
         app = context.applicationContext
         sandboxPath = sandbox
         deviceName = name
         TransferEngine.onJobEnded = ::onJobEnded
+        if (!loaded) {
+            loaded = true
+            load(context.applicationContext)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Kept on disk
+    // ------------------------------------------------------------------
+
+    private fun file(ctx: Context) = File(ctx.filesDir, "offers.json")
+
+    private fun save() {
+        val ctx = app ?: return
+        val json = JSONObject()
+            .put("outgoing", JSONArray(outgoing.values.map { o ->
+                // What the UI never sees: where the files are, and the peer.
+                o.toJson().put("peer_addr", o.peerAddr).put("uris", JSONObject(o.uris.mapValues { it.value.toString() }))
+            }))
+            .put("incoming", JSONArray(incoming.values.map { it.toJson().put("peer_addr", it.peerAddr) }))
+        synchronized(saveLock) {
+            runCatching {
+                val tmp = File(ctx.filesDir, "offers.json.tmp")
+                tmp.writeText(json.toString())
+                tmp.renameTo(file(ctx))
+            }
+        }
+    }
+
+    private fun load(ctx: Context) {
+        val json = runCatching { JSONObject(file(ctx).readText()) }.getOrNull() ?: return
+        json.optJSONArray("outgoing")?.let { arr ->
+            for (i in 0 until arr.length()) runCatching { outgoingFrom(arr.getJSONObject(i)) }.getOrNull()?.let { outgoing[it.id] = it }
+        }
+        json.optJSONArray("incoming")?.let { arr ->
+            for (i in 0 until arr.length()) runCatching { incomingFrom(arr.getJSONObject(i)) }.getOrNull()?.let { incoming[it.id] = it }
+        }
+        sweep()
+    }
+
+    private fun nameOrNull(j: JSONObject, key: String): String? =
+        j.optString(key).takeIf { it.isNotEmpty() && it != "null" }
+
+    private fun strings(arr: JSONArray?): List<String> = arr?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
+
+    private fun filesFrom(arr: JSONArray): List<OfferFile> = (0 until arr.length()).map { i ->
+        val f = arr.getJSONObject(i)
+        OfferFile(f.getString("id"), f.getString("name"), f.getLong("size"), f.optLong("modified").takeIf { it > 0 })
+    }
+
+    private fun outgoingFrom(j: JSONObject): Outgoing {
+        val u = j.getJSONObject("uris")
+        val uris = u.keys().asSequence().associateWith { Uri.parse(u.getString(it)) }
+        return Outgoing(j.getString("id"), j.getString("peer_id"), nameOrNull(j, "peer_name"), j.getString("peer_addr"),
+            filesFrom(j.getJSONArray("files")), uris, j.getLong("created_ms")).apply {
+            state = j.getString("state")
+            paused = j.optBoolean("paused")
+            accepted = strings(j.optJSONArray("accepted"))
+            expiresMs = j.getLong("expires_ms")
+            j.optJSONObject("served")?.let { s -> s.keys().forEach { served[it] = s.getLong(it) } }
+            j.optJSONObject("results")?.let { r -> r.keys().forEach { results[it] = r.getJSONObject(it) } }
+        }
+    }
+
+    private fun incomingFrom(j: JSONObject): Incoming =
+        Incoming(j.getString("id"), j.getString("peer_id"), nameOrNull(j, "peer_name"), j.getString("peer_addr"),
+            filesFrom(j.getJSONArray("files")), j.getLong("received_ms")).apply {
+            state = j.getString("state")
+            accepted = strings(j.optJSONArray("accepted"))
+            expiresMs = j.getLong("expires_ms")
+            j.optJSONObject("results")?.let { r -> r.keys().forEach { results[it] = r.getJSONObject(it) } }
+        }
+
+    // ------------------------------------------------------------------
+    // "Always accept from this device"
+    // ------------------------------------------------------------------
+
+    private fun prefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("lanclave_offers", Context.MODE_PRIVATE)
+
+    /** Devices whose offers are taken without asking. */
+    fun autoAccept(ctx: Context): Set<String> = prefs(ctx).getStringSet("auto_accept", emptySet())?.toSet() ?: emptySet()
+
+    fun setAutoAccept(ctx: Context, deviceId: String, enabled: Boolean) {
+        val next = autoAccept(ctx).let { if (enabled) it + deviceId else it - deviceId }
+        prefs(ctx).edit().putStringSet("auto_accept", next).apply()
+    }
+
+    /** Forget the setting for devices no longer paired: pairing again starts from asking. */
+    fun keepAutoAcceptFor(ctx: Context, paired: Collection<String>) {
+        val current = autoAccept(ctx)
+        val next = current.intersect(paired.toSet())
+        if (next != current) prefs(ctx).edit().putStringSet("auto_accept", next).apply()
     }
 
     fun snapshotJson(): String {
@@ -103,6 +201,7 @@ object Offers {
     }
 
     fun changed() {
+        save()
         Events.emit("onOffersChanged", mapOf("json" to snapshotJson()))
         TransferService.refresh(app)
     }
@@ -192,8 +291,16 @@ object Offers {
         val name = PresenceRegistry.nameOf(caller) ?: json.optString("sender_name").takeIf { it.isNotEmpty() }
         val offer = Incoming(id, caller, name, "${session.remoteIpAddress}:8377", files, System.currentTimeMillis())
         incoming[id] = offer
-        Events.emit("onOfferReceived", mapOf("json" to offer.toJson().toString()))
         changed()
+        val ask = { Events.emit("onOfferReceived", mapOf("json" to offer.toJson().toString())) }
+        val ctx = app
+        if (ctx != null && caller in autoAccept(ctx)) {
+            // Answered after this reply: the sender registered the offer
+            // before posting it. No room, or the sender gone: ask instead.
+            Thread { runCatching { accept(id, files.map { it.id }) }.onFailure { ask() } }.start()
+        } else {
+            ask()
+        }
         return status(ACCEPTED_202)
     }
 

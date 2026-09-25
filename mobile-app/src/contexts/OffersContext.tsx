@@ -163,6 +163,21 @@ export function OffersProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Devices whose offers are taken without asking ("Always accept"). */
+export function readAutoAccept(): Set<string> {
+  if (Platform.OS !== "android") return new Set();
+  try {
+    return new Set(ExpoNativeServerModule.getAutoAccept());
+  } catch {
+    return new Set(); // older native build
+  }
+}
+
+export function setAutoAccept(deviceId: string, enabled: boolean): void {
+  if (Platform.OS !== "android") return;
+  ExpoNativeServerModule.setAutoAccept(deviceId, enabled);
+}
+
 /**
  * Offer files to a peer. Resolves to the offer id, or null when the peer
  * predates offers and the caller should push the old way.

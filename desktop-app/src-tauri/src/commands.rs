@@ -64,6 +64,9 @@ pub struct PeerInfo {
     /// us. Nothing works until it is removed and paired again.
     #[serde(default)]
     pub untrusted: bool,
+    /// Its offers are taken without asking.
+    #[serde(default)]
+    pub auto_accept: bool,
 }
 
 #[derive(Serialize)]
@@ -180,6 +183,7 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
                     .or_else(|| d.device_type.clone()),
                 paired: true,
                 untrusted: state.presence.is_untrusted(&d.device_id),
+                auto_accept: d.auto_accept,
             }
         })
         .collect();
@@ -205,6 +209,7 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
             device_type: p.device_type,
             paired: false,
             untrusted: false,
+            auto_accept: false,
         });
     }
 
@@ -358,6 +363,7 @@ pub fn list_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>, String> {
                 device_type: d.device_type.clone(),
                 paired: true,
                 untrusted: pres.as_ref().map(|p| p.untrusted).unwrap_or(false),
+                auto_accept: d.auto_accept,
             }
         })
         .collect())
@@ -772,6 +778,27 @@ pub async fn unpair_peer(
         tauri::async_runtime::spawn(async move {
             let _ = client::transport::send_pairing_cancel(&addr, &own_id, &key).await;
         });
+    }
+    Ok(())
+}
+
+/// Take a paired device's offers without asking, or go back to asking.
+#[tauri::command]
+pub fn set_auto_accept(
+    app: tauri::AppHandle,
+    state: State<'_, CliState>,
+    device_id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut store = state.device_store.write().map_err(|e| e.to_string())?;
+        let device = store.devices.get_mut(&device_id).ok_or("that device is not paired")?;
+        device.auto_accept = enabled;
+        store.save(&state.app_data_dir).map_err(|e| e.to_string())?;
+    }
+    // The peer list shows the setting.
+    if let Some(ctx) = app.try_state::<crate::presence::PresenceContext>() {
+        ctx.emit_changed();
     }
     Ok(())
 }

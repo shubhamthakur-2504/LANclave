@@ -66,6 +66,20 @@ class Sandbox(private val context: Context, private val rawPath: String) {
         return DocumentFile.fromSingleUri(context, renamed)?.name ?: to
     }
 
+    /** Delete partial downloads nothing has written to for `maxAgeMs`. */
+    fun sweepStalePartials(maxAgeMs: Long): Int {
+        val cutoff = System.currentTimeMillis() - maxAgeMs
+        fun partial(name: String?) = name != null && name.startsWith(".") && name.endsWith(".lanclave-part")
+        return if (isSaf) {
+            // A provider that cannot say when a file changed reports 0: keep it.
+            tree()?.listFiles()?.filter { it.isFile && partial(it.name) && it.lastModified() in 1 until cutoff }
+                ?.count { it.delete() } ?: 0
+        } else {
+            dir.listFiles()?.filter { it.isFile && partial(it.name) && it.lastModified() < cutoff }
+                ?.count { it.delete() } ?: 0
+        }
+    }
+
     /** Where to write a free space check; SAF trees live on shared storage. */
     fun freeBytes(): Long = try {
         val path = if (isSaf) android.os.Environment.getExternalStorageDirectory().path else dir.path

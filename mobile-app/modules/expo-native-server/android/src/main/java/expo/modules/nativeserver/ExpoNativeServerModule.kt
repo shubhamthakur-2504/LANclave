@@ -53,6 +53,16 @@ class ExpoNativeServerModule : Module() {
     Function("getMaxDownloads") { TransferEngine.maxDownloads }
     Function("setMaxDownloads") { n: Int -> TransferEngine.maxDownloads = n }
 
+    /** Devices whose offers are taken without asking (P5). */
+    Function("getAutoAccept") {
+      val context = appContext.reactContext ?: return@Function emptyList<String>()
+      Offers.autoAccept(context).toList()
+    }
+    Function("setAutoAccept") { deviceId: String, enabled: Boolean ->
+      val context = appContext.reactContext ?: throw Exception("React context is null")
+      Offers.setAutoAccept(context, deviceId, enabled)
+    }
+
     // ---- Offers --------------------------------------------------------
 
     Function("listOffers") { Offers.snapshotJson() }
@@ -77,6 +87,7 @@ class ExpoNativeServerModule : Module() {
         // and killing any transfer in flight. A start for a server that is
         // already listening with the same config is now just a paired-device
         // refresh.
+        appContext.reactContext?.let { Offers.keepAutoAcceptFor(it, pairedDevices.toList()) }
         if (existing != null && existing.isAlive && currentConfig == config) {
           existing.updatePairedDevices(pairedDevices.toList())
           return@Function true
@@ -104,8 +115,9 @@ class ExpoNativeServerModule : Module() {
           }
         }
         next.start(5000, false)
-        TransferEngine.configure(context, sandboxPath)
+        // Offers first: downloads restored from last time report to them.
         Offers.configure(context, sandboxPath, deviceName)
+        TransferEngine.configure(context, sandboxPath)
         server = next
         currentConfig = config
         true
@@ -238,6 +250,7 @@ class ExpoNativeServerModule : Module() {
     }
 
     Function("updatePairedDevices") { devices: Array<String> ->
+      appContext.reactContext?.let { Offers.keepAutoAcceptFor(it, devices.toList()) }
       server?.updatePairedDevices(devices.toList())
     }
   }

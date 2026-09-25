@@ -1,5 +1,6 @@
 import { Inbox, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import * as api from "../../api";
 import { useOffers } from "../../contexts/OffersContext";
 import { formatBytes } from "../../lib/stats";
 import { useToast } from "../ui/Toast";
@@ -14,10 +15,12 @@ export default function IncomingOfferModal() {
   const toast = useToast();
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [always, setAlways] = useState(false);
 
   // Everything ticked by default, afresh for each offer.
   useEffect(() => {
     setChosen(new Set(offer?.files.map((f) => f.id) ?? []));
+    setAlways(false);
   }, [offer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -94,6 +97,16 @@ export default function IncomingOfferModal() {
           ))}
         </ul>
 
+        <label className="mx-6 mt-3 flex cursor-pointer items-center gap-2 text-xs text-content-muted">
+          <input
+            type="checkbox"
+            checked={always}
+            onChange={(e) => setAlways(e.target.checked)}
+            className="h-3.5 w-3.5 accent-[var(--color-action)]"
+          />
+          Always accept from {who}
+        </label>
+
         {/* Equal weight, like the pairing dialog: no reflex-click target. */}
         <div className="flex gap-3 px-6 py-5">
           <button
@@ -104,7 +117,12 @@ export default function IncomingOfferModal() {
             Decline
           </button>
           <button
-            onClick={() => run(() => accept(offer.id, selected.map((f) => f.id)))}
+            onClick={() =>
+              run(async () => {
+                await accept(offer.id, selected.map((f) => f.id));
+                if (always) await api.setAutoAccept(offer.peer_id, true);
+              })
+            }
             disabled={busy || selected.length === 0}
             className="flex-1 rounded-lg border border-ok-border bg-ok/10 px-4 py-2.5 text-sm font-semibold text-ok transition-colors hover:bg-ok/20 disabled:opacity-40"
           >

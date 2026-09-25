@@ -103,6 +103,14 @@ function PeerRow({
   const identityColor = colorForDevice(peer.device_id);
   const KindIcon = KIND_ICONS[deviceKind(peer.device_type, peer.device_name)];
 
+  const handleAutoAccept = async () => {
+    try {
+      await api.setAutoAccept(peer.device_id, !peer.auto_accept);
+    } catch (err) {
+      toast.error(err, label);
+    }
+  };
+
   const handleRescan = async () => {
     if (!onRescan || retrying) return;
     setRetrying(true);
@@ -161,6 +169,14 @@ function PeerRow({
           <span className="truncate text-sm font-medium text-content">
             {peer.device_name || `${peer.device_id.substring(0, 8)}…`}
           </span>
+          {peer.auto_accept && !peer.untrusted && (
+            <span
+              className="shrink-0 text-[10px] uppercase tracking-wide text-ok"
+              title="Files it sends are accepted without asking"
+            >
+              Auto-accept
+            </span>
+          )}
           {peer.untrusted ? (
             <span className="shrink-0 text-[10px] uppercase tracking-wide text-warn">
               Not paired there
@@ -197,6 +213,15 @@ function PeerRow({
             className="rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active"
           >
             Remove
+          </button>
+        )}
+        {peer.paired && !peer.untrusted && (
+          <button
+            onClick={handleAutoAccept}
+            title={peer.auto_accept ? "Ask before taking files it sends" : "Take files it sends without asking"}
+            className="rounded-lg px-2 py-1.5 text-xs font-medium text-content-faint opacity-0 transition-opacity hover:text-content focus:opacity-100 group-hover:opacity-100"
+          >
+            {peer.auto_accept ? "Ask first" : "Always accept"}
           </button>
         )}
         {peer.paired && !peer.untrusted && (

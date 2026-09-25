@@ -57,8 +57,9 @@ pub fn run() {
 
     let server_controller = Arc::new(ServerController::new());
     let history = Arc::new(history::HistoryStore::load(&app_data_dir));
-    let offers = Arc::new(offers::OfferStore::default());
-    let transfers = Arc::new(transfers::TransferManager::new(settings.clone(), history.clone()));
+    // Open offers and unfinished downloads from last time (P5).
+    let offers = Arc::new(offers::OfferStore::load(&app_data_dir));
+    let transfers = Arc::new(transfers::TransferManager::load(settings.clone(), history.clone(), &app_data_dir));
     let presence = Arc::new(presence::PresenceStore::new());
 
     // Seed presence with the addresses we knew last run so paired peers can be
@@ -123,6 +124,10 @@ pub fn run() {
             history.set_app_handle(app.handle().clone());
             offers.set_app_handle(app.handle().clone());
             transfers.set_app_handle(app.handle().clone());
+            // Downloads that were running or waiting when the app closed
+            // pick up where their partial files stop.
+            transfers.pump();
+            transfers::spawn_cleanup(transfers.clone());
             offers::spawn_sweeper(offers.clone(), history.clone());
 
             // Announce ourselves to every paired peer, then poll them on a
@@ -170,6 +175,7 @@ pub fn run() {
             commands::initiate_pairing,
             commands::confirm_pairing,
             commands::get_paired_peers,
+            commands::set_auto_accept,
             commands::cancel_pairing,
             commands::unpair_peer,
             // Settings

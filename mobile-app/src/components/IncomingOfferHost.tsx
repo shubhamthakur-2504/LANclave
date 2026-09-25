@@ -8,7 +8,7 @@ import { useState } from "react";
 import { Alert, FlatList, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { C } from "@/constants/colors";
-import { useOffers, type IncomingOffer } from "@/contexts/OffersContext";
+import { setAutoAccept, useOffers, type IncomingOffer } from "@/contexts/OffersContext";
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
@@ -28,6 +28,7 @@ function OfferPrompt({ offer }: { offer: IncomingOffer }) {
   // Everything ticked to start with.
   const [chosen, setChosen] = useState<Set<string>>(() => new Set(offer.files.map((f) => f.id)));
   const [busy, setBusy] = useState(false);
+  const [always, setAlways] = useState(false);
 
   const who = offer.peer_name || "A paired device";
   const selected = offer.files.filter((f) => chosen.has(f.id));
@@ -88,6 +89,20 @@ function OfferPrompt({ offer }: { offer: IncomingOffer }) {
             }}
           />
 
+          <Pressable
+            onPress={() => setAlways((on) => !on)}
+            style={styles.row}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: always }}
+          >
+            <View style={[styles.box, always && styles.boxOn]}>
+              {always && <Text style={styles.tick}>✓</Text>}
+            </View>
+            <Text style={styles.fileName} numberOfLines={1}>
+              Always accept from {who}
+            </Text>
+          </Pressable>
+
           {/* Equal weight, like the pairing sheet: no reflex-tap target. */}
           <View style={styles.buttons}>
             <Pressable
@@ -100,7 +115,12 @@ function OfferPrompt({ offer }: { offer: IncomingOffer }) {
             <Pressable
               style={[styles.accept, (busy || selected.length === 0) && styles.dim]}
               disabled={busy || selected.length === 0}
-              onPress={() => run(() => accept(offer.id, selected.map((f) => f.id)))}
+              onPress={() =>
+                run(async () => {
+                  await accept(offer.id, selected.map((f) => f.id));
+                  if (always) setAutoAccept(offer.peer_id, true);
+                })
+              }
             >
               <Text style={styles.acceptText}>
                 {selected.length === offer.files.length ? "Accept" : `Accept ${selected.length} · ${formatBytes(selectedBytes)}`}

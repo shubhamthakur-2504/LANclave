@@ -2,7 +2,9 @@
 //! (docs/transfer-plan.md P6).
 //!
 //! The list lives here rather than in the page, so the page can come and go
-//! (P7) and paused downloads can outlive the app (P5).
+//! (P7), and unfinished downloads are kept in `transfers.json` so they
+//! outlive the app (P5): paused ones come back paused, and ones that were
+//! running or waiting when the app closed go back in the queue.
 //!
 //! Downloads -- pulls from a peer's sandbox and files of accepted offers --
 //! share `max_downloads` slots (a setting, default 2); the rest wait in one
@@ -35,6 +37,10 @@ use crate::settings::AppSettings;
 const SENDER_PAUSE_MS: u64 = 5_000;
 /// Network drops retried in place, with backoff, before a download fails.
 const NETWORK_RETRIES: u32 = 5;
+/// Unfinished downloads (rows, and partial files on disk) are given up
+/// after this long.
+pub const STALE_AFTER_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+const FILE_NAME: &str = "transfers.json";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -218,6 +224,30 @@ struct Inner {
 }
 
 impl Inner {
+    /// Rows saved last time, as they should start this time: what was
+    /// running or waiting waits again, in the order it started; what was
+    /// paused stays paused; anything a week old is dropped.
+    fn restored(rows: Vec<Transfer>, now: u64) -> Self {
+        let mut inner = Inner::default();
+        for mut row in rows.into_iter().filter(|r| r.direction == Way::Download && !Self::is_stale(r, now)) {
+            row.ahead = None;
+            row.message = None;
+            if matches!(row.status, Status::Queued | Status::InProgress | Status::Verifying) {
+                row.status = Status::Queued;
+            }
+            inner.rows.push(row);
+        }
+        // Rows are newest first; the oldest waited longest.
+        let queued: Vec<String> = inner.rows.iter().rev().filter(|r| r.status == Status::Queued).map(|r| r.id.clone()).collect();
+        inner.waiting.extend(queued);
+        inner
+    }
+
+    /// Paused or failed, and started over a week ago.
+    fn is_stale(row: &Transfer, now: u64) -> bool {
+        matches!(row.status, Status::Paused | Status::Failed) && now.saturating_sub(row.started_ms) > STALE_AFTER_MS
+    }
+
     fn row(&self, id: &str) -> Option<&Transfer> {
         self.rows.iter().find(|r| r.id == id)
     }
@@ -346,6 +376,8 @@ pub struct TransferManager {
     app: Mutex<Option<tauri::AppHandle>>,
     /// When a timer is already set to start a cooled-down download.
     wake_at: Mutex<Option<u64>>,
+    /// `None` keeps the list in memory only (tests).
+    path: Option<PathBuf>,
 }
 
 impl TransferManager {
@@ -356,6 +388,34 @@ impl TransferManager {
             history,
             app: Mutex::new(None),
             wake_at: Mutex::new(None),
+            path: None,
+        }
+    }
+
+    /// The downloads left unfinished last time, from `dir`. Nothing starts
+    /// until [`pump`](Self::pump) is called with the app running.
+    pub fn load(settings: Arc<RwLock<AppSettings>>, history: Arc<HistoryStore>, dir: &Path) -> Self {
+        let path = dir.join(FILE_NAME);
+        let rows: Vec<Transfer> = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        let mut manager = Self::new(settings, history);
+        *manager.inner.get_mut().unwrap() = Inner::restored(rows, now_ms());
+        manager.path = Some(path);
+        manager
+    }
+
+    /// Keep the unfinished downloads on disk. Uploads cannot resume and
+    /// finished rows are in the history, so neither is kept.
+    fn save(&self, rows: &[Transfer]) {
+        let Some(path) = &self.path else { return };
+        let keep: Vec<&Transfer> =
+            rows.iter().filter(|r| r.direction == Way::Download && r.status != Status::Completed).collect();
+        let Ok(json) = serde_json::to_vec(&keep) else { return };
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(&tmp, path);
         }
     }
 
@@ -383,11 +443,26 @@ impl TransferManager {
         self.inner.lock().unwrap().row(id).cloned()
     }
 
-    /// Tell the page the list changed.
+    /// Tell the page the list changed, and keep it on disk.
     fn changed(&self) {
+        let snapshot = self.snapshot();
+        self.save(&snapshot);
         if let Some(app) = self.app() {
             use tauri::Emitter;
-            let _ = app.emit("transfers-changed", self.snapshot());
+            let _ = app.emit("transfers-changed", snapshot);
+        }
+    }
+
+    /// Forget unfinished downloads nobody has touched in a week.
+    pub fn prune_stale(&self, now: u64) {
+        let dropped = {
+            let mut inner = self.inner.lock().unwrap();
+            let before = inner.rows.len();
+            inner.rows.retain(|r| !Inner::is_stale(r, now));
+            before != inner.rows.len()
+        };
+        if dropped {
+            self.changed();
         }
     }
 
@@ -654,6 +729,20 @@ impl TransferManager {
             }
         }
     }
+}
+
+/// At launch and every six hours: delete week-old partial files and
+/// forget week-old unfinished downloads.
+pub fn spawn_cleanup(manager: Arc<TransferManager>) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let root = manager.sandbox_root();
+            let max_age = std::time::Duration::from_millis(STALE_AFTER_MS);
+            let _ = tokio::task::spawn_blocking(move || crate::client::pull::sweep_stale_partials(&root, max_age)).await;
+            manager.prune_stale(now_ms());
+            tokio::time::sleep(std::time::Duration::from_secs(6 * 60 * 60)).await;
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -932,6 +1021,61 @@ mod tests {
         inner.row_mut(&ids[0]).unwrap().status = Status::Paused;
         assert_eq!(started(&mut inner, 2), vec![ids[1].clone()]);
         assert!(inner.waiting.is_empty());
+    }
+
+    #[test]
+    fn unfinished_downloads_come_back_as_they_should_after_a_restart() {
+        let now = 10 * STALE_AFTER_MS;
+        let row = |name: &str, status: Status, age: u64| {
+            let mut r = pull(name);
+            r.status = status;
+            r.started_ms = now - age;
+            r
+        };
+        // Newest first, as saved.
+        let saved = vec![
+            row("running", Status::InProgress, 1),
+            row("waiting", Status::Queued, 2),
+            row("paused", Status::Paused, 3),
+            row("old paused", Status::Paused, STALE_AFTER_MS + 1),
+            row("failed", Status::Failed, 4),
+        ];
+        let ids: Vec<String> = saved.iter().map(|r| r.id.clone()).collect();
+        let json = serde_json::to_vec(&saved).unwrap();
+        let mut inner = Inner::restored(serde_json::from_slice(&json).unwrap(), now);
+
+        let status = |inner: &Inner, i: usize| inner.row(&ids[i]).map(|r| r.status);
+        assert_eq!(status(&inner, 0), Some(Status::Queued), "was running: waits again");
+        assert_eq!(status(&inner, 2), Some(Status::Paused), "paused stays paused");
+        assert_eq!(status(&inner, 3), None, "a week-old paused download is dropped");
+        assert_eq!(status(&inner, 4), Some(Status::Failed));
+        // The one that had been waiting longer goes first.
+        assert_eq!(started(&mut inner, 2), vec![ids[1].clone(), ids[0].clone()]);
+    }
+
+    #[test]
+    fn week_old_partial_files_are_swept_and_nothing_else() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let week_ago = std::time::SystemTime::now() - std::time::Duration::from_millis(STALE_AFTER_MS + 60_000);
+        let make = |rel: &str, old: bool| {
+            let p = dir.path().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            let f = std::fs::File::create(&p).unwrap();
+            if old {
+                f.set_modified(week_ago).unwrap();
+            }
+            p
+        };
+        let stale = make(".a.txt.lanclave-part", true);
+        let stale_note = make("sub/.b.txt.lanclave-part.json", true);
+        let fresh = make(".c.txt.lanclave-part", false);
+        let not_ours = make("d.lanclave-part", true);
+        let user_file = make("old.txt", true);
+
+        let removed = crate::client::pull::sweep_stale_partials(dir.path(), std::time::Duration::from_millis(STALE_AFTER_MS));
+        assert_eq!(removed, 2);
+        assert!(!stale.exists() && !stale_note.exists());
+        assert!(fresh.exists() && not_ours.exists() && user_file.exists());
     }
 
     #[test]

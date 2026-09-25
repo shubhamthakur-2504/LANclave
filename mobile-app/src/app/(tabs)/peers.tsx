@@ -24,7 +24,7 @@ import {
 } from "@/services/share";
 import { uploadRemoteFile } from "@/services/peer-api";
 import { recordTransfer } from "@/services/history";
-import { offerFiles } from "@/contexts/OffersContext";
+import { offerFiles, readAutoAccept, setAutoAccept } from "@/contexts/OffersContext";
 import { unpairPeer } from "@/services/pairing";
 import {
   getPeerPresence,
@@ -48,10 +48,22 @@ export default function PairedPeersScreen() {
   /** Files handed to us by the share sheet, waiting for a destination (U3.2). */
   const [shares, setShares] = useState<PendingShare[]>([]);
   const [sendingTo, setSendingTo] = useState<string | null>(null);
+  /** Peers whose offers are taken without asking. */
+  const [autoAccept, setAutoAcceptIds] = useState<Set<string>>(readAutoAccept);
 
   const load = useCallback(async () => {
     setPeersWithStatus(await getPeerPresence());
+    setAutoAcceptIds(readAutoAccept());
   }, []);
+
+  const toggleAutoAccept = (peer: PairedPeerStatus) => {
+    try {
+      setAutoAccept(peer.id, !autoAccept.has(peer.id));
+    } catch (err) {
+      Alert.alert("Couldn't change that", err instanceof Error ? err.message : String(err));
+    }
+    setAutoAcceptIds(readAutoAccept());
+  };
 
   // Presence is maintained by the background heartbeat. This screen only
   // reads it -- it no longer sends any requests of its own.
@@ -285,6 +297,9 @@ export default function PairedPeersScreen() {
                   <Text style={styles.ip}>
                     {item.ip}:{item.port}
                   </Text>
+                  {autoAccept.has(item.id) && !item.untrusted && (
+                    <Text style={styles.autoAcceptNote}>Accepts files without asking</Text>
+                  )}
                 </View>
 
                 {/* Online/Offline Badge */}
@@ -355,15 +370,32 @@ export default function PairedPeersScreen() {
                       : "Device is offline or unreachable on local network"}
                   </Text>
                 )}
-                <Pressable
-                  onPress={() => handleUnpair(item)}
-                  hitSlop={8}
-                  accessibilityRole="button"
-                  accessibilityLabel={item.untrusted ? `Remove ${item.name}` : `Unpair ${item.name}`}
-                  style={styles.unpairBtn}
-                >
-                  <Text style={styles.unpairText}>{item.untrusted ? "Remove" : "Unpair"}</Text>
-                </Pressable>
+                <View style={styles.footer}>
+                  {!item.untrusted && (
+                    <Pressable
+                      onPress={() => toggleAutoAccept(item)}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        autoAccept.has(item.id)
+                          ? `Ask before taking files from ${item.name}`
+                          : `Always accept files from ${item.name}`
+                      }
+                    >
+                      <Text style={styles.footerText}>
+                        {autoAccept.has(item.id) ? "Ask first" : "Always accept"}
+                      </Text>
+                    </Pressable>
+                  )}
+                  <Pressable
+                    onPress={() => handleUnpair(item)}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel={item.untrusted ? `Remove ${item.name}` : `Unpair ${item.name}`}
+                  >
+                    <Text style={styles.unpairText}>{item.untrusted ? "Remove" : "Unpair"}</Text>
+                  </Pressable>
+                </View>
               </View>
             </View>
           )}
@@ -386,7 +418,9 @@ export default function PairedPeersScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.surface },
   cardOffline: { opacity: 0.6 },
-  unpairBtn: { marginTop: 10, alignSelf: "flex-end" },
+  footer: { flexDirection: "row", justifyContent: "flex-end", gap: 20, marginTop: 10 },
+  footerText: { fontSize: 13, fontWeight: "600", color: C.contentMuted },
+  autoAcceptNote: { fontSize: 11, color: C.ok, marginTop: 2 },
   unpairText: { fontSize: 13, fontWeight: "600", color: C.danger },
   btnDisabled: { opacity: 0.6 },
   shareBanner: {

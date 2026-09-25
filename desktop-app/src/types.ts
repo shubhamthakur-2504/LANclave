@@ -15,6 +15,8 @@ export interface PeerInfo {
   /** Paired here, but the peer no longer trusts us: it rejected the pairing
    *  or unpaired. Needs removing and pairing again. */
   untrusted?: boolean;
+  /** Its offers are taken without asking. */
+  auto_accept?: boolean;
 }
 
 export interface FileEntry {

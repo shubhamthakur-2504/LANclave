@@ -94,6 +94,9 @@ declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
   /** Downloads that run at once (default 2); the rest wait in line. */
   getMaxDownloads(): number;
   setMaxDownloads(n: number): void;
+  /** Devices whose offers are taken without asking. */
+  getAutoAccept(): string[];
+  setAutoAccept(deviceId: string, enabled: boolean): void;
   /** Offers snapshot as JSON: `{ outgoing: [...], incoming: [...] }`. */
   listOffers(): string;
   /** Offer files (`[{uri, name, size}]` as JSON); the offer id, or null if the peer predates offers. */

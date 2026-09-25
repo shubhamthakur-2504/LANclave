@@ -22,7 +22,7 @@
 //! are reduced to a bare file name before they touch the receiver's disk.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use axum::{
@@ -98,7 +98,7 @@ pub struct FileResult {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutgoingOffer {
     pub id: String,
     pub peer_id: String,
@@ -121,7 +121,7 @@ pub struct OutgoingOffer {
     pub expires_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncomingOffer {
     pub id: String,
     pub peer_id: String,
@@ -158,9 +158,87 @@ pub struct OfferStore {
     outgoing: Mutex<HashMap<String, OutgoingOffer>>,
     incoming: Mutex<HashMap<String, IncomingOffer>>,
     app: Mutex<Option<tauri::AppHandle>>,
+    /// `offers.json`; `None` keeps offers in memory only (tests).
+    path: Option<PathBuf>,
+}
+
+/// On disk, an offer keeps what the UI never sees: where its files live
+/// here, and the peer's address.
+#[derive(Serialize, Deserialize)]
+struct SavedOutgoing {
+    #[serde(flatten)]
+    offer: OutgoingOffer,
+    peer_addr: String,
+    paths: HashMap<String, PathBuf>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedIncoming {
+    #[serde(flatten)]
+    offer: IncomingOffer,
+    peer_addr: String,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct SavedOffers {
+    outgoing: Vec<SavedOutgoing>,
+    incoming: Vec<SavedIncoming>,
 }
 
 impl OfferStore {
+    /// Offers from last time (P5): open ones carry on -- an accepted offer
+    /// stays pullable and resumable across restarts on both sides.
+    pub fn load(dir: &Path) -> Self {
+        let path = dir.join("offers.json");
+        let saved: SavedOffers = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        let outgoing = saved
+            .outgoing
+            .into_iter()
+            .map(|s| (s.offer.id.clone(), OutgoingOffer { peer_addr: s.peer_addr, paths: s.paths, ..s.offer }))
+            .collect();
+        let incoming = saved
+            .incoming
+            .into_iter()
+            .map(|s| (s.offer.id.clone(), IncomingOffer { peer_addr: s.peer_addr, ..s.offer }))
+            .collect();
+        let store = Self {
+            outgoing: Mutex::new(outgoing),
+            incoming: Mutex::new(incoming),
+            app: Mutex::new(None),
+            path: Some(path),
+        };
+        store.sweep(now_ms());
+        store
+    }
+
+    fn save(&self) {
+        let Some(path) = &self.path else { return };
+        let saved = SavedOffers {
+            outgoing: self
+                .outgoing
+                .lock()
+                .unwrap()
+                .values()
+                .map(|o| SavedOutgoing { offer: o.clone(), peer_addr: o.peer_addr.clone(), paths: o.paths.clone() })
+                .collect(),
+            incoming: self
+                .incoming
+                .lock()
+                .unwrap()
+                .values()
+                .map(|o| SavedIncoming { offer: o.clone(), peer_addr: o.peer_addr.clone() })
+                .collect(),
+        };
+        let Ok(json) = serde_json::to_vec(&saved) else { return };
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(&tmp, path);
+        }
+    }
+
     pub fn set_app_handle(&self, app: tauri::AppHandle) {
         *self.app.lock().unwrap() = Some(app);
     }
@@ -177,8 +255,9 @@ impl OfferStore {
         OffersSnapshot { outgoing, incoming }
     }
 
-    /// Tell the UI something changed.
+    /// Tell the UI something changed, and keep it on disk.
     pub fn emit_changed(&self) {
+        self.save();
         if let Some(app) = self.app() {
             use tauri::Emitter;
             let _ = app.emit("offers-changed", self.snapshot());
@@ -297,32 +376,66 @@ pub async fn receive_offer(
         inc.insert(offer.id.clone(), offer.clone());
     }
     state.offers.emit_changed();
-    announce_offer(&state, &offer);
+
+    let Some(app) = state.app_handle.clone() else { return Ok(StatusCode::ACCEPTED) };
+    let always = state
+        .auth
+        .store
+        .read()
+        .ok()
+        .and_then(|s| s.devices.get(&offer.peer_id).map(|d| d.auto_accept))
+        .unwrap_or(false);
+    if always {
+        // Answered after this reply: the sender registered the offer before
+        // posting it, so an accept that beats the reply is fine.
+        tauri::async_runtime::spawn(async move {
+            let all: Vec<String> = offer.files.iter().map(|f| f.id.clone()).collect();
+            match accept(&app, &offer.id, &all).await {
+                Ok(()) => {
+                    let (who, count, total) = describe(&offer);
+                    notify_if_hidden(&app, &format!("Receiving {count} from {who}"), &crate::fmt_bytes(total));
+                }
+                // No room, or the sender went away: ask instead.
+                Err(_) => announce_offer(&app, &offer),
+            }
+        });
+    } else {
+        announce_offer(&app, &offer);
+    }
     Ok(StatusCode::ACCEPTED)
+}
+
+/// "Phone", "3 files", total bytes -- for notifications.
+fn describe(offer: &IncomingOffer) -> (String, String, u64) {
+    let who = offer.peer_name.clone().unwrap_or_else(|| "a paired device".into());
+    let count = offer.files.len();
+    let files = format!("{count} file{}", if count == 1 { "" } else { "s" });
+    (who, files, offer.files.iter().map(|f| f.size).sum())
 }
 
 /// Prompt the user: an event for the open window, and a system notification
 /// when the window is hidden in the tray.
-fn announce_offer(state: &AppState, offer: &IncomingOffer) {
-    let Some(app) = &state.app_handle else { return };
-    use tauri::{Emitter, Manager};
+fn announce_offer(app: &tauri::AppHandle, offer: &IncomingOffer) {
+    use tauri::Emitter;
     let _ = app.emit("offer-received", offer);
+    let (who, files, total) = describe(offer);
+    notify_if_hidden(
+        app,
+        &format!("{who} wants to send {files}"),
+        &format!("{} · open LANclave to accept or decline", crate::fmt_bytes(total)),
+    );
+}
 
+/// A system notification, unless the window is on screen to say it.
+fn notify_if_hidden(app: &tauri::AppHandle, title: &str, body: &str) {
+    use tauri::Manager;
     let visible = app
         .get_webview_window("main")
         .and_then(|w| w.is_visible().ok())
         .unwrap_or(false);
     if !visible {
         use tauri_plugin_notification::NotificationExt;
-        let who = offer.peer_name.clone().unwrap_or_else(|| "A paired device".into());
-        let total: u64 = offer.files.iter().map(|f| f.size).sum();
-        let count = offer.files.len();
-        let _ = app
-            .notification()
-            .builder()
-            .title(format!("{who} wants to send {count} file{}", if count == 1 { "" } else { "s" }))
-            .body(format!("{} · open LANclave to accept or decline", crate::fmt_bytes(total)))
-            .show();
+        let _ = app.notification().builder().title(title).body(body).show();
     }
 }
 
@@ -765,14 +878,18 @@ pub fn list_offers(offers: tauri::State<'_, Arc<OfferStore>>) -> OffersSnapshot 
 /// Take some or all files of an incoming offer: each goes into the
 /// download queue, which pulls them as slots come free.
 #[tauri::command]
-pub async fn accept_offer(
-    state: tauri::State<'_, crate::commands::CliState>,
-    offers: tauri::State<'_, Arc<OfferStore>>,
-    transfers: tauri::State<'_, Arc<crate::transfers::TransferManager>>,
-    offer_id: String,
-    file_ids: Vec<String>,
-) -> Result<(), String> {
-    let offer = offers.incoming(&offer_id).ok_or("this offer is gone")?;
+pub async fn accept_offer(app: tauri::AppHandle, offer_id: String, file_ids: Vec<String>) -> Result<(), String> {
+    accept(&app, &offer_id, &file_ids).await
+}
+
+/// See [`accept_offer`]; also how offers from an "always accept" device
+/// are taken.
+async fn accept(app: &tauri::AppHandle, offer_id: &str, file_ids: &[String]) -> Result<(), String> {
+    use tauri::Manager;
+    let state = app.state::<crate::commands::CliState>();
+    let offers = app.state::<Arc<OfferStore>>();
+    let transfers = app.state::<Arc<crate::transfers::TransferManager>>();
+    let offer = offers.incoming(offer_id).ok_or("this offer is gone")?;
     if offer.state != OfferState::Waiting || now_ms() >= offer.expires_ms {
         return Err("this offer is no longer open".into());
     }
@@ -804,7 +921,7 @@ pub async fn accept_offer(
         return Err(format!("the sender no longer offers these files (HTTP {status})"));
     }
 
-    offers.update_incoming(&offer_id, |o| {
+    offers.update_incoming(offer_id, |o| {
         o.state = OfferState::Accepted;
         o.accepted = chosen.iter().map(|f| f.id.clone()).collect();
         o.expires_ms = now_ms() + ACCEPTED_TTL_MS;
@@ -1123,6 +1240,38 @@ mod tests {
         let res = app.clone().oneshot(signed("POST", "/api/offers", &sender, Some(offer("../../notes.txt")))).await.unwrap();
         assert_eq!(res.status(), StatusCode::ACCEPTED);
         assert_eq!(state.offers.snapshot().incoming[0].files[0].name, "notes.txt");
+    }
+
+    #[test]
+    fn open_offers_survive_a_restart_with_their_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = OfferStore::load(dir.path());
+        let now = now_ms();
+        insert_outgoing_for_test(
+            &store,
+            OutgoingOffer {
+                id: "o1".into(),
+                peer_id: "p".into(),
+                peer_name: Some("Phone".into()),
+                peer_addr: "10.0.0.7:8377".into(),
+                files: vec![OfferFile { id: "f".into(), name: "a.txt".into(), size: 3, modified: None }],
+                paths: HashMap::from([("f".to_string(), dir.path().join("a.txt"))]),
+                state: OfferState::Accepted,
+                paused: true,
+                accepted: vec!["f".into()],
+                served: HashMap::new(),
+                results: HashMap::new(),
+                created_ms: now,
+                expires_ms: now + ACCEPTED_TTL_MS,
+            },
+        );
+        store.emit_changed();
+
+        let again = OfferStore::load(dir.path());
+        let offer = again.outgoing.lock().unwrap().get("o1").cloned().unwrap();
+        assert_eq!((offer.state, offer.paused), (OfferState::Accepted, true));
+        assert_eq!(offer.peer_addr, "10.0.0.7:8377");
+        assert_eq!(offer.paths.get("f"), Some(&dir.path().join("a.txt")));
     }
 
     #[test]

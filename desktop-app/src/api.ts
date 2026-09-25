@@ -190,6 +190,11 @@ export async function cancelPairing(peerAddr: string): Promise<void> {
   await invoke("cancel_pairing", { peerAddr });
 }
 
+/** Take a paired device's offers without asking, or go back to asking. */
+export async function setAutoAccept(deviceId: string, enabled: boolean): Promise<void> {
+  await invoke("set_auto_accept", { deviceId, enabled });
+}
+
 /** Forget a paired peer here, and ask it to forget this computer too. */
 export async function unpairPeer(deviceId: string): Promise<void> {
   await invoke("unpair_peer", { deviceId });
