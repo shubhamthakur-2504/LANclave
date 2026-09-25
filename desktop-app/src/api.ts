@@ -184,6 +184,20 @@ export async function initiatePairing(
   return await invoke("initiate_pairing", { peerAddr, peerDeviceId, peerDeviceName });
 }
 
+/** A device asking to pair, as the backend reports it. */
+export interface PairingRequest {
+  device_id: string;
+  ip: string;
+  name: string;
+  fingerprint: string;
+}
+
+/** A pairing request that arrived while no page was there to show it
+ *  (window hidden or released); consumed on read. */
+export async function takePairingRequest(): Promise<PairingRequest | null> {
+  return await invoke("take_pairing_request");
+}
+
 /** The user rejected the codes: tell the peer so it closes its dialog and
  *  drops the pairing if it already accepted. Best effort. */
 export async function cancelPairing(peerAddr: string): Promise<void> {

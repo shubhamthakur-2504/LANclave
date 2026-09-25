@@ -393,7 +393,7 @@ pub async fn receive_offer(
             match accept(&app, &offer.id, &all).await {
                 Ok(()) => {
                     let (who, count, total) = describe(&offer);
-                    notify_if_hidden(&app, &format!("Receiving {count} from {who}"), &crate::fmt_bytes(total));
+                    crate::tray::notify_if_hidden(&app, &format!("Receiving {count} from {who}"), &crate::fmt_bytes(total));
                 }
                 // No room, or the sender went away: ask instead.
                 Err(_) => announce_offer(&app, &offer),
@@ -419,25 +419,13 @@ fn announce_offer(app: &tauri::AppHandle, offer: &IncomingOffer) {
     use tauri::Emitter;
     let _ = app.emit("offer-received", offer);
     let (who, files, total) = describe(offer);
-    notify_if_hidden(
+    crate::tray::notify_if_hidden(
         app,
         &format!("{who} wants to send {files}"),
         &format!("{} · open LANclave to accept or decline", crate::fmt_bytes(total)),
     );
 }
 
-/// A system notification, unless the window is on screen to say it.
-fn notify_if_hidden(app: &tauri::AppHandle, title: &str, body: &str) {
-    use tauri::Manager;
-    let visible = app
-        .get_webview_window("main")
-        .and_then(|w| w.is_visible().ok())
-        .unwrap_or(false);
-    if !visible {
-        use tauri_plugin_notification::NotificationExt;
-        let _ = app.notification().builder().title(title).body(body).show();
-    }
-}
 
 /// `POST /api/offers/{id}/cancel` -- the sender withdrew its offer.
 pub async fn offer_withdrawn(

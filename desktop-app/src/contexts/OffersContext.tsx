@@ -41,7 +41,16 @@ export function OffersProvider({ children }: { children: ReactNode }) {
   const [promptId, setPromptId] = useState<string | null>(null);
 
   useEffect(() => {
-    api.listOffers().then(setSnapshot).catch(() => {});
+    // The page may load long after an offer arrived (the window is released
+    // while hidden): one still waiting opens its prompt now.
+    api
+      .listOffers()
+      .then((snap) => {
+        setSnapshot(snap);
+        const waiting = snap.incoming.find((o) => o.state === "waiting");
+        if (waiting) setPromptId((current) => current ?? waiting.id);
+      })
+      .catch(() => {});
     const unlisteners: Promise<() => void>[] = [
       listen<OffersSnapshot>("offers-changed", (e) => setSnapshot(e.payload)),
       // A new offer opens its prompt, unless one is already being answered;

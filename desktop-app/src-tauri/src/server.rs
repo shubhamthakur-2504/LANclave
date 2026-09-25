@@ -60,22 +60,31 @@ async fn pairing_request_handler(
     );
 
     if let Some(ref handle) = state.app_handle {
-        use tauri::Emitter;
-        let _ = handle.emit(
-            "pairing-request",
-            serde_json::json!({
-                "device_id": body.device_id,
-                "name": body.name.unwrap_or_else(|| "Mobile Device".to_string()),
-                // The address the request actually came from beats the one
-                // the phone reports: a phone with several interfaces (Wi-Fi,
-                // hotspot, cellular) can name the wrong one, and confirming
-                // stores this address for reaching the peer later.
-                "ip": remote
-                    .map(|axum::Extension(ci)| ci.0.ip().to_string())
-                    .or(body.ip)
-                    .unwrap_or_else(|| "Mobile".to_string()),
-                "fingerprint": fingerprint,
-            }),
+        use tauri::{Emitter, Manager};
+        let name = body.name.unwrap_or_else(|| "Mobile Device".to_string());
+        let request = serde_json::json!({
+            "device_id": body.device_id,
+            "name": name,
+            // The address the request actually came from beats the one
+            // the phone reports: a phone with several interfaces (Wi-Fi,
+            // hotspot, cellular) can name the wrong one, and confirming
+            // stores this address for reaching the peer later.
+            "ip": remote
+                .map(|axum::Extension(ci)| ci.0.ip().to_string())
+                .or(body.ip)
+                .unwrap_or_else(|| "Mobile".to_string()),
+            "fingerprint": fingerprint,
+        });
+        // Held too: with the window released, nothing hears the event, and
+        // the page asks for it when it loads.
+        if let Some(pending) = handle.try_state::<crate::commands::PendingPairing>() {
+            pending.set(request.clone());
+        }
+        let _ = handle.emit("pairing-request", request);
+        crate::tray::notify_if_hidden(
+            handle,
+            &format!("{name} wants to pair"),
+            "Open LANclave to compare the codes.",
         );
     }
 
@@ -216,7 +225,10 @@ async fn pairing_cancel_handler(
     state.presence.forget(&device_id);
 
     if let Some(app) = &state.app_handle {
-        use tauri::Emitter;
+        use tauri::{Emitter, Manager};
+        if let Some(pending) = app.try_state::<crate::commands::PendingPairing>() {
+            pending.clear_for(&device_id);
+        }
         // Closes an open pairing dialog for this device, and says why.
         let _ = app.emit(
             "pairing-cancelled",

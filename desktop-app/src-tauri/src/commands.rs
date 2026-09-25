@@ -48,6 +48,39 @@ pub struct CliState {
     pub offers: Arc<crate::offers::OfferStore>,
 }
 
+/// The latest pairing request, until the page shows it (P7): a device can
+/// ask to pair while no window exists to hear the event.
+#[derive(Default)]
+pub struct PendingPairing(std::sync::Mutex<Option<(serde_json::Value, u64)>>);
+
+impl PendingPairing {
+    /// How long a request is worth showing; the asking device gives up too.
+    const FRESH_MS: u64 = 60_000;
+
+    pub fn set(&self, request: serde_json::Value) {
+        *self.0.lock().unwrap() = Some((request, crate::presence::now_ms()));
+    }
+
+    /// The device withdrew its request, or the pairing was settled.
+    pub fn clear_for(&self, device_id: &str) {
+        let mut pending = self.0.lock().unwrap();
+        if pending.as_ref().is_some_and(|(r, _)| r["device_id"] == device_id) {
+            *pending = None;
+        }
+    }
+
+    fn take(&self) -> Option<serde_json::Value> {
+        let (request, at) = self.0.lock().unwrap().take()?;
+        (crate::presence::now_ms().saturating_sub(at) < Self::FRESH_MS).then_some(request)
+    }
+}
+
+/// A pairing request that arrived and was not shown yet; consumed on read.
+#[tauri::command]
+pub fn take_pairing_request(pending: State<'_, PendingPairing>) -> Option<serde_json::Value> {
+    pending.take()
+}
+
 // ---------------------------------------------------------------------------
 // Serializable types
 // ---------------------------------------------------------------------------
@@ -672,6 +705,10 @@ pub async fn confirm_pairing(
     let peer_key = crate::pairing::public_key_from_b64(&peer_device_id)
         .map_err(|e| format!("invalid peer key: {e}"))?;
 
+    if let Some(pending) = app.try_state::<PendingPairing>() {
+        pending.clear_for(&peer_device_id);
+    }
+
     // Build a pairing session and commit it to the store.
     let session = crate::pairing::PairingSession {
         peer_device_id: peer_device_id.clone(),
@@ -877,7 +914,23 @@ pub async fn pick_file(app: tauri::AppHandle, state: State<'_, CliState>) -> Res
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_peer_addr;
+    use super::{normalize_peer_addr, PendingPairing};
+
+    #[test]
+    fn a_pairing_request_is_held_until_shown_or_withdrawn() {
+        let pending = PendingPairing::default();
+        pending.set(serde_json::json!({ "device_id": "phone", "fingerprint": "123456" }));
+        pending.clear_for("someone else");
+        assert_eq!(pending.take().unwrap()["fingerprint"], "123456");
+        assert!(pending.take().is_none(), "consumed on read");
+
+        pending.set(serde_json::json!({ "device_id": "phone" }));
+        pending.clear_for("phone");
+        assert!(pending.take().is_none(), "withdrawn");
+
+        *pending.0.lock().unwrap() = Some((serde_json::json!({ "device_id": "phone" }), 0));
+        assert!(pending.take().is_none(), "too old to show");
+    }
 
     #[test]
     fn peer_addr_gets_default_port_and_rejects_non_addresses() {

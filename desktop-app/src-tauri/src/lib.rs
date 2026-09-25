@@ -104,6 +104,7 @@ pub fn run() {
         })
         .manage(offers.clone())
         .manage(transfers.clone())
+        .manage(commands::PendingPairing::default())
         .on_window_event(tray::on_window_event)
         .setup(move |app| {
             tray::install(app)?;
@@ -177,6 +178,7 @@ pub fn run() {
             commands::get_paired_peers,
             commands::set_auto_accept,
             commands::cancel_pairing,
+            commands::take_pairing_request,
             commands::unpair_peer,
             // Settings
             commands::get_settings,
@@ -189,7 +191,14 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
+                // No code: the last window went away -- released while
+                // hidden in the tray (see `tray.rs`). Keep serving; only
+                // the tray's Quit ends the app.
+                if code.is_none() {
+                    api.prevent_exit();
+                    return;
+                }
                 // Best effort. A crash or a kill sends nothing, which is
                 // exactly why presence is TTL-based rather than bye-based.
                 if let Some(ctx) = app.try_state::<presence::PresenceContext>() {

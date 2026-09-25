@@ -242,27 +242,30 @@ function AppInner() {
     };
   }, [toast]);
 
-  // Listen for pairing requests initiated by mobile peers
+  // Pairing requests started on another device. One that arrived while the
+  // window was hidden or released is held by the backend: show it now.
   useEffect(() => {
+    const open = (request: api.PairingRequest) => {
+      setPairPeer({ addr: request.ip, device_id: request.device_id, paired: false });
+      if (request.fingerprint) setPairFingerprint(request.fingerprint);
+      setIsConnectModalOpen(true);
+    };
+    api
+      .takePairingRequest()
+      .then((request) => request && open(request))
+      .catch(() => {});
+
     let unlistenFn: (() => void) | null = null;
     import("@tauri-apps/api/event")
-      .then(({ listen }) => {
-        listen<{ device_id: string; ip: string; name: string; fingerprint: string }>(
-          "pairing-request",
-          (event) => {
-            setPairPeer({
-              addr: event.payload.ip,
-              device_id: event.payload.device_id,
-              paired: false,
-            });
-            if (event.payload.fingerprint) {
-              setPairFingerprint(event.payload.fingerprint);
-            }
-            setIsConnectModalOpen(true);
-          }
-        ).then((unsub) => {
-          unlistenFn = unsub;
-        });
+      .then(({ listen }) =>
+        listen<api.PairingRequest>("pairing-request", (event) => {
+          open(event.payload);
+          // Shown: the backend need not hold it for a later page.
+          api.takePairingRequest().catch(() => {});
+        }),
+      )
+      .then((unsub) => {
+        unlistenFn = unsub;
       })
       .catch(() => {});
 
