@@ -169,6 +169,7 @@ mod tests {
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             history: std::sync::Arc::new(crate::history::HistoryStore::in_memory()),
+            offers: std::sync::Arc::new(crate::offers::OfferStore::default()),
             auth: Arc::new(AuthState::new()), // enabled
         });
         let app = crate::server::build_router(state);
@@ -210,6 +211,7 @@ mod tests {
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             history: std::sync::Arc::new(crate::history::HistoryStore::in_memory()),
+            offers: std::sync::Arc::new(crate::offers::OfferStore::default()),
             auth,
         });
         let app = crate::server::build_router(state);
@@ -259,6 +261,7 @@ mod tests {
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             history: std::sync::Arc::new(crate::history::HistoryStore::in_memory()),
+            offers: std::sync::Arc::new(crate::offers::OfferStore::default()),
             auth,
         });
         let app = crate::server::build_router(state);
@@ -307,6 +310,7 @@ mod tests {
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             history: std::sync::Arc::new(crate::history::HistoryStore::in_memory()),
+            offers: std::sync::Arc::new(crate::offers::OfferStore::default()),
             auth,
         });
         let app = crate::server::build_router(state);
@@ -360,6 +364,7 @@ mod tests {
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             history: std::sync::Arc::new(crate::history::HistoryStore::in_memory()),
+            offers: std::sync::Arc::new(crate::offers::OfferStore::default()),
             auth,
         });
         let app = crate::server::build_router(state);

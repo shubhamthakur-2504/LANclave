@@ -187,3 +187,28 @@ pub async fn send_pairing_cancel(
         Err(ClientError::ServerRejected(response.status().as_u16()))
     }
 }
+
+/// Signed POST of a JSON body to `path` (leading `/`) on the peer. Returns
+/// the status; the offer protocol's replies carry nothing else.
+pub async fn post_json<T: serde::Serialize + ?Sized>(
+    peer_addr: &str,
+    path: &str,
+    body: &T,
+    device_id: &str,
+    signing_key: &SigningKey,
+) -> Result<reqwest::StatusCode, ClientError> {
+    let (ts, sig) = sign_request(signing_key, device_id);
+    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
+
+    let response = CLIENT
+        .post(format!("http://{peer_addr}{path}"))
+        .header(HEADER_DEVICE_ID, device_id)
+        .header(HEADER_TIMESTAMP, ts.to_string())
+        .header(HEADER_SIGNATURE, &sig_b64)
+        .timeout(Duration::from_secs(10))
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| ClientError::ConnectionFailed(e.to_string()))?;
+    Ok(response.status())
+}

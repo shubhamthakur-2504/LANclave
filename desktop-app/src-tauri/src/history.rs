@@ -43,6 +43,8 @@ pub enum Outcome {
     Skipped,
     Failed,
     Cancelled,
+    /// The receiver turned an offer (or this file of it) down.
+    Declined,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

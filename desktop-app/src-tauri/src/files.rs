@@ -350,6 +350,7 @@ mod tests {
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             history: Arc::new(crate::history::HistoryStore::in_memory()),
+            offers: std::sync::Arc::new(crate::offers::OfferStore::default()),
             auth: Arc::new(crate::pairing::AuthState::disabled()),
         })
     }

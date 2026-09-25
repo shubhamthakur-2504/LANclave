@@ -6,6 +6,7 @@ mod file_ops;
 mod files;
 mod fs_util;
 mod history;
+mod offers;
 mod pairing;
 mod presence;
 mod range;
@@ -55,6 +56,7 @@ pub fn run() {
 
     let server_controller = Arc::new(ServerController::new());
     let history = Arc::new(history::HistoryStore::load(&app_data_dir));
+    let offers = Arc::new(offers::OfferStore::default());
     let presence = Arc::new(presence::PresenceStore::new());
 
     // Seed presence with the addresses we knew last run so paired peers can be
@@ -95,7 +97,9 @@ pub fn run() {
             server_controller,
             presence,
             history: history.clone(),
+            offers: offers.clone(),
         })
+        .manage(offers.clone())
         .manage(commands::TransferState::default())
         .on_window_event(tray::on_window_event)
         .setup(move |app| {
@@ -115,6 +119,8 @@ pub fn run() {
             let mut ctx = presence_ctx;
             ctx.app_handle = Some(app.handle().clone());
             history.set_app_handle(app.handle().clone());
+            offers.set_app_handle(app.handle().clone());
+            offers::spawn_sweeper(offers.clone(), history.clone());
 
             // Announce ourselves to every paired peer, then poll them on a
             // timer. One request per peer -- not a subnet sweep.
@@ -147,6 +153,15 @@ pub fn run() {
             commands::discard_partial,
             // History
             commands::get_transfer_history,
+            // Offers
+            offers::send_files,
+            offers::cancel_offer,
+            offers::pause_offer,
+            offers::list_offers,
+            offers::accept_offer,
+            offers::resume_offer,
+            offers::skip_offer_file,
+            offers::decline_offer,
             commands::clear_transfer_history,
             // Pairing
             commands::initiate_pairing,
@@ -180,4 +195,15 @@ pub fn run() {
                 }
             }
         });
+}
+
+/// Compact byte size for messages: 812 B, 4.2 KB, 12.9 MB, 1.3 GB.
+pub(crate) fn fmt_bytes(n: u64) -> String {
+    const UNITS: [(u64, &str); 3] = [(1_000_000_000, "GB"), (1_000_000, "MB"), (1_000, "KB")];
+    for (size, unit) in UNITS {
+        if n >= size {
+            return format!("{:.1} {unit}", n as f64 / size as f64);
+        }
+    }
+    format!("{n} B")
 }

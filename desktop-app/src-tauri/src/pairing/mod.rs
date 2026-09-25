@@ -7,7 +7,7 @@ pub use identity::{load_or_generate_identity, public_key_b64, public_key_from_b6
 pub use store::{DeviceStore, PairedDevice};
 pub use handshake::{compute_pairing_fingerprint, confirm_pairing, PairingSession};
 pub use middleware::{
-    check_request, sign_request, verify_caller_signature, AuthState,
+    check_request, sign_request, verify_caller_signature, AuthState, Status,
     HEADER_DEVICE_ID, HEADER_SIGNATURE, HEADER_TIMESTAMP,
 };
 

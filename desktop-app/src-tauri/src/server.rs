@@ -22,6 +22,8 @@ pub struct AppState {
     pub presence: Arc<crate::presence::PresenceStore>,
     /// Where transfers a peer starts against this server are logged.
     pub history: Arc<crate::history::HistoryStore>,
+    /// Offers we sent (served from here) and offers we received.
+    pub offers: Arc<crate::offers::OfferStore>,
 }
 
 impl AppState {
@@ -174,6 +176,9 @@ async fn pairing_status_handler(
     Ok(axum::Json(serde_json::json!({
         "paired": true,
         "app": "lanclave",
+        // What this server speaks, so a peer can choose offers over the
+        // legacy push, and know downloads resume.
+        "features": ["range", "fingerprint", "offers"],
         "device_id": state.device_id,
         "device_name": display_name,
         "device_type": crate::presence::DEVICE_TYPE,
@@ -288,6 +293,16 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/pairing/cancel",
             axum::routing::post(pairing_cancel_handler),
+        )
+        .route("/api/offers", axum::routing::post(crate::offers::receive_offer))
+        .route("/api/offers/{id}/cancel", axum::routing::post(crate::offers::offer_withdrawn))
+        .route("/api/offers/{id}/accept", axum::routing::post(crate::offers::offer_accepted))
+        .route("/api/offers/{id}/decline", axum::routing::post(crate::offers::offer_declined))
+        .route("/api/offers/{id}/report", axum::routing::post(crate::offers::offer_reported))
+        .route("/api/offers/{id}/files/{fid}", axum::routing::get(crate::offers::serve_offer_file))
+        .route(
+            "/api/offers/{id}/files/{fid}/fingerprint",
+            axum::routing::get(crate::offers::offer_file_fingerprint),
         )
         .route(
             "/api/presence/hello",
@@ -508,6 +523,7 @@ mod tests {
             app_handle: None,
             presence: std::sync::Arc::new(crate::presence::PresenceStore::new()),
             history: Arc::new(crate::history::HistoryStore::in_memory()),
+            offers: std::sync::Arc::new(crate::offers::OfferStore::default()),
             auth: Arc::new(AuthState::disabled()),
         })
     }
@@ -633,6 +649,7 @@ mod tests {
             app_handle: None,
             presence: Arc::new(crate::presence::PresenceStore::new()),
             history: Arc::new(crate::history::HistoryStore::in_memory()),
+            offers: std::sync::Arc::new(crate::offers::OfferStore::default()),
             auth: Arc::new(AuthState {
                 store: Arc::new(std::sync::RwLock::new(store)),
                 enabled: true,

@@ -45,6 +45,7 @@ pub struct CliState {
     pub server_controller: Arc<ServerController>,
     pub presence: Arc<crate::presence::PresenceStore>,
     pub history: Arc<crate::history::HistoryStore>,
+    pub offers: Arc<crate::offers::OfferStore>,
 }
 
 pub enum CancelHandle {
@@ -112,6 +113,7 @@ pub async fn launch_server(
         app_handle: Some(app.clone()),
         presence: state.presence.clone(),
         history: state.history.clone(),
+        offers: state.offers.clone(),
         auth: Arc::new(AuthState {
             store: state.device_store.clone(),
             enabled: true,
