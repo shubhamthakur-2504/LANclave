@@ -88,8 +88,21 @@ fn file_name_of(path: &Path) -> String {
 // ---------------------------------------------------------------------------
 
 /// A download in progress lives beside its destination as a hidden
-/// `.name.lanclave-part`, with a `.json` note saying what it is part of.
-/// Hidden (leading dot) so listings, dedupe and sorting never see it.
+/// `.name.<source tag>.lanclave-part`, with a `.json` note saying what it is
+/// part of. Hidden (leading dot) so listings, dedupe and sorting never see
+/// it. Tagged by source, so two downloads that will land under one name
+/// (two offered `IMG_1.jpg`, running side by side) never share a partial.
+pub(crate) fn partial_paths(dest: &Path, source: &str) -> (PathBuf, PathBuf) {
+    use sha2::{Digest, Sha256};
+    let tag: String = Sha256::digest(source.as_bytes())[..4].iter().map(|b| format!("{b:02x}")).collect();
+    let dir = dest.parent().unwrap_or_else(|| Path::new(""));
+    let name = file_name_of(dest);
+    (
+        dir.join(format!(".{name}.{tag}.lanclave-part")),
+        dir.join(format!(".{name}.{tag}.lanclave-part.json")),
+    )
+}
+
 struct Partial {
     data: PathBuf,
     note: PathBuf,
@@ -106,13 +119,9 @@ struct PartialNote {
 }
 
 impl Partial {
-    fn for_destination(dest: &Path) -> Self {
-        let dir = dest.parent().unwrap_or_else(|| Path::new(""));
-        let name = file_name_of(dest);
-        Self {
-            data: dir.join(format!(".{name}.lanclave-part")),
-            note: dir.join(format!(".{name}.lanclave-part.json")),
-        }
+    fn new(dest: &Path, source: &str) -> Self {
+        let (data, note) = partial_paths(dest, source);
+        Self { data, note }
     }
 
     /// Bytes already on disk for `source`, with its tag and size, if the
@@ -255,7 +264,7 @@ pub(crate) async fn pull_from_source(
             .await
             .map_err(|e| ClientError::IoError(e.to_string()))?;
     }
-    let partial = Partial::for_destination(local_save_path);
+    let partial = Partial::new(local_save_path, &source.path);
 
     // Two passes at most: a partial the peer refuses to extend (416 on a
     // stale or oversized partial) is discarded and the pull starts over.
@@ -472,9 +481,9 @@ fn stopped_before_start(reason: Result<StopReason, oneshot::error::RecvError>) -
     }
 }
 
-/// Delete the partial download for `dest`, if any.
-pub async fn discard_partial_for(dest: &Path) {
-    Partial::for_destination(dest).discard().await;
+/// Delete the partial download of `source` into `dest`, if any.
+pub async fn discard_partial_for(dest: &Path, source: &PullSource) {
+    Partial::new(dest, &source.path).discard().await;
 }
 
 /// Delete partial downloads, and their notes, that nothing has written to

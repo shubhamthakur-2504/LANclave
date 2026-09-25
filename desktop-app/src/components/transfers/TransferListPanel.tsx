@@ -309,17 +309,31 @@ export default function TransferListPanel({
                               {humanizeError(t.error, t.peerName).hint ?? t.error}
                             </p>
                           )}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              retryTransfer(t.id);
-                            }}
-                            disabled={t.direction === "upload" && (!t.peerAddr || !t.remotePath)}
-                            className="flex w-full items-center justify-center gap-2 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active disabled:opacity-40"
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-                            Try again
-                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                retryTransfer(t.id);
+                              }}
+                              disabled={t.direction === "upload" && (!t.peerAddr || !t.remotePath)}
+                              className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active disabled:opacity-40"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                              Try again
+                            </button>
+                            {/* Failed downloads are kept across restarts: let
+                                one that will never work go. */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                discardTransfer(t.id);
+                              }}
+                              title="Remove it from the list and delete what arrived"
+                              className="flex-1 rounded-lg border border-danger-border px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger-bg"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>

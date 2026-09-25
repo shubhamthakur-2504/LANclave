@@ -84,6 +84,10 @@ pub struct Transfer {
     #[serde(default)]
     pub message: Option<String>,
     pub started_ms: u64,
+    /// Last started, paused, resumed or ended: what "a week untouched" is
+    /// measured from. 0 in rows saved before the field existed.
+    #[serde(default)]
+    pub touched_ms: u64,
     /// Queued downloads: how many wait ahead of this one. Set in snapshots.
     #[serde(default)]
     pub ahead: Option<usize>,
@@ -119,6 +123,7 @@ impl Transfer {
             error: None,
             message: None,
             started_ms: now_ms(),
+            touched_ms: now_ms(),
             ahead: None,
             peer_addr: None,
             remote_path: None,
@@ -243,9 +248,10 @@ impl Inner {
         inner
     }
 
-    /// Paused or failed, and started over a week ago.
+    /// Paused or failed, and untouched for over a week.
     fn is_stale(row: &Transfer, now: u64) -> bool {
-        matches!(row.status, Status::Paused | Status::Failed) && now.saturating_sub(row.started_ms) > STALE_AFTER_MS
+        let touched = row.touched_ms.max(row.started_ms);
+        matches!(row.status, Status::Paused | Status::Failed) && now.saturating_sub(touched) > STALE_AFTER_MS
     }
 
     fn row(&self, id: &str) -> Option<&Transfer> {
@@ -289,6 +295,7 @@ impl Inner {
                     if let Some(row) = self.row_mut(&id) {
                         row.status = Status::InProgress;
                         row.message = None;
+                        row.touched_ms = now;
                     }
                     started.push((id, rx));
                 }
@@ -333,6 +340,7 @@ impl Inner {
         self.uploads.remove(id);
         let row = self.row_mut(id)?;
         row.message = None;
+        row.touched_ms = now;
         match end {
             End::Done { skipped, bytes, dest_name } => {
                 row.status = Status::Completed;
@@ -378,6 +386,8 @@ pub struct TransferManager {
     wake_at: Mutex<Option<u64>>,
     /// `None` keeps the list in memory only (tests).
     path: Option<PathBuf>,
+    /// One writer at a time, each writing the state as of its turn.
+    save_lock: Mutex<()>,
 }
 
 impl TransferManager {
@@ -389,6 +399,7 @@ impl TransferManager {
             app: Mutex::new(None),
             wake_at: Mutex::new(None),
             path: None,
+            save_lock: Mutex::new(()),
         }
     }
 
@@ -445,8 +456,12 @@ impl TransferManager {
 
     /// Tell the page the list changed, and keep it on disk.
     fn changed(&self) {
-        let snapshot = self.snapshot();
-        self.save(&snapshot);
+        let snapshot = {
+            let _turn = self.save_lock.lock().unwrap();
+            let snapshot = self.snapshot();
+            self.save(&snapshot);
+            snapshot
+        };
         if let Some(app) = self.app() {
             use tauri::Emitter;
             let _ = app.emit("transfers-changed", snapshot);
@@ -469,24 +484,41 @@ impl TransferManager {
     /// Put a download in the queue; it starts when a slot is free.
     pub fn enqueue(&self, row: Transfer) -> String {
         let id = row.id.clone();
-        {
-            let mut inner = self.inner.lock().unwrap();
-            inner.add(row);
-            inner.queue(&id, false);
-        }
-        self.changed();
-        self.pump();
+        self.enqueue_all(vec![row]);
         id
     }
 
-    /// A download into `local_path` that has not ended yet. Two downloads
-    /// into one destination would share, and wreck, one partial file.
-    pub fn open_pull_into(&self, local_path: &str) -> Option<Transfer> {
+    /// Queue several downloads at once (an accepted offer): one save, one
+    /// event, however many files.
+    pub fn enqueue_all(&self, rows: Vec<Transfer>) {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            for row in rows {
+                let id = row.id.clone();
+                inner.add(row);
+                inner.queue(&id, false);
+            }
+        }
+        self.changed();
+        self.pump();
+    }
+
+    /// The same download -- this peer, this file, this destination --
+    /// asked for earlier and not finished: waiting, running, paused, or
+    /// failed. Asking again continues it rather than starting a twin.
+    pub fn open_pull(&self, peer_id: &str, remote_path: &str, local_path: &str) -> Option<Transfer> {
         let inner = self.inner.lock().unwrap();
         inner
             .rows
             .iter()
-            .find(|r| r.direction == Way::Download && r.offer_id.is_none() && r.local_path.as_deref() == Some(local_path) && (r.is_open() || r.status == Status::Failed))
+            .find(|r| {
+                r.direction == Way::Download
+                    && r.offer_id.is_none()
+                    && r.peer_id == peer_id
+                    && r.remote_path.as_deref() == Some(remote_path)
+                    && r.local_path.as_deref() == Some(local_path)
+                    && r.status != Status::Completed
+            })
             .cloned()
     }
 
@@ -517,6 +549,7 @@ impl TransferManager {
             }
             row.status = Status::Paused;
             row.message = None;
+            row.touched_ms = now_ms();
             inner.waiting.retain(|w| w != id);
         }
         self.changed();
@@ -535,6 +568,7 @@ impl TransferManager {
             row.error = None;
             row.message = None;
             row.not_before = 0;
+            row.touched_ms = now_ms();
             inner.queue(id, true);
         }
         self.changed();
@@ -692,9 +726,9 @@ impl TransferManager {
     }
 
     fn discard_partial(&self, row: &Transfer) {
-        if let Ok((_, dest, _)) = job_source(&self.sandbox_root(), row) {
+        if let Ok((source, dest, _)) = job_source(&self.sandbox_root(), row) {
             tauri::async_runtime::spawn(async move {
-                crate::client::pull::discard_partial_for(&dest).await;
+                crate::client::pull::discard_partial_for(&dest, &source).await;
             });
         }
     }
@@ -788,6 +822,7 @@ async fn download(app: &tauri::AppHandle, manager: &Arc<TransferManager>, row: &
     let mut retries = 0u32;
     loop {
         if let Some(offer_id) = &row.offer_id {
+            crate::offers::keep_alive(&cli.offers, offer_id);
             match cli.offers.incoming(offer_id).map(|o| o.state) {
                 Some(OfferState::Accepted) => {}
                 Some(OfferState::Expired) => return End::Failed("the offer expired".into()),
@@ -1030,6 +1065,7 @@ mod tests {
             let mut r = pull(name);
             r.status = status;
             r.started_ms = now - age;
+            r.touched_ms = now - age;
             r
         };
         // Newest first, as saved.
@@ -1051,6 +1087,18 @@ mod tests {
         assert_eq!(status(&inner, 4), Some(Status::Failed));
         // The one that had been waiting longer goes first.
         assert_eq!(started(&mut inner, 2), vec![ids[1].clone(), ids[0].clone()]);
+    }
+
+    #[test]
+    fn a_download_touched_this_week_is_kept_however_old_it_is() {
+        let now = 10 * STALE_AFTER_MS;
+        let mut row = pull("big");
+        row.status = Status::Paused;
+        row.started_ms = now - 2 * STALE_AFTER_MS;
+        row.touched_ms = now - 1_000; // resumed and paused again yesterday
+        assert!(!Inner::is_stale(&row, now));
+        row.touched_ms = 0; // saved before the field existed
+        assert!(Inner::is_stale(&row, now));
     }
 
     #[test]

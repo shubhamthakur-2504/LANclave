@@ -160,6 +160,8 @@ pub struct OfferStore {
     app: Mutex<Option<tauri::AppHandle>>,
     /// `offers.json`; `None` keeps offers in memory only (tests).
     path: Option<PathBuf>,
+    /// One writer at a time, each writing the state as of its turn.
+    save_lock: Mutex<()>,
 }
 
 /// On disk, an offer keeps what the UI never sees: where its files live
@@ -209,6 +211,7 @@ impl OfferStore {
             incoming: Mutex::new(incoming),
             app: Mutex::new(None),
             path: Some(path),
+            save_lock: Mutex::new(()),
         };
         store.sweep(now_ms());
         store
@@ -216,6 +219,7 @@ impl OfferStore {
 
     fn save(&self) {
         let Some(path) = &self.path else { return };
+        let _turn = self.save_lock.lock().unwrap();
         let saved = SavedOffers {
             outgoing: self
                 .outgoing
@@ -612,6 +616,10 @@ fn servable(state: &AppState, id: &str, fid: &str, caller: &str) -> Result<(Outg
     if offer.state != OfferState::Accepted || now_ms() >= offer.expires_ms {
         return Err(StatusCode::GONE.into_response());
     }
+    // An offer still being pulled stays open: its expiry counts from the
+    // last request, not from acceptance, however long the receiver's
+    // queue or a pause held it up in between.
+    state.offers.update_outgoing(id, |o| o.expires_ms = now_ms() + ACCEPTED_TTL_MS);
     if !offer.accepted.iter().any(|f| f == fid) {
         return Err(StatusCode::NOT_FOUND.into_response());
     }
@@ -915,9 +923,7 @@ async fn accept(app: &tauri::AppHandle, offer_id: &str, file_ids: &[String]) -> 
         o.expires_ms = now_ms() + ACCEPTED_TTL_MS;
     });
     offers.emit_changed();
-    for file in &chosen {
-        transfers.enqueue(crate::transfers::Transfer::offer_file(&offer, file));
-    }
+    transfers.enqueue_all(chosen.iter().map(|f| crate::transfers::Transfer::offer_file(&offer, f)).collect());
     Ok(())
 }
 
@@ -952,6 +958,16 @@ pub async fn decline_offer(
     let path = format!("/api/offers/{offer_id}/decline");
     let _ = transport::post_json(&offer.peer_addr, &path, &serde_json::json!({}), &state.device_id, &state.identity_key).await;
     Ok(())
+}
+
+/// A file of this accepted offer is being pulled: keep the offer open for
+/// another full term, as the sender does on each request.
+pub fn keep_alive(offers: &OfferStore, offer_id: &str) {
+    offers.update_incoming(offer_id, |o| {
+        if o.state == OfferState::Accepted {
+            o.expires_ms = now_ms() + ACCEPTED_TTL_MS;
+        }
+    });
 }
 
 pub fn transfer_id(offer_id: &str, file_id: &str) -> String {

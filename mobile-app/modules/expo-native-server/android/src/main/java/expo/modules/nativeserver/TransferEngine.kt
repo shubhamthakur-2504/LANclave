@@ -57,6 +57,8 @@ object TransferEngine {
         /** A sender pause holds it back until this time (ms). */
         @Volatile var notBefore = 0L
         @Volatile var startedMs = System.currentTimeMillis()
+        /** Last change of any kind: what "a week untouched" counts from. */
+        @Volatile var touchedMs = System.currentTimeMillis()
 
         fun toJson(): JSONObject = JSONObject()
             .put("id", id).put("peerAddr", peerAddr).put("peerId", peerId)
@@ -64,7 +66,7 @@ object TransferEngine {
             .put("path", path).put("fingerprintPath", fingerprintPath ?: JSONObject.NULL)
             .put("initiatedBy", initiatedBy).put("offerId", offerId ?: JSONObject.NULL).put("fileId", fileId ?: JSONObject.NULL)
             .put("status", status.name).put("bytes", bytes).put("total", total)
-            .put("message", message ?: JSONObject.NULL).put("startedMs", startedMs)
+            .put("message", message ?: JSONObject.NULL).put("startedMs", startedMs).put("touchedMs", touchedMs)
 
         /** `ahead`: downloads waiting in front of this one, if it waits. */
         fun toMap(ahead: Int? = null): Map<String, Any?> = mapOf(
@@ -165,6 +167,7 @@ object TransferEngine {
             total = j.optLong("total")
             message = opt("message")
             startedMs = j.optLong("startedMs", System.currentTimeMillis())
+            touchedMs = j.optLong("touchedMs", startedMs)
         }
     }
 
@@ -174,7 +177,7 @@ object TransferEngine {
         val now = System.currentTimeMillis()
         val restored = (0 until arr.length())
             .mapNotNull { runCatching { jobFrom(arr.getJSONObject(it)) }.getOrNull() }
-            .filterNot { (it.status == Status.PAUSED || it.status == Status.FAILED) && now - it.startedMs > STALE_AFTER_MS }
+            .filterNot { (it.status == Status.PAUSED || it.status == Status.FAILED) && now - maxOf(it.startedMs, it.touchedMs) > STALE_AFTER_MS }
         synchronized(jobs) { restored.forEach { jobs[it.id] = it } }
         for (job in restored) {
             if (job.status in listOf(Status.QUEUED, Status.IN_PROGRESS, Status.VERIFYING)) {
@@ -207,6 +210,19 @@ object TransferEngine {
     fun pullFromSandbox(peerAddr: String, peerId: String, peerName: String?, remoteName: String, size: Long?): String {
         val safe = Offers.safeFileName(remoteName) ?: throw IllegalArgumentException("Unsafe file name")
         val encoded = java.net.URLEncoder.encode(remoteName, "UTF-8").replace("+", "%20")
+        val path = "/files/$encoded"
+        // Asked again for a file already on its way (a double tap): continue
+        // that download rather than start a twin.
+        val open = synchronized(jobs) {
+            jobs.values.firstOrNull {
+                it.offerId == null && it.peerId == peerId && it.path == path &&
+                    it.status != Status.COMPLETED && it.status != Status.SKIPPED
+            }
+        }
+        if (open != null) {
+            resume(open.id)
+            return open.id
+        }
         val job = Job(
             id = UUID.randomUUID().toString(),
             peerAddr = peerAddr,
@@ -214,7 +230,7 @@ object TransferEngine {
             peerName = peerName,
             name = safe,
             size = size,
-            path = "/files/$encoded",
+            path = path,
             fingerprintPath = "/api/sandbox/fingerprint/$encoded",
             initiatedBy = "me",
         )
@@ -223,17 +239,38 @@ object TransferEngine {
     }
 
     /** Put a download in line; it starts when a slot is free. */
-    fun enqueue(job: Job, front: Boolean = false) {
+    fun enqueue(job: Job, front: Boolean = false) = enqueueAll(listOf(job), front)
+
+    /** Several at once (an accepted offer): one save and one pump. */
+    fun enqueueAll(batch: List<Job>, front: Boolean = false) {
         synchronized(jobs) {
-            jobs[job.id] = job
-            job.status = Status.QUEUED
-            job.stop = null
-            job.notBefore = 0L
-            queue.add(job.id, front)
+            for (job in batch) {
+                jobs[job.id] = job
+                job.touchedMs = System.currentTimeMillis()
+                job.status = Status.QUEUED
+                job.stop = null
+                job.notBefore = 0L
+                queue.add(job.id, front)
+            }
         }
-        emit(job)
+        if (batch.size == 1) emit(batch[0]) // pump() tells the rest of the line
         save()
         pump()
+    }
+
+    /** Forget a failed or paused download and what arrived of it. */
+    fun remove(id: String) {
+        val job = get(id) ?: return
+        val idle = synchronized(jobs) {
+            (job.status == Status.FAILED || job.status == Status.PAUSED) && !queue.isRunning(id)
+        }
+        if (!idle) return
+        synchronized(jobs) {
+            queue.remove(id)
+            jobs.remove(id)
+        }
+        discardPartial(job)
+        save()
     }
 
     /** Start what the free slots allow; tell waiting rows their place. */
@@ -261,6 +298,7 @@ object TransferEngine {
             (job.status == Status.QUEUED && !queue.isRunning(id)).also { if (it) queue.remove(id) }
         }
         if (waiting) {
+            job.touchedMs = System.currentTimeMillis()
             job.status = Status.PAUSED
             job.message = null
             job.pausedBySender = false
@@ -303,12 +341,20 @@ object TransferEngine {
     // One download
     // ------------------------------------------------------------------
 
-    private fun partialName(job: Job) = ".${job.name}.lanclave-part"
+    /**
+     * Tagged by source, so two downloads that will land under one name
+     * (two offered `IMG_1.jpg`, running side by side) never share one.
+     */
+    private fun partialName(job: Job): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(job.path.toByteArray())
+        val tag = digest.take(4).joinToString("") { "%02x".format(it) }
+        return ".${job.name}.$tag.lanclave-part"
+    }
 
     /** The note lives in app-private storage, not beside the file in SAF. */
     private fun noteFile(job: Job): File {
         val ctx = app!!
-        val key = Integer.toHexString("${sandboxPath}|${job.name}".hashCode())
+        val key = Integer.toHexString("${sandboxPath}|${partialName(job)}".hashCode())
         return File(File(ctx.filesDir, "partials").apply { mkdirs() }, "$key.json")
     }
 
@@ -483,10 +529,16 @@ object TransferEngine {
     }
 
     /** Give the finished partial a free name (never over an existing file). */
+    private val naming = Any()
+
     private fun complete(ctx: Context, sandbox: Sandbox, job: Job, size: Long) {
-        val taken = sandbox.names()
-        val free = Fingerprint.firstFreeName(job.name) { it in taken }
-        job.destName = sandbox.rename(partialName(job), free)
+        // Choosing a free name and taking it is one step: downloads now
+        // finish side by side.
+        job.destName = synchronized(naming) {
+            val taken = sandbox.names()
+            val free = Fingerprint.firstFreeName(job.name) { it in taken }
+            sandbox.rename(partialName(job), free)
+        }
         noteFile(job).delete()
         job.bytes = size
         job.total = size
@@ -509,6 +561,7 @@ object TransferEngine {
         when (job.stop) {
             Stop.PAUSE -> {
                 job.stop = null
+                job.touchedMs = System.currentTimeMillis()
                 job.status = Status.PAUSED
                 job.message = null
                 emit(job)
@@ -523,6 +576,7 @@ object TransferEngine {
     }
 
     private fun finish(job: Job, status: Status, message: String?) {
+        job.touchedMs = System.currentTimeMillis()
         job.status = status
         job.message = message
         emit(job)

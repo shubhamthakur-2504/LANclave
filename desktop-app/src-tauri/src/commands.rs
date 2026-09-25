@@ -540,12 +540,12 @@ pub async fn pull_file(
 
     // Asking again for a file already on its way continues that download
     // rather than starting a second one into the same partial file.
-    if let Some(open) = transfers.open_pull_into(&local_filename) {
+    let (peer_id, peer_name) = peer_identity(&state, &peer_addr, peer_id, peer_name);
+    if let Some(open) = transfers.open_pull(&peer_id, &remote_path, &local_filename) {
         transfers.resume(&open.id)?;
         return Ok(open.id);
     }
 
-    let (peer_id, peer_name) = peer_identity(&state, &peer_addr, peer_id, peer_name);
     let row = crate::transfers::Transfer::sandbox_pull(peer_addr, peer_id, peer_name, remote_path, local_filename, remote_size);
     Ok(transfers.enqueue(row))
 }

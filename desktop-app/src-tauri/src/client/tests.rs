@@ -491,17 +491,15 @@ async fn pull_finds_identical_numbered_copy_locally() {
 /// A partial download of `name` as the client leaves it: the first `have`
 /// bytes of `content`, plus the note naming the source and version.
 fn seed_partial(local_dir: &std::path::Path, name: &str, content: &[u8], have: usize, etag: &str) {
-    std::fs::write(local_dir.join(format!(".{name}.lanclave-part")), &content[..have]).unwrap();
+    let source = format!("/files/{name}");
+    let (data, note_path) = super::pull::partial_paths(&local_dir.join(name), &source);
+    std::fs::write(data, &content[..have]).unwrap();
     let note = serde_json::json!({
-        "source": format!("/files/{name}"),
+        "source": source,
         "etag": etag,
         "size": content.len(),
     });
-    std::fs::write(
-        local_dir.join(format!(".{name}.lanclave-part.json")),
-        serde_json::to_vec(&note).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(note_path, serde_json::to_vec(&note).unwrap()).unwrap();
 }
 
 fn etag_of(path: &std::path::Path) -> String {
@@ -569,8 +567,8 @@ async fn pull_resumes_from_a_partial_file() {
     assert_eq!(report.outcome, super::pull::TransferOutcome::Transferred);
     assert_eq!(first_progress, Some(120_000), "progress starts where the partial ended");
     assert_eq!(std::fs::read(local_dir.path().join("movie.bin")).unwrap(), content);
-    assert!(!local_dir.path().join(".movie.bin.lanclave-part").exists());
-    assert!(!local_dir.path().join(".movie.bin.lanclave-part.json").exists());
+    let (data, note) = super::pull::partial_paths(&local_dir.path().join("movie.bin"), "/files/movie.bin");
+    assert!(!data.exists() && !note.exists());
 }
 
 #[tokio::test]

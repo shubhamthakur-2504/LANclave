@@ -38,7 +38,7 @@ function calcEta(transfer: Transfer): string {
 }
 
 export default function TransfersScreen() {
-  const { transfers, cancelTransfer, pauseTransfer, resumeTransfer } = useTransfers();
+  const { transfers, cancelTransfer, pauseTransfer, resumeTransfer, removeTransfer } = useTransfers();
   // "Activity": this session's live transfers. "History": the 30-day log.
   const [view, setView] = useState<"activity" | "history">("activity");
 
@@ -161,6 +161,11 @@ export default function TransfersScreen() {
                     {item.status === 'paused' && (
                       <Pressable style={styles.cancelBtn} onPress={() => cancelTransfer(item.id)}>
                         <Text style={styles.cancelText}>Discard</Text>
+                      </Pressable>
+                    )}
+                    {item.status === 'failed' && (
+                      <Pressable style={styles.cancelBtn} onPress={() => removeTransfer(item.id)}>
+                        <Text style={styles.cancelText}>Remove</Text>
                       </Pressable>
                     )}
                   </View>

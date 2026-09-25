@@ -90,6 +90,8 @@ declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
   pauseTransfer(id: string): void;
   resumeTransfer(id: string): void;
   cancelTransfer(id: string): void;
+  /** Forget a failed or paused download and its partial file. */
+  removeTransfer(id: string): void;
   getTransfers(): NativeTransfer[];
   /** Downloads that run at once (default 2); the rest wait in line. */
   getMaxDownloads(): number;

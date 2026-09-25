@@ -48,6 +48,8 @@ class ExpoNativeServerModule : Module() {
     Function("pauseTransfer") { id: String -> TransferEngine.pause(id) }
     Function("resumeTransfer") { id: String -> TransferEngine.resume(id) }
     Function("cancelTransfer") { id: String -> TransferEngine.cancel(id) }
+    /** Forget a failed or paused download and its partial file. */
+    Function("removeTransfer") { id: String -> TransferEngine.remove(id) }
     Function("getTransfers") { TransferEngine.snapshot() }
     /** Downloads that run at once (1-8, default 2); kept across restarts. */
     Function("getMaxDownloads") { TransferEngine.maxDownloads }

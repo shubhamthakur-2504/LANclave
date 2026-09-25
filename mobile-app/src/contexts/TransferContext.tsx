@@ -99,6 +99,8 @@ interface TransferContextState {
   pauseTransfer: (id: string) => void;
   /** Continue a paused or failed native download from its partial file. */
   resumeTransfer: (id: string) => void;
+  /** Drop a failed native download from the list, with what arrived. */
+  removeTransfer: (id: string) => void;
 }
 
 const useNativeEngine = Platform.OS === 'android';
@@ -492,6 +494,13 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
     ExpoNativeServerModule.resumeTransfer(id);
   }, []);
 
+  // Failed downloads are kept across restarts, so one that will never
+  // work needs a way out of the list.
+  const removeTransfer = useCallback((id: string) => {
+    ExpoNativeServerModule.removeTransfer(id);
+    setTransfers((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
   const cancelTransfer = useCallback(async (id: string) => {
     if (transfersRef.current.find((t) => t.id === id)?.native) {
       ExpoNativeServerModule.cancelTransfer(id);
@@ -516,7 +525,7 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <TransferContext.Provider
-      value={{ transfers, startDownload, startUpload, cancelTransfer, pauseTransfer, resumeTransfer }}
+      value={{ transfers, startDownload, startUpload, cancelTransfer, pauseTransfer, resumeTransfer, removeTransfer }}
     >
       {children}
     </TransferContext.Provider>

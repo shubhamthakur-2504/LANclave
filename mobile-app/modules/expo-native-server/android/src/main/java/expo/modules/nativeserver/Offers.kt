@@ -360,6 +360,9 @@ object Offers {
         val offer = outgoingFor(id, caller) ?: return null to status(Response.Status.NOT_FOUND)
         if (offer.state != "accepted" || System.currentTimeMillis() >= offer.expiresMs) return null to status(GONE)
         if (fid !in offer.accepted) return null to status(Response.Status.NOT_FOUND)
+        // Expiry counts from the last request, not from acceptance: a
+        // receiver's queue or pause may hold a file up for a long time.
+        offer.expiresMs = System.currentTimeMillis() + ACCEPTED_TTL_MS
         if (offer.paused) {
             return null to status(UNAVAILABLE_503).apply { addHeader("Retry-After", "5") }
         }
@@ -505,23 +508,21 @@ object Offers {
         offer.accepted = chosen.map { it.id }
         offer.state = "accepted"
         offer.expiresMs = System.currentTimeMillis() + ACCEPTED_TTL_MS
-        for (f in chosen) {
-            TransferEngine.enqueue(
-                TransferEngine.Job(
-                    id = "offer:$id:${f.id}",
-                    peerAddr = offer.peerAddr,
-                    peerId = offer.peerId,
-                    peerName = offer.peerName,
-                    name = f.name,
-                    size = f.size,
-                    path = "/api/offers/$id/files/${f.id}",
-                    fingerprintPath = "/api/offers/$id/files/${f.id}/fingerprint",
-                    initiatedBy = "peer",
-                    offerId = id,
-                    fileId = f.id,
-                ),
+        TransferEngine.enqueueAll(chosen.map { f ->
+            TransferEngine.Job(
+                id = "offer:$id:${f.id}",
+                peerAddr = offer.peerAddr,
+                peerId = offer.peerId,
+                peerName = offer.peerName,
+                name = f.name,
+                size = f.size,
+                path = "/api/offers/$id/files/${f.id}",
+                fingerprintPath = "/api/offers/$id/files/${f.id}/fingerprint",
+                initiatedBy = "peer",
+                offerId = id,
+                fileId = f.id,
             )
-        }
+        })
         changed()
     }
 
