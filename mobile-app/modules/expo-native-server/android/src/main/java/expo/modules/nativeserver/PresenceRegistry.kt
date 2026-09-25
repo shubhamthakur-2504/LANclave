@@ -39,6 +39,10 @@ object PresenceRegistry {
         }
     }
 
+    /** Where a peer last reached us from, as "ip:port" (its server port). */
+    fun addrOf(deviceId: String): String? =
+        entries[deviceId]?.let { e -> e.ip?.let { "$it:${e.port ?: 8377}" } }
+
     /** Last name a peer announced, for the transfer history. */
     fun nameOf(deviceId: String): String? = entries[deviceId]?.deviceName
 

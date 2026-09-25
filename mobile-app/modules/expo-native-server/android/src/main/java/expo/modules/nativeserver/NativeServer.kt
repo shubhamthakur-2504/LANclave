@@ -118,7 +118,14 @@ class NativeServer(
                     json.put("device_id", deviceId)
                     json.put("device_name", deviceName)
                     json.put("device_type", "phone")
+                    // What this server speaks: peers choose offers over the
+                    // legacy push, and know downloads resume.
+                    json.put("features", JSONArray(listOf("range", "fingerprint", "offers")))
                     return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
+                }
+                uri == "/api/offers" || uri.startsWith("/api/offers/") -> {
+                    // Authenticated above: the header is a verified paired device.
+                    return Offers.handle(session, session.headers["x-lanclave-device-id"]!!)
                 }
                 uri == "/api/presence/hello" && method == Method.POST -> {
                     return handlePresenceHello(session)

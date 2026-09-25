@@ -18,7 +18,50 @@ class ExpoNativeServerModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ExpoNativeServer")
 
-    Events("onPairingCancelled", "onPairingRequest")
+    Events(
+      "onPairingCancelled",
+      "onPairingRequest",
+      "onTransferProgress",
+      "onOffersChanged",
+      "onOfferReceived",
+      "onOfferProgress",
+    )
+
+    OnCreate {
+      // Native transfers and offers talk to JS through here.
+      Events.sink = { name, body -> sendEvent(name, body) }
+    }
+
+    /**
+     * The key native requests are signed with (P4): the same seed JS signs
+     * with, kept in memory only. Called before the server starts.
+     */
+    Function("setIdentity") { deviceId: String, seedHex: String ->
+      Identity.set(deviceId, seedHex)
+    }
+
+    // ---- Transfers (native engine) ----------------------------------
+
+    AsyncFunction("pull") { peerAddr: String, peerId: String, peerName: String?, remoteName: String, size: Double? ->
+      TransferEngine.pullFromSandbox(peerAddr, peerId, peerName, remoteName, size?.toLong())
+    }
+    Function("pauseTransfer") { id: String -> TransferEngine.pause(id) }
+    Function("resumeTransfer") { id: String -> TransferEngine.resume(id) }
+    Function("cancelTransfer") { id: String -> TransferEngine.cancel(id) }
+    Function("getTransfers") { TransferEngine.snapshot() }
+
+    // ---- Offers --------------------------------------------------------
+
+    Function("listOffers") { Offers.snapshotJson() }
+
+    /** Offer files; resolves to the offer id, or null if the peer predates offers. */
+    AsyncFunction("sendFiles") { peerAddr: String, peerId: String, peerName: String?, filesJson: String ->
+      Offers.send(peerAddr, peerId, peerName, org.json.JSONArray(filesJson))
+    }
+    AsyncFunction("acceptOffer") { offerId: String, fileIds: List<String> -> Offers.accept(offerId, fileIds) }
+    AsyncFunction("declineOffer") { offerId: String -> Offers.decline(offerId) }
+    AsyncFunction("cancelOffer") { offerId: String -> Offers.cancelOutgoing(offerId) }
+    Function("pauseOffer") { offerId: String, paused: Boolean -> Offers.pauseOutgoing(offerId, paused) }
 
     Function("startServer") { port: Int, deviceId: String, deviceName: String, sandboxPath: String, pairedDevices: Array<String> ->
       try {
@@ -58,6 +101,8 @@ class ExpoNativeServerModule : Module() {
           }
         }
         next.start(5000, false)
+        TransferEngine.configure(context, sandboxPath)
+        Offers.configure(context, sandboxPath, deviceName)
         server = next
         currentConfig = config
         true
