@@ -83,6 +83,12 @@ declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
   uriSha256(uri: string): Promise<string>;
   /** Pairing cancels received since the last call; consumed on read. */
   consumePairingCancels(): string[];
+  /** "Open with" for a `content://` URI; false when no app opens this type. */
+  openUri(uri: string, name: string): boolean;
+  /** The share sheet for one file (`content://` URI). */
+  shareUri(uri: string, name: string): void;
+  /** Types that install or run code when opened (e.g. `.apk`). */
+  isRiskyFile(name: string): boolean;
   /** The key native requests are signed with. Call before startServer. */
   setIdentity(deviceId: string, seedHex: string): void;
   /** Start a native download from a peer's sandbox; resolves to its id. */

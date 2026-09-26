@@ -1,4 +1,5 @@
 import {
+  Alert,
   ActivityIndicator,
   FlatList,
   StatusBar,
@@ -16,6 +17,9 @@ import { useSandboxFiles } from "@/hooks/use-sandbox-files";
 import { startServer, stopServer, isServerRunning } from "@/services/server";
 import { Icon } from "@/components/Icon";
 import { SortBar } from "@/components/SortBar";
+import { SendToSheet } from "@/components/SendToSheet";
+import { openSandboxFile, shareSandboxFile } from "@/services/open-file";
+import type { SandboxFileEntry } from "@/services/storage";
 import { getLastSort, rememberSort, sortFiles, type SortState } from "@/utils/sort-files";
 import { useState, useEffect, useMemo } from "react";
 
@@ -23,6 +27,17 @@ export default function MySandboxScreen() {
   const { files, isLoading: filesLoading, refreshFiles } = useSandboxFiles();
   const [serverVisible, setServerVisible] = useState(false);
   const [sort, setSort] = useState<SortState>(getLastSort);
+  const [sendingFile, setSendingFile] = useState<SandboxFileEntry | null>(null);
+
+  /** Long-press: the other things to do with a file. */
+  const showActions = (file: SandboxFileEntry) => {
+    if (file.isDirectory) return;
+    Alert.alert(file.name, undefined, [
+      { text: "Open", onPress: () => openSandboxFile(file) },
+      { text: "Share", onPress: () => shareSandboxFile(file) },
+      { text: "Send to a device", onPress: () => setSendingFile(file) },
+    ], { cancelable: true });
+  };
   const sortedFiles = useMemo(() => sortFiles(files, sort, (f) => f), [files, sort]);
   const changeSort = (next: SortState) => {
     setSort(next);
@@ -98,7 +113,13 @@ export default function MySandboxScreen() {
               </View>
             ) : null
           }
-          renderItem={({ item }) => <LocalFileRow file={item} />}
+          renderItem={({ item }) => (
+            <LocalFileRow
+              file={item}
+              onPress={() => openSandboxFile(item)}
+              onLongPress={() => showActions(item)}
+            />
+          )}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           ListEmptyComponent={
             filesLoading ? null : (
@@ -115,6 +136,7 @@ export default function MySandboxScreen() {
       </SafeAreaView>
 
       <AddFileButton onFileAdded={refreshFiles} />
+      <SendToSheet file={sendingFile} onClose={() => setSendingFile(null)} />
     </View>
   );
 }

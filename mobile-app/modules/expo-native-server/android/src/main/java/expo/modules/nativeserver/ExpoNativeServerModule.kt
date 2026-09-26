@@ -65,6 +65,19 @@ class ExpoNativeServerModule : Module() {
       Offers.setAutoAccept(context, deviceId, enabled)
     }
 
+    // ---- Opening files (O1) -------------------------------------------
+
+    /** "Open with" for a content URI; false when no app opens this type. */
+    Function("openUri") { uri: String, name: String ->
+      val ctx = appContext.currentActivity ?: appContext.reactContext ?: throw Exception("React context is null")
+      OpenFiles.open(ctx, uri, name)
+    }
+    Function("shareUri") { uri: String, name: String ->
+      val ctx = appContext.currentActivity ?: appContext.reactContext ?: throw Exception("React context is null")
+      OpenFiles.share(ctx, uri, name)
+    }
+    Function("isRiskyFile") { name: String -> OpenFiles.isRisky(name) }
+
     // ---- Offers --------------------------------------------------------
 
     Function("listOffers") { Offers.snapshotJson() }

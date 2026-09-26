@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SandboxFileEntry } from "@/services/storage";
 import { C, mb } from "@/constants/colors";
 import { fileKind } from "@/constants/file-kind";
@@ -6,13 +6,24 @@ import { Icon } from "@/components/Icon";
 
 export interface LocalFileRowProps {
   file: SandboxFileEntry;
+  /** Tap: open in another app. */
+  onPress?: () => void;
+  /** Long-press: more actions (share, send to a device). */
+  onLongPress?: () => void;
 }
 
-export function LocalFileRow({ file }: LocalFileRowProps) {
+export function LocalFileRow({ file, onPress, onLongPress }: LocalFileRowProps) {
   const kind = fileKind(file.name, file.isDirectory);
 
   return (
-    <View style={styles.row}>
+    <Pressable
+      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      disabled={!onPress && !onLongPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${file.name}. Tap to open, long-press for more.`}
+    >
       <View style={styles.iconWrap}>
         <Icon name={kind.icon} size={20} color={C[kind.tone]} />
       </View>
@@ -24,7 +35,7 @@ export function LocalFileRow({ file }: LocalFileRowProps) {
           {file.isDirectory ? kind.label : `${kind.label} · ${mb(file.size)}`}
         </Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -48,6 +59,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 12,
   },
+  pressed: { backgroundColor: C.surfaceActive },
   icon: { fontSize: 18 },
   meta: { flex: 1 },
   name: { fontSize: 14, fontWeight: "600", color: C.content },
