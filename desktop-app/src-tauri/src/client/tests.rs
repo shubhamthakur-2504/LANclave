@@ -652,3 +652,36 @@ async fn corrupted_resume_is_caught_and_downloaded_again() {
     assert_eq!(std::fs::read(local_dir.path().join("clip.bin")).unwrap(), content);
     assert!(statuses.iter().filter(|s| *s == "verifying").count() >= 2, "{statuses:?}");
 }
+
+// ── Hash while serving ───────────────────────────────────────────
+
+#[tokio::test]
+async fn serving_a_whole_file_caches_its_digest() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let dir = TempDir::new().unwrap();
+    let whole = dir.path().join("whole.bin");
+    let part = dir.path().join("part.bin");
+    std::fs::write(&whole, b"abc").unwrap();
+    std::fs::write(&part, b"abcdef").unwrap();
+    // Settled files: the cache refuses ones changed in the last seconds.
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+    for p in [&whole, &part] {
+        std::fs::File::options().write(true).open(p).unwrap().set_modified(old).unwrap();
+    }
+    let peer_addr = start_server(&dir, &[]).await;
+
+    let res = super::transport::get_stream_at(&peer_addr, "/files/whole.bin", None, &did, &key).await.unwrap();
+    res.bytes().await.unwrap();
+    assert_eq!(
+        crate::hash_cache::global().get(&whole).as_deref(),
+        Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+        "served whole: hashed on the way out"
+    );
+
+    let etag = etag_of(&part);
+    let res = super::transport::get_stream_at(&peer_addr, "/files/part.bin", Some((2, &etag)), &did, &key).await.unwrap();
+    assert_eq!(res.status(), 206);
+    res.bytes().await.unwrap();
+    assert_eq!(crate::hash_cache::global().get(&part), None, "a partial response cannot hash the file");
+}

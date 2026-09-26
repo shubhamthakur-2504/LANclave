@@ -5,6 +5,7 @@ mod discovery;
 mod file_ops;
 mod files;
 mod fs_util;
+mod hash_cache;
 mod history;
 mod offers;
 mod pairing;

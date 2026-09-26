@@ -112,14 +112,25 @@ pub async fn serve_file(
     let len = size - first;
     observer.on_start(first, len);
 
+    // Sending the whole file: hash it on the way out, so the receiver's
+    // verification is answered from the cache instead of a second read.
+    // A resumed (partial) response cannot, and falls back to hashing later.
+    let mut tap = match (start, crate::hash_cache::stamp(&meta)) {
+        (None, Some(stamp)) => Some(HashTap::new(path.to_path_buf(), stamp)),
+        _ => None,
+    };
+
     use futures_util::StreamExt;
     let stream = ReaderStream::with_capacity(BufReader::new(file), 64 * 1024).map(move |chunk| {
         if let Ok(bytes) = &chunk {
-            // A method call, not a field update: edition-2021 closures
+            // Method calls, not field updates: edition-2021 closures
             // capture only the fields they touch, which would move a copy
             // of a counter in and leave the observer to drop -- and record
             // a failed transfer -- as soon as this function returns.
             observer.add_bytes(bytes.len() as u64);
+            if let Some(t) = tap.as_mut() {
+                t.update(bytes);
+            }
         }
         chunk
     });
@@ -139,6 +150,34 @@ pub async fn serve_file(
         builder = builder.header(header::CONTENT_RANGE, format!("bytes {n}-{}/{size}", size - 1));
     }
     Ok(builder.body(axum::body::Body::from_stream(stream)).unwrap())
+}
+
+/// Hashes a file as it is served; caches the digest once every byte went out.
+struct HashTap {
+    path: std::path::PathBuf,
+    stamp: (u64, u64),
+    seen: u64,
+    hasher: Option<sha2::Sha256>,
+}
+
+impl HashTap {
+    fn new(path: std::path::PathBuf, stamp: (u64, u64)) -> Self {
+        use sha2::Digest;
+        Self { path, stamp, seen: 0, hasher: Some(sha2::Sha256::new()) }
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+        use sha2::Digest;
+        let Some(h) = self.hasher.as_mut() else { return };
+        h.update(bytes);
+        self.seen += bytes.len() as u64;
+        if self.seen == self.stamp.0 {
+            let digest = self.hasher.take().unwrap().finalize();
+            let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+            // `put` re-checks the file is unchanged since serving began.
+            crate::hash_cache::global().put(&self.path, self.stamp, hex);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -333,6 +333,18 @@ pub(crate) async fn pull_from_source(
         }
         .map_err(|e| ClientError::IoError(e.to_string()))?;
 
+        // Hash while writing, so checking the finished file needs no second
+        // read. Resuming: hash what is already there first.
+        let mut hasher = if offset > 0 {
+            let data = partial.data.clone();
+            tokio::task::spawn_blocking(move || hash_prefix(&data, offset))
+                .await
+                .map_err(|e| ClientError::IoError(e.to_string()))?
+                .map_err(|e| ClientError::IoError(e.to_string()))?
+        } else {
+            <sha2::Sha256 as sha2::Digest>::new()
+        };
+
         // ---- 2. Stream to the partial file --------------------------------
         use futures_util::StreamExt;
         let mut writer = BufWriter::with_capacity(64 * 1024, file);
@@ -368,6 +380,7 @@ pub(crate) async fn pull_from_source(
                             .write_all(&bytes)
                             .await
                             .map_err(|e| ClientError::IoError(e.to_string()))?;
+                        sha2::Digest::update(&mut hasher, &bytes);
                         done += bytes.len() as u64;
                         if last_emit.elapsed().as_millis() >= 100 {
                             emit("in_progress", done, total, None, None);
@@ -402,7 +415,9 @@ pub(crate) async fn pull_from_source(
 
         // ---- 3. Check it against the sender's copy ------------------------
         emit("verifying", done, total, None, None);
-        match verify(peer_addr, source, &partial.data, total, device_id, signing_key).await {
+        let local_sha: String =
+            sha2::Digest::finalize(hasher).iter().map(|b| format!("{b:02x}")).collect();
+        match verify(peer_addr, source, &local_sha, total, device_id, signing_key).await {
             Verified::Mismatch if attempt == 0 => {
                 // A corrupted resume or transfer: once more, from scratch.
                 partial.discard().await;
@@ -438,11 +453,29 @@ enum Verified {
     Unavailable,
 }
 
-/// Compare the downloaded bytes with the sender's SHA-256 of the file.
+/// The first `len` bytes of `path` fed to a fresh SHA-256.
+fn hash_prefix(path: &Path, len: u64) -> std::io::Result<sha2::Sha256> {
+    use sha2::Digest;
+    use std::io::Read;
+    let mut hasher = sha2::Sha256::new();
+    let mut reader = std::fs::File::open(path)?.take(len);
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher)
+}
+
+/// Compare the downloaded bytes' SHA-256 (`local_sha`, computed while they
+/// were written) with the sender's.
 async fn verify(
     peer_addr: &str,
     source: &PullSource,
-    data: &Path,
+    local_sha: &str,
     size: u64,
     device_id: &str,
     signing_key: &SigningKey,
@@ -459,11 +492,10 @@ async fn verify(
         // The sender's file changed size since: this copy is not it.
         return Verified::Mismatch;
     };
-    let data = data.to_path_buf();
-    match tokio::task::spawn_blocking(move || crate::dedupe::sha256_file(&data)).await {
-        Ok(Ok(local)) if local.eq_ignore_ascii_case(&remote_sha) => Verified::Match,
-        Ok(Ok(_)) => Verified::Mismatch,
-        _ => Verified::Unavailable,
+    if local_sha.eq_ignore_ascii_case(&remote_sha) {
+        Verified::Match
+    } else {
+        Verified::Mismatch
     }
 }
 

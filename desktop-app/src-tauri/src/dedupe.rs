@@ -86,7 +86,9 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
 
 async fn sha256_file_async(path: &Path) -> std::io::Result<String> {
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || sha256_file(&path))
+    // Cached: a file just served (and hashed on the way out) or just checked
+    // is not read again.
+    tokio::task::spawn_blocking(move || crate::hash_cache::sha256_file_cached(&path))
         .await
         .map_err(std::io::Error::other)?
 }
