@@ -23,6 +23,9 @@ interface FileListPanelProps {
   downloadingName?: string | null;
   onDownload?: (name: string) => void;
   onSelect?: (name: string) => void;
+  /** Open with the default app: double-click or Enter. */
+  onOpen?: (name: string) => void;
+  selectedName?: string | null;
 }
 
 function iconForFile(file: FileEntry): ReactNode {
@@ -68,6 +71,8 @@ export default function FileListPanel({
   downloadingName,
   onDownload,
   onSelect,
+  onOpen,
+  selectedName = null,
 }: FileListPanelProps) {
   const [sort, setSort] = useState<SortState>(loadSort);
   const sorted = sortFiles(files, sort);
@@ -113,7 +118,20 @@ export default function FileListPanel({
             <div
               key={file.name}
               onClick={() => onSelect?.(file.name)}
-              className={`flex w-full items-center gap-3 border-b border-border px-5 py-3 text-left transition-colors ${onSelect ? 'cursor-pointer hover:bg-surface-active' : 'hover:bg-surface-active'}`}
+              onDoubleClick={() => !file.is_directory && onOpen?.(file.name)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !file.is_directory) onOpen?.(file.name);
+                if (e.key === " ") {
+                  e.preventDefault();
+                  onSelect?.(file.name);
+                }
+              }}
+              tabIndex={onSelect || onOpen ? 0 : undefined}
+              role={onSelect ? "option" : undefined}
+              aria-selected={onSelect ? file.name === selectedName : undefined}
+              className={`flex w-full items-center gap-3 border-b border-border px-5 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-action ${
+                file.name === selectedName ? "bg-action/10" : ""
+              } ${onSelect ? 'cursor-pointer hover:bg-surface-active' : 'hover:bg-surface-active'}`}
             >
               <span className="shrink-0">{iconForFile(file)}</span>
               <div className="flex-1 min-w-0">

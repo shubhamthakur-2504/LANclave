@@ -336,7 +336,7 @@ function AppInner() {
           />
         );
       case "files":
-        return <FilesPage files={localFiles} isDropping={isDragging && !hoveredPeerId} />;
+        return <FilesPage files={localFiles} peers={peers} isDropping={isDragging && !hoveredPeerId} />;
       case "transfers":
         return <TransfersPage />; // removed transfers={[]} 
       case "settings":

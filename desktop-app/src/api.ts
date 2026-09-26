@@ -57,6 +57,18 @@ export async function importFiles(paths: string[]): Promise<string[]> {
   return await invoke("import_files", { paths });
 }
 
+/**
+ * Open a sandbox file with the default app. A risky type (a program or
+ * script) comes back as `confirm`, naming who sent it; call again with
+ * `confirmed` once the user agrees.
+ */
+export async function openSandboxFile(
+  name: string,
+  confirmed: boolean,
+): Promise<{ kind: "opened" } | { kind: "confirm"; sender: string | null }> {
+  return await invoke("open_sandbox_file", { name, confirmed });
+}
+
 /** Reveal a completed download in the OS file manager. */
 export async function revealInSandbox(fileName: string): Promise<void> {
   await invoke("reveal_in_sandbox", { fileName });
