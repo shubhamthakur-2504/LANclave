@@ -820,40 +820,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "desktop-app"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64 0.22.1",
- "bytes",
- "default-net",
- "dirs-next",
- "ed25519-dalek",
- "fs2",
- "futures-util",
- "http-body-util",
- "mdns-sd",
- "mime_guess",
- "rand 0.8.7",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-notification",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tempfile",
- "tokio",
- "tokio-util",
- "tower",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2099,6 +2065,40 @@ dependencies = [
  "bitflags 2.13.0",
  "serde",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "lanclave"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "default-net",
+ "dirs-next",
+ "ed25519-dalek",
+ "fs2",
+ "futures-util",
+ "http-body-util",
+ "mdns-sd",
+ "mime_guess",
+ "rand 0.8.7",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-notification",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "urlencoding",
+ "uuid",
 ]
 
 [[package]]
