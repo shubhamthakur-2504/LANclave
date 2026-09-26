@@ -8,6 +8,7 @@ mod fs_util;
 mod hash_cache;
 mod history;
 mod offers;
+mod open_file;
 mod pairing;
 mod presence;
 mod range;
@@ -153,6 +154,7 @@ pub fn run() {
             commands::list_peers,
             commands::rescan_peer,
             commands::reveal_in_sandbox,
+            open_file::open_sandbox_file,
             commands::import_files,
             // File transfer
             commands::list_peer_files,

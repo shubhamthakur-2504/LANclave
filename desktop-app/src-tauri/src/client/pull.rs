@@ -161,6 +161,8 @@ impl Partial {
             return Err(ClientError::IoError(e.to_string()));
         }
         let _ = tokio_fs::remove_file(&self.note).await;
+        // It came from another machine: let Windows treat it that way.
+        crate::open_file::mark_from_peer(&final_path);
         Ok(final_path)
     }
 }

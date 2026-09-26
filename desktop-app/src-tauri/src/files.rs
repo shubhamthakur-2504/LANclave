@@ -198,6 +198,8 @@ pub async fn upload_file(
 
     guard.disarm();
     log.succeeded = true;
+    // Pushed from another machine: let Windows treat it that way.
+    crate::open_file::mark_from_peer(&path);
     Ok((StatusCode::CREATED, Json(UploadResult { name: saved_as })))
 }
 

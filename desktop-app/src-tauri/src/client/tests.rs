@@ -685,3 +685,26 @@ async fn serving_a_whole_file_caches_its_digest() {
     res.bytes().await.unwrap();
     assert_eq!(crate::hash_cache::global().get(&part), None, "a partial response cannot hash the file");
 }
+
+// ── Mark of the Web ──────────────────────────────────────────────
+
+#[cfg(windows)]
+#[tokio::test]
+async fn a_pulled_file_is_marked_as_from_another_machine() {
+    let key = test_keypair();
+    let did = test_device_id(&key);
+    let remote_dir = TempDir::new().unwrap();
+    let peer_addr = start_server(&remote_dir, &[("tool.exe", b"MZ fake program")]).await;
+    let local_dir = TempDir::new().unwrap();
+
+    let (_tx, rx) = cancel_channel();
+    let report = super::pull_file_to_disk(
+        "t", &peer_addr, "tool.exe", &local_dir.path().join("tool.exe"), None, &did, &key, rx, |_| {},
+    )
+    .await
+    .unwrap();
+
+    let saved = local_dir.path().join(&report.dest_name);
+    let mark = std::fs::read_to_string(format!("{}:Zone.Identifier", saved.display())).unwrap();
+    assert!(mark.contains("ZoneId=3"), "{mark}");
+}
