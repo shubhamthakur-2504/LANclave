@@ -472,6 +472,10 @@ object TransferEngine {
                 job.message = null
                 emit(job)
                 var lastEmit = 0L
+                // Hash while writing, so checking the finished file needs no
+                // second read. Resuming: hash what is already there first.
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                if (offset > 0) hashPrefix(sandbox, partial, offset, digest)
                 sandbox.openForWrite(partial, append = offset > 0).use { out ->
                     conn.inputStream.use { input ->
                         val buf = ByteArray(64 * 1024)
@@ -480,6 +484,7 @@ object TransferEngine {
                             val n = input.read(buf)
                             if (n < 0) break
                             out.write(buf, 0, n)
+                            digest.update(buf, 0, n)
                             job.bytes += n
                             val now = System.currentTimeMillis()
                             if (now - lastEmit > 250) {
@@ -496,7 +501,8 @@ object TransferEngine {
                 // ---- 3. Verify against the sender's copy ----------------
                 job.status = Status.VERIFYING
                 emit(job)
-                when (verify(sandbox, partial, job, total)) {
+                val localSha = digest.digest().joinToString("") { "%02x".format(it) }
+                when (verify(job, total, localSha)) {
                     false -> {
                         if (attempt == 0) {
                             // Damaged transfer or resume: once more from scratch.
@@ -518,14 +524,32 @@ object TransferEngine {
         finish(job, Status.FAILED, "The device kept refusing to resume the download")
     }
 
-    /** `true` match, `false` mismatch, `null` the sender cannot say. */
-    private fun verify(sandbox: Sandbox, partial: String, job: Job, size: Long): Boolean? {
+    /**
+     * The downloaded bytes' SHA-256 ([localSha], computed while writing)
+     * against the sender's: `true` match, `false` mismatch, `null` the
+     * sender cannot say.
+     */
+    private fun verify(job: Job, size: Long, localSha: String): Boolean? {
         val fp = job.fingerprintPath ?: return null
         val remote = PeerHttp.getJson(job.peerAddr, "$fp?exact=1&size=$size") ?: return null
         val remoteSha = remote.optString("sha256").takeIf { it.isNotEmpty() && it != "null" } ?: return false
         if (remote.optLong("size") != size) return false
-        val local = sandbox.openForRead(partial)?.let { Fingerprint.sha256(it) } ?: return null
-        return local.equals(remoteSha, ignoreCase = true)
+        return localSha.equals(remoteSha, ignoreCase = true)
+    }
+
+    /** Feed the first [length] bytes of the partial file to [digest]. */
+    private fun hashPrefix(sandbox: Sandbox, partial: String, length: Long, digest: java.security.MessageDigest) {
+        val input = sandbox.openForRead(partial) ?: throw IOException("The partial download is gone")
+        input.use {
+            val buf = ByteArray(1024 * 1024)
+            var left = length
+            while (left > 0) {
+                val n = it.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
+                if (n < 0) throw IOException("The partial download is shorter than expected")
+                digest.update(buf, 0, n)
+                left -= n
+            }
+        }
     }
 
     /** Give the finished partial a free name (never over an existing file). */

@@ -404,7 +404,15 @@ object Offers {
         val uri = offer.uris[fid] ?: return status(Response.Status.NOT_FOUND)
         val ctx = app ?: return status(Response.Status.INTERNAL_ERROR)
         val expected = session.parameters["size"]?.firstOrNull()?.toLongOrNull()
-        val sha = if (expected == null || expected == file.size) Fingerprint.ofUri(ctx, uri.toString()) else null
+        val sha = if (expected == null || expected == file.size) {
+            // Usually cached: the file was hashed as it was served.
+            val stamp = ServedFile.stampOf(ctx, uri)
+            if (stamp != null && stamp.first == file.size) {
+                HashCache.cached(uri.toString(), stamp.first, stamp.second) { Fingerprint.ofUri(ctx, uri.toString()) }
+            } else {
+                Fingerprint.ofUri(ctx, uri.toString())
+            }
+        } else null
         val json = JSONObject().put("size", file.size).put("sha256", sha ?: JSONObject.NULL)
         return NanoHTTPD.newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
     }

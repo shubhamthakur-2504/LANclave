@@ -16,6 +16,10 @@ class ServedFile(
     val name: String,
     val size: Long,
     val modifiedMs: Long,
+    /** Key for [HashCache]; null when the file cannot be cached. */
+    val cacheKey: String? = null,
+    /** Size and modified time now, to confirm the file did not change while served. */
+    val currentStamp: () -> Pair<Long, Long>? = { null },
     /** Open positioned at [offset]. */
     private val openAt: (offset: Long) -> InputStream?,
 ) {
@@ -23,7 +27,11 @@ class ServedFile(
 
     companion object {
         fun of(file: File): ServedFile? = file.takeIf { it.isFile }?.let {
-            ServedFile(it.name, it.length(), it.lastModified()) { offset ->
+            ServedFile(
+                it.name, it.length(), it.lastModified(),
+                cacheKey = it.absolutePath,
+                currentStamp = { it.length() to it.lastModified() },
+            ) { offset ->
                 FileInputStream(it).also { s -> s.channel.position(offset) }
             }
         }
@@ -34,7 +42,11 @@ class ServedFile(
          * streams is skipped forward instead -- slower, still correct.
          */
         fun of(context: Context, uri: Uri, name: String, size: Long, modifiedMs: Long): ServedFile =
-            ServedFile(name, size, modifiedMs) { offset ->
+            ServedFile(
+                name, size, modifiedMs,
+                cacheKey = uri.toString(),
+                currentStamp = { stampOf(context, uri) },
+            ) { offset ->
                 val pfd = try {
                     context.contentResolver.openFileDescriptor(uri, "r")
                 } catch (_: Exception) {
@@ -46,6 +58,12 @@ class ServedFile(
                     context.contentResolver.openInputStream(uri)?.also { skipFully(it, offset) }
                 }
             }
+
+        /** Size and modified time of a content URI, if the provider says. */
+        fun stampOf(context: Context, uri: Uri): Pair<Long, Long>? = runCatching {
+            androidx.documentfile.provider.DocumentFile.fromSingleUri(context, uri)
+                ?.let { it.length() to it.lastModified() }
+        }.getOrNull()
 
         private fun skipFully(input: InputStream, count: Long) {
             var left = count
@@ -99,11 +117,41 @@ fun serveFile(
             NanoHTTPD.Response.Status.INTERNAL_ERROR, NanoHTTPD.MIME_PLAINTEXT, "Could not open file",
         )
 
+    // Sending the whole file: hash it on the way out, so the receiver's
+    // verification is answered from HashCache instead of a second read.
+    val body = if (start == 0L && file.cacheKey != null) HashTap(input, file) else input
+
     val status = if (start > 0) STATUS_206 else NanoHTTPD.Response.Status.OK
-    return NanoHTTPD.newFixedLengthResponse(status, "application/octet-stream", wrap(input, start, length), length)
+    return NanoHTTPD.newFixedLengthResponse(status, "application/octet-stream", wrap(body, start, length), length)
         .apply {
             addHeader("Accept-Ranges", "bytes")
             addHeader("ETag", tag)
             if (start > 0) addHeader("Content-Range", "bytes $start-${file.size - 1}/${file.size}")
         }
+}
+
+/** Hashes a whole file as it is served; caches the digest at the last byte. */
+private class HashTap(input: InputStream, private val file: ServedFile) : java.io.FilterInputStream(input) {
+    private val digest = java.security.MessageDigest.getInstance("SHA-256")
+    private var seen = 0L
+    private var done = false
+
+    override fun read(): Int = super.read().also { if (it >= 0) feed(byteArrayOf(it.toByte()), 0, 1) }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int =
+        super.read(b, off, len).also { if (it > 0) feed(b, off, it) }
+
+    private fun feed(b: ByteArray, off: Int, n: Int) {
+        if (done) return
+        digest.update(b, off, n)
+        seen += n
+        if (seen == file.size) {
+            done = true
+            val key = file.cacheKey ?: return
+            // Only if the file is still what we started serving.
+            if (file.currentStamp() == (file.size to file.modifiedMs)) {
+                HashCache.put(key, file.size, file.modifiedMs, digest.digest().joinToString("") { "%02x".format(it) })
+            }
+        }
+    }
 }

@@ -46,7 +46,10 @@ object Fingerprint {
     }
 
     /** One sandbox entry, however the sandbox is stored. */
-    private class Entry(val size: Long, val open: () -> InputStream?)
+    private class Entry(val size: Long, val key: String, val modified: Long, val open: () -> InputStream?) {
+        /** Through [HashCache]: a file just served or checked is not read again. */
+        fun sha(): String? = HashCache.cached(key, size, modified) { open()?.let(::sha256) }
+    }
 
     /**
      * Size and (when sizes agree) SHA-256 of `name` in the sandbox, plus
@@ -65,29 +68,31 @@ object Fingerprint {
             // One listing, then lookups by name: findFile() would re-list per call.
             val children = tree.listFiles().filter { it.isFile }.associateBy { it.name }
             val resolve: (String) -> Entry? = { n ->
-                children[n]?.let { doc -> Entry(doc.length()) { context.contentResolver.openInputStream(doc.uri) } }
+                children[n]?.let { doc ->
+                    Entry(doc.length(), doc.uri.toString(), doc.lastModified()) { context.contentResolver.openInputStream(doc.uri) }
+                }
             }
             resolve
         } else {
             val dir = File(rawSandboxPath.removePrefix("file://"))
             val resolve: (String) -> Entry? = { n ->
-                File(dir, n).takeIf { it.isFile }?.let { f -> Entry(f.length()) { f.inputStream() } }
+                File(dir, n).takeIf { it.isFile }?.let { f -> Entry(f.length(), f.absolutePath, f.lastModified()) { f.inputStream() } }
             }
             resolve
         }
 
         val base = lookup(name) ?: return null
         if (expectedSize == null) {
-            return Result(base.size, base.open()?.let(::sha256))
+            return Result(base.size, base.sha())
         }
 
-        val baseSha = if (base.size == expectedSize) base.open()?.let(::sha256) else null
+        val baseSha = if (base.size == expectedSize) base.sha() else null
         val siblings = mutableListOf<Sibling>()
         for (n in 1..(if (withSiblings) MAX_SIBLINGS else 0)) {
             val siblingName = numberedName(name, n)
             val sibling = lookup(siblingName) ?: break
             if (sibling.size != expectedSize) continue
-            sibling.open()?.let { siblings.add(Sibling(siblingName, sha256(it))) }
+            sibling.sha()?.let { siblings.add(Sibling(siblingName, it)) }
         }
         return Result(base.size, baseSha, siblings)
     }
