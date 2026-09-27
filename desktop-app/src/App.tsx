@@ -246,7 +246,12 @@ function AppInner() {
   // window was hidden or released is held by the backend: show it now.
   useEffect(() => {
     const open = (request: api.PairingRequest) => {
-      setPairPeer({ addr: request.ip, device_id: request.device_id, paired: false });
+      setPairPeer({
+        addr: request.ip,
+        device_id: request.device_id,
+        device_name: request.name || undefined,
+        paired: false,
+      });
       if (request.fingerprint) setPairFingerprint(request.fingerprint);
       setIsConnectModalOpen(true);
     };
@@ -368,6 +373,8 @@ function AppInner() {
           isOpen={isConnectModalOpen || pairPeer !== null}
           peerAddr={pairPeer?.addr ?? ""}
           peerDeviceId={pairPeer?.device_id ?? ""}
+          peerDeviceName={pairPeer?.device_name}
+          peerDeviceType={pairPeer?.device_type}
           initialFingerprint={pairFingerprint}
           onClose={() => {
             setPairPeer(null);

@@ -1,6 +1,14 @@
-import { Check, ShieldCheck, X } from "lucide-react";
+import { Check, HelpCircle, Laptop, ShieldCheck, Smartphone, Tablet, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as api from "../../api";
+import { colorForDevice, deviceKind } from "../../lib/identity";
+
+const KIND_ICONS = {
+  laptop: Laptop,
+  phone: Smartphone,
+  tablet: Tablet,
+  unknown: HelpCircle,
+} as const;
 
 /**
  * Group the six digits as `428 106`.
@@ -20,6 +28,8 @@ interface ConnectionModalProps {
   peerAddr: string;
   peerDeviceId: string;
   peerDeviceName?: string;
+  /** "laptop" | "phone" | ... as reported over /health. */
+  peerDeviceType?: string;
   initialFingerprint?: string | null;
   onClose: () => void;
   onPaired: () => void;
@@ -30,6 +40,7 @@ export default function ConnectionModal({
   peerAddr: initialAddr,
   peerDeviceId: initialDeviceId,
   peerDeviceName: initialDeviceName,
+  peerDeviceType,
   initialFingerprint,
   onClose,
   onPaired,
@@ -85,6 +96,8 @@ export default function ConnectionModal({
   if (!isOpen) return null;
 
   const targetAddr = customAddr || initialAddr;
+  const identityColor = colorForDevice(initialDeviceId || initialAddr);
+  const KindIcon = KIND_ICONS[deviceKind(peerDeviceType, initialDeviceName)];
 
   const handleInitiate = async () => {
     if (!targetAddr) {
@@ -178,10 +191,23 @@ export default function ConnectionModal({
             <>
               {initialAddr ? (
                 <>
-                  <div className="mx-auto mt-5 flex h-16 w-16 items-center justify-center rounded-full bg-surface-active text-xl font-bold text-content-muted">
-                    {initialAddr[0]?.toUpperCase() ?? "?"}
+                  {/* Which device, in the colour it wears in the Peers list.
+                      This used to show the first character of the IP, so
+                      nearly every device appeared as a big "1". */}
+                  <div
+                    className="mx-auto mt-5 flex h-16 w-16 items-center justify-center rounded-full"
+                    style={{ backgroundColor: `${identityColor}22`, color: identityColor }}
+                  >
+                    <KindIcon className="h-8 w-8" strokeWidth={1.5} aria-hidden="true" />
                   </div>
-                  <p className="mt-3 text-sm text-content-muted">{initialAddr}</p>
+                  <p className="mt-3 truncate text-base font-medium text-content">
+                    {initialDeviceName || "Unnamed device"}
+                  </p>
+                  <p className="mt-0.5 text-xs text-content-faint">{initialAddr}</p>
+                  <p className="mx-auto mt-4 max-w-[19rem] text-sm leading-relaxed text-content-muted">
+                    Both screens will show a 6-digit code. You'll check they
+                    match before anything is shared.
+                  </p>
                 </>
               ) : (
                 /*
@@ -238,7 +264,7 @@ export default function ConnectionModal({
                   disabled={loading}
                   className="flex-1 rounded-lg bg-action px-4 py-2.5 text-sm font-medium text-on-action transition-colors hover:bg-action-hover disabled:opacity-40"
                 >
-                  {loading ? "Connecting…" : "Connect"}
+                  {loading ? "Connecting…" : "Pair"}
                 </button>
               </div>
             </>
