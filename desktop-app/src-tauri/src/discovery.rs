@@ -1,6 +1,6 @@
 use mdns_sd::{DaemonEvent, ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread;
@@ -318,9 +318,10 @@ async fn probe_ip(client: reqwest::Client, ip: &str, semaphore: Arc<tokio::sync:
 
 /// Extract a peer from a resolved mDNS service.
 fn parse_peer(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer> {
-    // Build the socket address from the first resolved IP + port.
-    let ip = info.get_addresses().iter().next()?;
-    let addr = format!("{ip}:{}", info.get_port());
+    let ip = pick_peer_ip(info.get_addresses().iter().map(|a| a.to_ip_addr()))?;
+    // `SocketAddr` brackets IPv6 (`[::1]:8377`), which every URL built from
+    // `addr` depends on.
+    let addr = std::net::SocketAddr::new(ip, info.get_port()).to_string();
 
     // Device ID is stored in the TXT properties.
     let device_id = info.get_property_val_str("device_id")?.to_owned();
@@ -339,6 +340,57 @@ fn parse_peer(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer> {
         device_name,
         device_type,
     })
+}
+
+/// Choose which of a peer's advertised addresses to dial.
+///
+/// mDNS hands back addresses in no particular order, and a phone typically
+/// advertises its public IPv6 alongside its LAN IPv4. IPv4 is what the
+/// servers are reached on here, so it wins; link-local IPv6 is never usable
+/// because the address carries no interface scope.
+fn pick_peer_ip(addrs: impl IntoIterator<Item = IpAddr>) -> Option<IpAddr> {
+    let rank = |ip: &IpAddr| match ip {
+        IpAddr::V4(v4) if v4.is_private() => Some(0),
+        IpAddr::V4(v4) if !v4.is_loopback() && !v4.is_link_local() => Some(1),
+        IpAddr::V6(v6) if (v6.segments()[0] & 0xffc0) != 0xfe80 && !v6.is_loopback() => Some(2),
+        _ => None,
+    };
+    addrs
+        .into_iter()
+        .filter_map(|ip| rank(&ip).map(|r| (r, ip)))
+        .min_by_key(|(r, ip)| (*r, *ip))
+        .map(|(_, ip)| ip)
+}
+
+#[cfg(test)]
+mod pick_peer_ip_tests {
+    use super::pick_peer_ip;
+    use std::net::IpAddr;
+
+    fn ips(list: &[&str]) -> Vec<IpAddr> {
+        list.iter().map(|s| s.parse().unwrap()).collect()
+    }
+
+    #[test]
+    fn prefers_lan_ipv4_over_public_ipv6() {
+        let got = pick_peer_ip(ips(&["2409:40c0:1009:3a8a::50", "fe80::1", "192.168.1.7"]));
+        assert_eq!(got, Some("192.168.1.7".parse().unwrap()));
+    }
+
+    #[test]
+    fn falls_back_to_routable_ipv6_but_never_link_local() {
+        assert_eq!(
+            pick_peer_ip(ips(&["fe80::1", "2409:40c0::50"])),
+            Some("2409:40c0::50".parse().unwrap())
+        );
+        assert_eq!(pick_peer_ip(ips(&["fe80::1", "127.0.0.1"])), None);
+    }
+
+    #[test]
+    fn ipv6_peer_addr_is_bracketed() {
+        let ip: IpAddr = "2409:40c0::50".parse().unwrap();
+        assert_eq!(std::net::SocketAddr::new(ip, 8377).to_string(), "[2409:40c0::50]:8377");
+    }
 }
 
 #[cfg(test)]

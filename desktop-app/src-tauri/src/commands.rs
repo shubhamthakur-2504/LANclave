@@ -757,15 +757,11 @@ fn normalize_peer_addr(raw: &str) -> Option<String> {
     if raw.is_empty() {
         return None;
     }
-    let with_port = if raw.contains(':') {
-        raw.to_string()
-    } else {
-        format!("{raw}:{}", crate::presence::SERVER_PORT)
-    };
-    with_port
-        .parse::<std::net::SocketAddr>()
-        .ok()
-        .map(|a| a.to_string())
+    // A bare IP (IPv6 included, which is full of colons) gets the default port.
+    if let Ok(ip) = raw.parse::<std::net::IpAddr>() {
+        return Some(std::net::SocketAddr::new(ip, crate::presence::SERVER_PORT).to_string());
+    }
+    raw.parse::<std::net::SocketAddr>().ok().map(|a| a.to_string())
 }
 
 /// The user rejected the codes: tell the peer, so its dialog closes and --
@@ -936,6 +932,8 @@ mod tests {
     fn peer_addr_gets_default_port_and_rejects_non_addresses() {
         assert_eq!(normalize_peer_addr("10.0.0.5").as_deref(), Some("10.0.0.5:8377"));
         assert_eq!(normalize_peer_addr(" 10.0.0.5:9000 ").as_deref(), Some("10.0.0.5:9000"));
+        assert_eq!(normalize_peer_addr("2409:40c0::50").as_deref(), Some("[2409:40c0::50]:8377"));
+        assert_eq!(normalize_peer_addr("[2409:40c0::50]:9000").as_deref(), Some("[2409:40c0::50]:9000"));
         assert_eq!(normalize_peer_addr(""), None);
         assert_eq!(normalize_peer_addr("Mobile"), None);
         assert_eq!(normalize_peer_addr("dGVzdC1rZXk="), None);

@@ -116,7 +116,7 @@ async fn presence_hello_handler(
         .map(|p| p.port)
         .unwrap_or(crate::presence::SERVER_PORT);
 
-    let addr = remote.map(|axum::Extension(ci)| format!("{}:{port}", ci.0.ip()));
+    let addr = remote.map(|axum::Extension(ci)| std::net::SocketAddr::new(ci.0.ip(), port).to_string());
     state.presence.mark_seen(&device_id, peer_name, addr);
     notify_presence(&state);
 
@@ -168,7 +168,7 @@ async fn pairing_status_handler(
     if !device_id.is_empty() {
         let was_online = state.presence.is_online(&device_id);
         let addr = remote.map(|axum::Extension(ci)| {
-            format!("{}:{}", ci.0.ip(), crate::presence::SERVER_PORT)
+            std::net::SocketAddr::new(ci.0.ip(), crate::presence::SERVER_PORT).to_string()
         });
         state.presence.mark_seen(&device_id, None, addr);
         if !was_online {
@@ -264,7 +264,7 @@ fn record_signed_health_probe(
     }
     let was_online = state.presence.is_online(&device_id);
     let addr = remote.map(|axum::Extension(ci)| {
-        format!("{}:{}", ci.0.ip(), crate::presence::SERVER_PORT)
+        std::net::SocketAddr::new(ci.0.ip(), crate::presence::SERVER_PORT).to_string()
     });
     state.presence.mark_seen(&device_id, None, addr);
     if !was_online {

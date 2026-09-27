@@ -353,7 +353,7 @@ pub async fn receive_offer(
     }
 
     let peer_addr = remote
-        .map(|axum::Extension(ci)| format!("{}:{}", ci.0.ip(), crate::presence::SERVER_PORT))
+        .map(|axum::Extension(ci)| std::net::SocketAddr::new(ci.0.ip(), crate::presence::SERVER_PORT).to_string())
         .or_else(|| state.presence.addr_of(&peer_id))
         .ok_or(StatusCode::BAD_REQUEST)?;
     let peer_name = state.peer_name(&peer_id).or(body.sender_name);
