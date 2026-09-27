@@ -10,6 +10,10 @@
 //!   1 min, 5 min, 30 min, 2 h, then 24 h. Keyed by device id *and* address,
 //!   since a new device id costs nothing to make; the address cooldown is
 //!   capped lower because networks hand old addresses to new devices.
+//! - **Asking then withdrawing** is a rejection too, after a few free ones.
+//!   Otherwise ask-and-withdraw, over and over, flashed a dialog here each
+//!   time and never earned a strike. The free ones cover a genuine retry
+//!   whose code never showed for some technical reason.
 //!
 //! In memory only: a restart forgives everyone, which is fine for a nuisance
 //! guard. Mirrors `PairingGuard.kt` on the phone, rule for rule.
@@ -33,7 +37,11 @@ const COOLDOWNS: [Duration; 5] = [
 /// Addresses get reassigned, so an address is never muted longer than this.
 const ADDR_COOLDOWN_CAP: Duration = Duration::from_secs(30 * 60);
 
-/// Strikes are forgotten this long after the cooldown they earned ends.
+/// Withdrawals of a request to us that cost nothing; the next ones strike.
+const FREE_WITHDRAWALS: usize = 3;
+
+/// Strikes are forgotten this long after the cooldown they earned ends, and
+/// free withdrawals come back this long after the last one.
 const FORGIVE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Debug, PartialEq, Eq)]
@@ -57,10 +65,16 @@ struct Strikes {
     muted_until: Instant,
 }
 
+struct Withdrawals {
+    count: usize,
+    last: Instant,
+}
+
 #[derive(Default)]
 struct State {
     active: Option<Active>,
     strikes: HashMap<String, Strikes>,
+    withdrawals: HashMap<String, Withdrawals>,
 }
 
 #[derive(Default)]
@@ -107,6 +121,23 @@ impl State {
             cooldown = cooldown.min(cap);
         }
         self.strikes.insert(key, Strikes { count, muted_until: now + cooldown });
+    }
+
+    /// A strike, unless `key` still has free withdrawals left.
+    fn withdrawal(&mut self, key: String, cap: Option<Duration>, now: Instant) {
+        let count = match self.withdrawals.get(&key) {
+            Some(w) if now < w.last + FORGIVE_AFTER => w.count + 1,
+            _ => 1,
+        };
+        self.withdrawals.insert(key.clone(), Withdrawals { count, last: now });
+        if count > FREE_WITHDRAWALS {
+            self.strike(key, cap, now);
+        }
+    }
+
+    fn forgive(&mut self, key: &str) {
+        self.strikes.remove(key);
+        self.withdrawals.remove(key);
     }
 }
 
@@ -160,16 +191,24 @@ impl PairingGuard {
         let mut s = self.0.lock().unwrap();
         if let Some(active) = s.active.take_if(|a| a.device_id == device_id) {
             if let Some(ip) = active.ip {
-                s.strikes.remove(&ip_key(&ip));
+                s.forgive(&ip_key(&ip));
             }
         }
-        s.strikes.remove(&id_key(device_id));
+        s.forgive(&id_key(device_id));
     }
 
-    /// The other device withdrew: free the screen, no strike.
-    pub fn withdrawn(&self, device_id: &str) {
+    /// The other device withdrew. If it had asked us, that is a rejection
+    /// once its free withdrawals are used up; one we asked, or an unpair
+    /// with nothing on screen, costs nothing.
+    pub fn withdrawn(&self, device_id: &str, now: Instant) {
         let mut s = self.0.lock().unwrap();
-        s.active.take_if(|a| a.device_id == device_id);
+        let Some(active) = s.active.take_if(|a| a.device_id == device_id) else {
+            return;
+        };
+        if let Some(ip) = active.ip {
+            s.withdrawal(id_key(device_id), None, now);
+            s.withdrawal(ip_key(&ip), Some(ADDR_COOLDOWN_CAP), now);
+        }
     }
 }
 
@@ -266,13 +305,59 @@ mod tests {
     }
 
     #[test]
-    fn withdrawal_frees_the_screen_without_a_strike() {
+    fn asking_then_withdrawing_is_free_a_few_times_then_a_rejection() {
         let g = PairingGuard::default();
         let t = Instant::now();
-        g.admit("a", "10.0.0.2", t);
-        g.withdrawn("a");
-        assert_eq!(g.admit("b", "10.0.0.3", t), Admit::Ok);
-        g.withdrawn("b");
+        for _ in 0..FREE_WITHDRAWALS {
+            assert_eq!(g.admit("a", "10.0.0.2", t), Admit::Ok);
+            g.withdrawn("a", t);
+        }
+        assert_eq!(g.admit("b", "10.0.0.3", t), Admit::Ok, "screen is free");
+        g.withdrawn("b", t);
         assert_eq!(g.admit("a", "10.0.0.2", t), Admit::Ok);
+        g.withdrawn("a", t);
+        assert_eq!(g.admit("a", "10.0.0.2", t), Admit::CoolingDown(MIN));
+        // A new id from the same address has used the address's free ones.
+        g.admit("fresh", "10.0.0.2", t + MIN);
+        g.withdrawn("fresh", t + MIN);
+        assert_eq!(g.admit("fresh", "10.0.0.2", t + MIN), Admit::CoolingDown(5 * MIN));
+    }
+
+    #[test]
+    fn pairing_or_a_quiet_day_restores_free_withdrawals() {
+        let g = PairingGuard::default();
+        let t = Instant::now();
+        for _ in 0..FREE_WITHDRAWALS {
+            g.admit("a", "10.0.0.2", t);
+            g.withdrawn("a", t);
+        }
+        g.admit("a", "10.0.0.2", t);
+        g.paired("a");
+        g.admit("a", "10.0.0.2", t);
+        g.withdrawn("a", t);
+        assert_eq!(g.admit("a", "10.0.0.2", t), Admit::Ok, "free again after pairing");
+
+        let g = PairingGuard::default();
+        for _ in 0..FREE_WITHDRAWALS {
+            g.admit("a", "10.0.0.2", t);
+            g.withdrawn("a", t);
+        }
+        let later = t + FORGIVE_AFTER;
+        g.admit("a", "10.0.0.2", later);
+        g.withdrawn("a", later);
+        assert_eq!(g.admit("a", "10.0.0.2", later), Admit::Ok, "free again after a quiet day");
+    }
+
+    #[test]
+    fn withdrawing_a_pairing_we_started_or_an_unpair_is_no_strike() {
+        let g = PairingGuard::default();
+        let t = Instant::now();
+        g.begin_outgoing("a", t);
+        g.withdrawn("a", t);
+        // An unpair from a device with nothing on screen.
+        g.withdrawn("b", t);
+        assert_eq!(g.admit("a", "10.0.0.2", t), Admit::Ok);
+        g.paired("a");
+        assert_eq!(g.admit("b", "10.0.0.3", t), Admit::Ok);
     }
 }

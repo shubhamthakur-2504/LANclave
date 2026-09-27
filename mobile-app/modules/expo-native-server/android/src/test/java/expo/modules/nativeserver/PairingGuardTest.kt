@@ -91,12 +91,56 @@ class PairingGuardTest {
     }
 
     @Test
-    fun withdrawalFreesTheScreenWithoutAStrike() {
+    fun askingThenWithdrawingIsFreeAFewTimesThenARejection() {
         val g = PairingGuard()
-        g.admit("a", "10.0.0.2", t)
-        g.withdrawn("a")
-        assertEquals(Admit.Ok, g.admit("b", "10.0.0.3", t))
-        g.withdrawn("b")
+        repeat(PairingGuard.FREE_WITHDRAWALS) {
+            assertEquals(Admit.Ok, g.admit("a", "10.0.0.2", t))
+            g.withdrawn("a", t)
+        }
+        assertEquals("screen is free", Admit.Ok, g.admit("b", "10.0.0.3", t))
+        g.withdrawn("b", t)
         assertEquals(Admit.Ok, g.admit("a", "10.0.0.2", t))
+        g.withdrawn("a", t)
+        assertEquals(Admit.CoolingDown(min), g.admit("a", "10.0.0.2", t))
+        // A new id from the same address has used the address's free ones.
+        g.admit("fresh", "10.0.0.2", t + min)
+        g.withdrawn("fresh", t + min)
+        assertEquals(Admit.CoolingDown(5 * min), g.admit("fresh", "10.0.0.2", t + min))
+    }
+
+    @Test
+    fun pairingOrAQuietDayRestoresFreeWithdrawals() {
+        var g = PairingGuard()
+        repeat(PairingGuard.FREE_WITHDRAWALS) {
+            g.admit("a", "10.0.0.2", t)
+            g.withdrawn("a", t)
+        }
+        g.admit("a", "10.0.0.2", t)
+        g.paired("a")
+        g.admit("a", "10.0.0.2", t)
+        g.withdrawn("a", t)
+        assertEquals("free again after pairing", Admit.Ok, g.admit("a", "10.0.0.2", t))
+
+        g = PairingGuard()
+        repeat(PairingGuard.FREE_WITHDRAWALS) {
+            g.admit("a", "10.0.0.2", t)
+            g.withdrawn("a", t)
+        }
+        val later = t + PairingGuard.FORGIVE_AFTER_MS
+        g.admit("a", "10.0.0.2", later)
+        g.withdrawn("a", later)
+        assertEquals("free again after a quiet day", Admit.Ok, g.admit("a", "10.0.0.2", later))
+    }
+
+    @Test
+    fun withdrawingAPairingWeStartedOrAnUnpairIsNoStrike() {
+        val g = PairingGuard()
+        g.beginOutgoing("a", t)
+        g.withdrawn("a", t)
+        // An unpair from a device with nothing on screen.
+        g.withdrawn("b", t)
+        assertEquals(Admit.Ok, g.admit("a", "10.0.0.2", t))
+        g.paired("a")
+        assertEquals(Admit.Ok, g.admit("b", "10.0.0.3", t))
     }
 }

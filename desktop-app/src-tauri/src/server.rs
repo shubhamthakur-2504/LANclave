@@ -251,7 +251,7 @@ async fn pairing_cancel_handler(
         (was_paired, name)
     };
     state.presence.forget(&device_id);
-    crate::pairing::guard().withdrawn(&device_id);
+    crate::pairing::guard().withdrawn(&device_id, std::time::Instant::now());
 
     if let Some(app) = &state.app_handle {
         use tauri::{Emitter, Manager};

@@ -13,6 +13,10 @@ package expo.modules.nativeserver
  *   1 min, 5 min, 30 min, 2 h, then 24 h. Keyed by device id *and* address,
  *   since a new device id costs nothing to make; the address cooldown is
  *   capped lower because networks hand old addresses to new devices.
+ * - Asking then withdrawing is a rejection too, after a few free ones.
+ *   Otherwise ask-and-withdraw, over and over, flashed a sheet here each
+ *   time and never earned a strike. The free ones cover a genuine retry
+ *   whose code never showed for some technical reason.
  *
  * In memory only. Must agree with desktop-app/src-tauri/src/pairing/guard.rs,
  * rule for rule.
@@ -31,8 +35,11 @@ class PairingGuard {
 
     private class Strikes(val count: Int, val mutedUntilMs: Long)
 
+    private class Withdrawals(val count: Int, val lastMs: Long)
+
     private var active: Active? = null
     private val strikes = HashMap<String, Strikes>()
+    private val withdrawals = HashMap<String, Withdrawals>()
 
     private fun activeAt(nowMs: Long): Active? {
         if (active?.let { it.untilMs <= nowMs } == true) active = null
@@ -54,6 +61,19 @@ class PairingGuard {
         var cooldown = COOLDOWNS_MS[minOf(count - 1, COOLDOWNS_MS.size - 1)]
         if (capMs != null) cooldown = minOf(cooldown, capMs)
         strikes[key] = Strikes(count, nowMs + cooldown)
+    }
+
+    /** A strike, unless [key] still has free withdrawals left. */
+    private fun withdrawal(key: String, capMs: Long?, nowMs: Long) {
+        val prev = withdrawals[key]
+        val count = if (prev != null && nowMs < prev.lastMs + FORGIVE_AFTER_MS) prev.count + 1 else 1
+        withdrawals[key] = Withdrawals(count, nowMs)
+        if (count > FREE_WITHDRAWALS) strike(key, capMs, nowMs)
+    }
+
+    private fun forgive(key: String) {
+        strikes.remove(key)
+        withdrawals.remove(key)
     }
 
     /** May [deviceId], asking from [ip], open a pairing sheet here? On Ok its ceremony holds the screen. */
@@ -87,15 +107,23 @@ class PairingGuard {
     fun paired(deviceId: String) {
         active?.takeIf { it.deviceId == deviceId }?.let {
             active = null
-            it.ip?.let { ip -> strikes.remove(ipKey(ip)) }
+            it.ip?.let { ip -> forgive(ipKey(ip)) }
         }
-        strikes.remove(idKey(deviceId))
+        forgive(idKey(deviceId))
     }
 
-    /** The other device withdrew: free the screen, no strike. */
+    /**
+     * The other device withdrew. If it had asked us, that is a rejection once
+     * its free withdrawals are used up; one we asked, or an unpair with
+     * nothing on screen, costs nothing.
+     */
     @Synchronized
-    fun withdrawn(deviceId: String) {
-        if (active?.deviceId == deviceId) active = null
+    fun withdrawn(deviceId: String, nowMs: Long = System.currentTimeMillis()) {
+        val a = active?.takeIf { it.deviceId == deviceId } ?: return
+        active = null
+        val ip = a.ip ?: return
+        withdrawal(idKey(deviceId), null, nowMs)
+        withdrawal(ipKey(ip), ADDR_COOLDOWN_CAP_MS, nowMs)
     }
 
     companion object {
@@ -110,7 +138,13 @@ class PairingGuard {
         /** Addresses get reassigned, so an address is never muted longer than this. */
         const val ADDR_COOLDOWN_CAP_MS = 30 * MINUTE_MS
 
-        /** Strikes are forgotten this long after the cooldown they earned ends. */
+        /** Withdrawals of a request to us that cost nothing; the next ones strike. */
+        const val FREE_WITHDRAWALS = 3
+
+        /**
+         * Strikes are forgotten this long after the cooldown they earned ends,
+         * and free withdrawals come back this long after the last one.
+         */
         const val FORGIVE_AFTER_MS = 1440 * MINUTE_MS
 
         /** The one the server admits requests through and JS settles them with. */
