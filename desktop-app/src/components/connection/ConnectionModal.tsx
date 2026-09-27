@@ -73,7 +73,7 @@ export default function ConnectionModal({
   const dismiss = () => {
     if (fingerprint && !confirmed) {
       const addr = (customAddr || initialAddr).trim();
-      if (addr) api.cancelPairing(addr).catch(() => {});
+      api.cancelPairing(addr, initialDeviceId).catch(() => {});
     }
     onClose();
   };
@@ -139,8 +139,12 @@ export default function ConnectionModal({
       const fp = await api.initiatePairing(normalizedAddr, devId, devName);
       setFingerprint(fp);
     } catch (e: unknown) {
+      // The backend says why in words (busy, declined recently, unreachable);
+      // anything else is the /health probe failing.
       setError(
-        `Failed to reach ${normalizedAddr}. Check IP & ensure server is active.`,
+        typeof e === "string"
+          ? e
+          : `Failed to reach ${normalizedAddr}. Check IP & ensure server is active.`,
       );
     } finally {
       setLoading(false);

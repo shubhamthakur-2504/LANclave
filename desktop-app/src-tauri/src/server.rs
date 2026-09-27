@@ -50,9 +50,36 @@ async fn pairing_request_handler(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     remote: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     axum::Json(body): axum::Json<PairingReqPayload>,
-) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
-    let peer_key = crate::pairing::public_key_from_str(&body.device_id)
-        .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Ok(peer_key) = crate::pairing::public_key_from_str(&body.device_id) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+
+    // Busy with another device's code, or this one was declined recently:
+    // say so without putting anything on screen.
+    let from = remote
+        .as_ref()
+        .map(|axum::Extension(ci)| ci.0.ip().to_string())
+        .unwrap_or_default();
+    match crate::pairing::guard().admit(&body.device_id, &from, std::time::Instant::now()) {
+        crate::pairing::Admit::Ok => {}
+        crate::pairing::Admit::Busy => {
+            return (StatusCode::CONFLICT, axum::Json(serde_json::json!({ "status": "busy" })))
+                .into_response();
+        }
+        crate::pairing::Admit::CoolingDown(left) => {
+            let secs = left.as_secs().max(1);
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, secs.to_string())],
+                axum::Json(serde_json::json!({ "status": "cooldown", "retry_after_secs": secs })),
+            )
+                .into_response();
+        }
+    }
 
     let fingerprint = crate::pairing::compute_pairing_fingerprint(
         &state.identity_key.verifying_key(),
@@ -88,11 +115,12 @@ async fn pairing_request_handler(
         );
     }
 
-    Ok(axum::Json(serde_json::json!({
+    axum::Json(serde_json::json!({
         "status": "ok",
         "fingerprint": fingerprint,
         "device_id": state.device_id,
-    })))
+    }))
+    .into_response()
 }
 
 /// `POST /api/presence/hello` -- a peer announcing it is online.
@@ -223,6 +251,7 @@ async fn pairing_cancel_handler(
         (was_paired, name)
     };
     state.presence.forget(&device_id);
+    crate::pairing::guard().withdrawn(&device_id);
 
     if let Some(app) = &state.app_handle {
         use tauri::{Emitter, Manager};

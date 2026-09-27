@@ -212,8 +212,10 @@ export async function takePairingRequest(): Promise<PairingRequest | null> {
 
 /** The user rejected the codes: tell the peer so it closes its dialog and
  *  drops the pairing if it already accepted. Best effort. */
-export async function cancelPairing(peerAddr: string): Promise<void> {
-  await invoke("cancel_pairing", { peerAddr });
+/** Reject the codes. `peerDeviceId` lets a device that asked us be muted
+ *  for a while, longer after each rejection. */
+export async function cancelPairing(peerAddr: string, peerDeviceId?: string): Promise<void> {
+  await invoke("cancel_pairing", { peerAddr, peerDeviceId: peerDeviceId || null });
 }
 
 /** Take a paired device's offers without asking, or go back to asking. */

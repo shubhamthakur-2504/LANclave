@@ -681,16 +681,48 @@ pub async fn initiate_pairing(
             }))
             .send()
             .await
-            .map_err(|e| format!("could not reach the device: {e}"))?;
+            .map_err(|_| {
+                "Could not reach the device. Check it is on the same network and LANclave is open."
+                    .to_string()
+            })?;
 
-        // 404: a peer from before this endpoint. Still show the code, but
-        // that device has to start pairing from its own side too.
-        if !res.status().is_success() && res.status() != reqwest::StatusCode::NOT_FOUND {
-            return Err(format!("the device refused the pairing request (HTTP {})", res.status()));
+        match res.status() {
+            s if s.is_success() => {}
+            // A peer from before this endpoint. Still show the code, but
+            // that device has to start pairing from its own side too.
+            reqwest::StatusCode::NOT_FOUND => {}
+            reqwest::StatusCode::CONFLICT => {
+                return Err("That device is pairing with another device right now. Try again in a moment.".into());
+            }
+            reqwest::StatusCode::TOO_MANY_REQUESTS => {
+                let secs = res
+                    .json::<serde_json::Value>()
+                    .await
+                    .ok()
+                    .and_then(|b| b["retry_after_secs"].as_u64())
+                    .unwrap_or(60);
+                return Err(format!(
+                    "That device declined recently. You can ask again in {}.",
+                    wait_phrase(secs)
+                ));
+            }
+            s => return Err(format!("The device refused the pairing request (HTTP {s}).")),
         }
     }
 
+    // Our code is on screen now: other devices wait until this is settled.
+    crate::pairing::guard().begin_outgoing(&peer_device_id, std::time::Instant::now());
     Ok(fingerprint)
+}
+
+/// `90` -> `"2 minutes"`, `7200` -> `"2 hours"`: rounded up, never "0".
+fn wait_phrase(secs: u64) -> String {
+    let (n, unit) = if secs <= 90 * 60 {
+        (secs.div_ceil(60).max(1), "minute")
+    } else {
+        (secs.div_ceil(3600), "hour")
+    };
+    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }
 
 #[tauri::command]
@@ -708,6 +740,7 @@ pub async fn confirm_pairing(
     if let Some(pending) = app.try_state::<PendingPairing>() {
         pending.clear_for(&peer_device_id);
     }
+    crate::pairing::guard().paired(&peer_device_id);
 
     // Build a pairing session and commit it to the store.
     let session = crate::pairing::PairingSession {
@@ -768,8 +801,18 @@ fn normalize_peer_addr(raw: &str) -> Option<String> {
 /// if it already accepted -- it drops the pairing instead of keeping a key
 /// the user just flagged as suspicious. Best effort; nothing to undo here,
 /// since a rejection never stored anything on this side.
+///
+/// A device that asked us and was rejected is muted for a while, longer
+/// each time (see `pairing::guard`).
 #[tauri::command]
-pub async fn cancel_pairing(state: State<'_, CliState>, peer_addr: String) -> Result<(), String> {
+pub async fn cancel_pairing(
+    state: State<'_, CliState>,
+    peer_addr: String,
+    peer_device_id: Option<String>,
+) -> Result<(), String> {
+    if let Some(id) = &peer_device_id {
+        crate::pairing::guard().decline(id, std::time::Instant::now());
+    }
     let Some(addr) = normalize_peer_addr(&peer_addr) else {
         return Ok(());
     };
@@ -933,6 +976,11 @@ mod tests {
         assert_eq!(normalize_peer_addr("10.0.0.5").as_deref(), Some("10.0.0.5:8377"));
         assert_eq!(normalize_peer_addr(" 10.0.0.5:9000 ").as_deref(), Some("10.0.0.5:9000"));
         assert_eq!(normalize_peer_addr("2409:40c0::50").as_deref(), Some("[2409:40c0::50]:8377"));
+        assert_eq!(super::wait_phrase(1), "1 minute");
+        assert_eq!(super::wait_phrase(299), "5 minutes");
+        assert_eq!(super::wait_phrase(30 * 60), "30 minutes");
+        assert_eq!(super::wait_phrase(2 * 3600), "2 hours");
+        assert_eq!(super::wait_phrase(24 * 3600), "24 hours");
         assert_eq!(normalize_peer_addr("[2409:40c0::50]:9000").as_deref(), Some("[2409:40c0::50]:9000"));
         assert_eq!(normalize_peer_addr(""), None);
         assert_eq!(normalize_peer_addr("Mobile"), None);
