@@ -135,6 +135,7 @@ class ExpoNativeServerModule : Module() {
         TransferEngine.configure(context, sandboxPath)
         server = next
         currentConfig = config
+        LocalNetwork.holdMulticast(context)
         true
       } catch (e: Exception) {
         server = null
@@ -262,7 +263,11 @@ class ExpoNativeServerModule : Module() {
       server?.stop()
       server = null
       currentConfig = null
+      LocalNetwork.releaseMulticast()
     }
+
+    /** Private IPv4s on Wi-Fi, hotspot, USB or Ethernet; the scan sweeps their /24s. */
+    Function("getLocalIpv4Addresses") { LocalNetwork.ipv4Addresses() }
 
     Function("updatePairedDevices") { devices: Array<String> ->
       appContext.reactContext?.let { Offers.keepAutoAcceptFor(it, devices.toList()) }

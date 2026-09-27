@@ -61,6 +61,8 @@ export interface PairingRequestEvent {
 declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
   startServer(port: number, deviceId: string, deviceName: string, sandboxPath: string, pairedDevices: string[]): boolean;
   isRunning(): boolean;
+  /** Private IPv4s on Wi-Fi, hotspot, USB or Ethernet (not mobile data). */
+  getLocalIpv4Addresses(): string[];
   getPresence(): NativePresenceEntry[];
   /** URIs from an Android share intent; consumed on read. */
   consumeSharedUris(): string[];

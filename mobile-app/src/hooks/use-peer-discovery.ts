@@ -19,9 +19,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFocusEffect } from "expo-router";
+import { Platform } from "react-native";
 import Zeroconf from "react-native-zeroconf";
 import * as Network from "expo-network";
 import { getOrCreateDeviceIdentity } from "@/services/identity";
+import ExpoNativeServerModule from "../../modules/expo-native-server/src/ExpoNativeServerModule";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -88,13 +90,11 @@ function linkedSignal(parent: AbortSignal, timeoutMs: number) {
  * Returns any that respond with a valid LANclave /health response.
  */
 async function probeSubnet(
-  gatewayOrLocalIp: string,
+  prefix: string,
   myDeviceId: string | null,
   signal: AbortSignal,
+  onProgress: (checked: number) => void,
 ): Promise<DiscoveredPeer[]> {
-  const prefix = subnetPrefix(gatewayOrLocalIp);
-  if (!prefix) return [];
-
   const results: DiscoveredPeer[] = [];
 
   // Build all 254 host IPs in the subnet
@@ -151,25 +151,73 @@ async function probeSubnet(
     for (const p of probeResults) {
       if (p) results.push(p);
     }
+    onProgress(chunk.length);
   }
 
   return results;
+}
+
+/**
+ * The /24 prefixes to sweep: every LAN this phone is on.
+ *
+ * `expo-network` reports only the Wi-Fi *client* address, which is 0.0.0.0
+ * while the phone is itself the hotspot, so the sweep used to have nothing
+ * to scan and returned instantly. The native module sees every interface.
+ */
+async function localSubnets(): Promise<string[]> {
+  let ips: string[] = [];
+  if (Platform.OS === "android") {
+    try {
+      ips = ExpoNativeServerModule.getLocalIpv4Addresses();
+    } catch {
+      // older native build
+    }
+  }
+  if (ips.length === 0) {
+    const ip = await Network.getIpAddressAsync().catch(() => "");
+    if (ip && ip !== "0.0.0.0" && ip !== "127.0.0.1") ips = [ip];
+  }
+  return [...new Set(ips.map(subnetPrefix).filter(Boolean))];
 }
 
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
+/** What the last scan covered, so the screen can say so. */
+export interface ScanReport {
+  /** The /24s swept, as "192.168.43.x". Empty: not on any local network. */
+  networks: string[];
+}
+
+export interface ScanProgress {
+  checked: number;
+  total: number;
+}
+
 export interface PeerDiscovery {
   peers: DiscoveredPeer[];
   isScanning: boolean;
-  /** Run one subnet sweep. No-op if a sweep is already running. */
+  /** Addresses checked so far in the running sweep. */
+  progress: ScanProgress | null;
+  /** The last finished scan; null until one has run. */
+  lastScan: ScanReport | null;
+  /** Re-query mDNS and sweep the local networks. No-op while one runs. */
   scan: () => void;
 }
+
+/**
+ * A scan always runs at least this long. mDNS answers need a moment to
+ * arrive, and a scan that finished before the spinner drew looked like the
+ * button had not registered the tap.
+ */
+const MIN_SCAN_MS = 2_500;
 
 export function usePeerDiscovery(): PeerDiscovery {
   const [discoveredPeers, setDiscoveredPeers] = useState<DiscoveredPeer[]>([]);
   const [isScanning, setIsScanning] = useState(false);
+  const [progress, setProgress] = useState<ScanProgress | null>(null);
+  const [lastScan, setLastScan] = useState<ScanReport | null>(null);
 
   const zeroconfRef = useRef<Zeroconf | null>(null);
   const myDeviceIdRef = useRef<string | null>(null);
@@ -267,33 +315,60 @@ export function usePeerDiscovery(): PeerDiscovery {
     scanInFlightRef.current = true;
     setIsScanning(true);
 
+    setProgress(null);
+
     const controller = new AbortController();
     abortRef.current = controller;
+    const startedAt = Date.now();
+
+    // Ask again over mDNS too. The browse only queries when it starts, so a
+    // device that came up later stayed invisible until the tab was left and
+    // re-entered.
+    try {
+      zeroconfRef.current?.scan(SERVICE_TYPE, PROTOCOL, DOMAIN);
+    } catch {
+      // unavailable; the sweep still runs
+    }
 
     (async () => {
+      let networks: string[] = [];
       try {
-        const myIp = await Network.getIpAddressAsync();
-        if (!myIp || myIp === "0.0.0.0" || myIp === "127.0.0.1") return;
+        const prefixes = await localSubnets();
+        networks = prefixes.map((p) => `${p}x`);
+        const total = prefixes.length * 254;
+        let checked = 0;
+        if (total > 0) setProgress({ checked, total });
 
-        // Only our own /24. The old code also swept a hardcoded
-        // 192.168.43.0/24, doubling the traffic for a guess that is wrong on
-        // most networks.
-        const found = await probeSubnet(
-          myIp,
-          myDeviceIdRef.current,
-          controller.signal,
-        );
-
-        if (!mountedRef.current || controller.signal.aborted) return;
-        for (const peer of found) addPeer(peer);
+        for (const prefix of prefixes) {
+          if (controller.signal.aborted) break;
+          const hits = await probeSubnet(
+            prefix,
+            myDeviceIdRef.current,
+            controller.signal,
+            (n) => {
+              checked += n;
+              if (mountedRef.current) setProgress({ checked, total });
+            },
+          );
+          // Show each network's finds as soon as it is done.
+          for (const peer of hits) addPeer(peer);
+        }
       } catch (err) {
         console.warn("[lanclave/subnet] scan error:", err);
       } finally {
+        const wait = MIN_SCAN_MS - (Date.now() - startedAt);
+        if (wait > 0 && !controller.signal.aborted) {
+          await new Promise((r) => setTimeout(r, wait));
+        }
         scanInFlightRef.current = false;
-        if (mountedRef.current) setIsScanning(false);
+        if (mountedRef.current && !controller.signal.aborted) {
+          setIsScanning(false);
+          setProgress(null);
+          setLastScan({ networks });
+        }
       }
     })();
   }, [addPeer]);
 
-  return { peers: discoveredPeers, isScanning, scan };
+  return { peers: discoveredPeers, isScanning, progress, lastScan, scan };
 }

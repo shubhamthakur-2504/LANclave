@@ -32,7 +32,7 @@ import * as Network from "expo-network";
 
 export default function ScanScreen() {
   const router = useRouter();
-  const { peers: allDiscovered, isScanning, scan } = usePeerDiscovery();
+  const { peers: allDiscovered, isScanning, progress, lastScan, scan } = usePeerDiscovery();
 
   // Keep a live set of paired IDs so we can filter them out of the scan list
   const [pairedIds, setPairedIds] = useState<Set<string>>(new Set());
@@ -53,6 +53,16 @@ export default function ScanScreen() {
 
   // Only show devices that are NOT yet paired
   const peers = allDiscovered.filter((p) => !pairedIds.has(p.id));
+
+  // Say what the scan is doing and what it covered: a scan with no visible
+  // outcome read as a button that did nothing.
+  const progressText = progress
+    ? `Checked ${progress.checked} of ${progress.total} addresses`
+    : "Listening for nearby devices…";
+  const coveredText = lastScan?.networks.length
+    ? `Checked every address on ${lastScan.networks.join(", ")}.`
+    : null;
+  const notOnNetwork = !isScanning && lastScan !== null && lastScan.networks.length === 0;
 
   // Interactive 6-Digit Pairing Modal state
   const [pairingTarget, setPairingTarget] = useState<DiscoveredPeer | null>(
@@ -213,9 +223,12 @@ export default function ScanScreen() {
               style={[styles.scanBtn, isScanning && styles.scanBtnDisabled]}
             >
               {isScanning ? (
-                <ActivityIndicator size="small" color={C.action} />
+                <View style={styles.scanBtnBusy}>
+                  <ActivityIndicator size="small" color={C.action} />
+                  <Text style={styles.scanBtnText}>Scanning</Text>
+                </View>
               ) : (
-                <Text style={styles.scanBtnText}>Scan</Text>
+                <Text style={styles.scanBtnText}>{lastScan ? "Scan again" : "Scan"}</Text>
               )}
             </Pressable>
           </View>
@@ -229,30 +242,45 @@ export default function ScanScreen() {
             <View style={styles.empty}>
               <Icon name="scan" size={40} color={C.contentFaint} />
               <Text style={styles.emptyTitle}>
-                {isScanning ? "Scanning local network…" : "No devices found"}
+                {isScanning
+                  ? "Scanning local network…"
+                  : notOnNetwork
+                    ? "Not on a local network"
+                    : "No devices found"}
               </Text>
               <Text style={styles.emptyHint}>
                 {isScanning
-                  ? "Checking every address on this network."
-                  : "Tap Scan to search. Make sure both devices are on the same Wi-Fi network or hotspot and the LANclave server is active."}
+                  ? progressText
+                  : notOnNetwork
+                    ? "Connect to Wi-Fi or turn on your hotspot, then scan again."
+                    : lastScan
+                      ? `${coveredText ?? ""} Make sure LANclave is open and visible on the other device, on the same Wi-Fi or hotspot.`.trim()
+                      : "Tap Scan to search. Make sure both devices are on the same Wi-Fi network or hotspot and the LANclave server is active."}
               </Text>
             </View>
           ) : (
-            <FlatList
-              data={peers}
-              numColumns={2}
-              columnWrapperStyle={styles.columnWrapper}
-              contentContainerStyle={styles.list}
-              showsVerticalScrollIndicator={false}
-              keyExtractor={(p) => p.id}
-              renderItem={({ item }) => (
-                <PeerCard
-                  peer={item}
-                  isSelected={pairingTarget?.id === item.id}
-                  onConnect={handleInitiatePairing}
-                />
+            <>
+              {(isScanning || coveredText) && (
+                <Text style={styles.status}>
+                  {isScanning ? progressText : coveredText}
+                </Text>
               )}
-            />
+              <FlatList
+                data={peers}
+                numColumns={2}
+                columnWrapperStyle={styles.columnWrapper}
+                contentContainerStyle={styles.list}
+                showsVerticalScrollIndicator={false}
+                keyExtractor={(p) => p.id}
+                renderItem={({ item }) => (
+                  <PeerCard
+                    peer={item}
+                    isSelected={pairingTarget?.id === item.id}
+                    onConnect={handleInitiatePairing}
+                  />
+                )}
+              />
+            </>
           )}
         </View>
       </SafeAreaView>
@@ -292,7 +320,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  scanBtnDisabled: { opacity: 0.5 },
+  scanBtnDisabled: { opacity: 0.7 },
+  scanBtnBusy: { flexDirection: "row", alignItems: "center", gap: 8 },
   scanBtnText: { color: C.action, fontSize: 13, fontWeight: "600" },
   title: {
     fontSize: 26,
@@ -310,6 +339,7 @@ const styles = StyleSheet.create({
   },
 
   content: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
+  status: { fontSize: 12, color: C.contentMuted, marginBottom: 12 },
   // Keep the last row of cards clear of the tab bar.
   list: { paddingBottom: 24 },
 
