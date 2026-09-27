@@ -118,27 +118,23 @@ async function probeSubnet(
             signal: link.signal,
           });
 
-          if (res.status === 200 || res.status === 401) {
-            let name = `LANclave @ ${ip}`;
-            let id = `ip-${ip}`;
+          // Only a LANclave /health counts. Any 200 or 401 used to be listed
+          // as "LANclave @ ip", so an unrelated server on this port showed up
+          // as a device to pair with. Matches the desktop's probe.
+          if (res.status !== 200) return null;
+          const body = await res.json().catch(() => null);
+          if (body?.app !== "lanclave" || typeof body.device_id !== "string") return null;
 
-            if (res.status === 200) {
-              try {
-                const body = await res.json();
-                if (body.app === "lanclave") {
-                  if (body.device_id) id = body.device_id;
-                  if (body.device_name) name = body.device_name;
-                }
-              } catch {
-                // ignore
-              }
-            }
+          const id: string = body.device_id;
+          // Skip self
+          if (myDeviceId && myDeviceId === id) return null;
 
-            // Skip self
-            if (myDeviceId && myDeviceId === id) return null;
-
-            return { id, name, ip, port: LANCLAVE_PORT };
-          }
+          return {
+            id,
+            name: body.device_name || `LANclave @ ${ip}`,
+            ip,
+            port: LANCLAVE_PORT,
+          };
         } catch {
           // unreachable, timed out, or no LANclave running
         } finally {
