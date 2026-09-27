@@ -228,6 +228,25 @@ class NativeServer(
             return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Invalid device id")
         }
 
+        // Busy with another device's code, or this one was declined recently:
+        // say so without putting anything on screen.
+        when (val admit = PairingGuard.shared.admit(peerId, session.remoteIpAddress ?: "")) {
+            is PairingGuard.Admit.Ok -> {}
+            is PairingGuard.Admit.Busy -> return newFixedLengthResponse(
+                Response.Status.CONFLICT, "application/json", "{\"status\":\"busy\"}",
+            )
+            is PairingGuard.Admit.CoolingDown -> {
+                val secs = maxOf(1L, (admit.leftMs + 999) / 1000)
+                val res = newFixedLengthResponse(
+                    Response.Status.TOO_MANY_REQUESTS,
+                    "application/json",
+                    "{\"status\":\"cooldown\",\"retry_after_secs\":$secs}",
+                )
+                res.addHeader("Retry-After", secs.toString())
+                return res
+            }
+        }
+
         val code = PairingCode.compute(ownKey, peerKey)
         val name = body.optString("name").takeIf { it.isNotBlank() } ?: "Unknown device"
         // The address the request came from, not one the body claims.
@@ -265,6 +284,7 @@ class NativeServer(
 
         pairedDevices = pairedDevices.filter { it != id }
         PresenceRegistry.forget(id)
+        PairingGuard.shared.withdrawn(id)
         onPairingCancelled(id)
         return newFixedLengthResponse(Response.Status.OK, "application/json", "{\"status\":\"ok\"}")
     }

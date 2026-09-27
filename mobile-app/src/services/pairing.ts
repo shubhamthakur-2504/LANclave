@@ -149,6 +149,43 @@ export async function sendPairingCancel(ip: string, port: number): Promise<void>
 }
 
 /**
+ * The native pairing guard: one code on screen at a time, and a device whose
+ * request was rejected is muted for a while, longer each time. No-ops off
+ * Android or on an older native build.
+ */
+export const pairingGuard = {
+  /** Our code is on screen for a pairing started here. */
+  beginOutgoing(deviceId: string) {
+    guardCall(() => ExpoNativeServerModule.beginOutgoingPairing(deviceId));
+  },
+  /** The user rejected (or left) the codes. Also frees the screen. */
+  decline(deviceId: string) {
+    guardCall(() => ExpoNativeServerModule.declinePairing(deviceId));
+  },
+  confirmed(deviceId: string) {
+    guardCall(() => ExpoNativeServerModule.pairingConfirmed(deviceId));
+  },
+};
+
+function guardCall(fn: () => void) {
+  if (Platform.OS !== "android") return;
+  try {
+    fn();
+  } catch {
+    // older native build
+  }
+}
+
+/** `90` -> "2 minutes", `7200` -> "2 hours". Matches the desktop's wording. */
+export function waitPhrase(secs: number): string {
+  const [n, unit] =
+    secs <= 90 * 60
+      ? [Math.max(1, Math.ceil(secs / 60)), "minute"]
+      : [Math.ceil(secs / 3600), "hour"];
+  return `${n} ${unit}${n === 1 ? "" : "s"}`;
+}
+
+/**
  * Forget a peer here and ask it to forget us too. Removal is local and
  * immediate; telling the peer is best effort -- if it is offline, its
  * heartbeat later sees our refusals and shows the pairing as one-sided.

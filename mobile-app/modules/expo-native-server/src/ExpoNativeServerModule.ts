@@ -61,6 +61,12 @@ export interface PairingRequestEvent {
 declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
   startServer(port: number, deviceId: string, deviceName: string, sandboxPath: string, pairedDevices: string[]): boolean;
   isRunning(): boolean;
+  /** Our code is on screen for a pairing started here; other devices get "busy". */
+  beginOutgoingPairing(deviceId: string): void;
+  /** The user rejected the codes; a device that asked us is muted, longer each time. */
+  declinePairing(deviceId: string): void;
+  /** Paired: forgive the device and free the screen. */
+  pairingConfirmed(deviceId: string): void;
   /** Private IPv4s on Wi-Fi, hotspot, USB or Ethernet (not mobile data). */
   getLocalIpv4Addresses(): string[];
   getPresence(): NativePresenceEntry[];

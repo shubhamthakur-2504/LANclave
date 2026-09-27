@@ -12,7 +12,7 @@ import { Alert, Platform } from "react-native";
 
 import ExpoNativeServerModule from "../../modules/expo-native-server/src/ExpoNativeServerModule";
 import { PairingModal } from "@/components/PairingModal";
-import { savePairedPeer, sendPairingCancel } from "@/services/pairing";
+import { pairingGuard, savePairedPeer, sendPairingCancel } from "@/services/pairing";
 import { rescanPeer } from "@/services/presence";
 import { getSettings } from "@/services/settings";
 
@@ -77,6 +77,8 @@ export function IncomingPairingHost() {
   }, [request, succeeded]);
 
   const reject = useCallback(() => {
+    // Mutes this device for a while, longer after each rejection.
+    if (request && !succeeded) pairingGuard.decline(request.deviceId);
     if (request?.ip && !succeeded) {
       // Close its dialog too, and make it drop us if it already confirmed.
       sendPairingCancel(request.ip, PEER_PORT).catch(() => {});
@@ -94,6 +96,7 @@ export function IncomingPairingHost() {
         ip: request.ip ?? "",
         port: PEER_PORT,
       });
+      pairingGuard.confirmed(request.deviceId);
       // Announce ourselves now rather than on the next heartbeat.
       rescanPeer(request.deviceId).catch(() => {});
       setSucceeded(true);

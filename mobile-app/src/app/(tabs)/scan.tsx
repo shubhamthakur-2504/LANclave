@@ -22,7 +22,9 @@ import {
   getPairedPeers,
   savePairedPeer,
   getPairingFingerprintForPeer,
+  pairingGuard,
   sendPairingCancel,
+  waitPhrase,
 } from "@/services/pairing";
 import ExpoNativeServerModule from "../../../modules/expo-native-server/src/ExpoNativeServerModule";
 import { getSettings } from "@/services/settings";
@@ -80,6 +82,14 @@ export default function ScanScreen() {
   const handleInitiatePairing = useCallback(async (peer: DiscoveredPeer) => {
     setPairingTarget(peer);
     setPairingFingerprint(null);
+    // Our code is about to be on screen: other devices asking now are told
+    // we are busy, instead of a second sheet making the codes look wrong.
+    pairingGuard.beginOutgoing(peer.id);
+    const giveUp = (title: string, message: string) => {
+      pairingGuard.decline(peer.id); // frees the screen; no strike, we asked
+      setPairingTarget(null);
+      Alert.alert(title, message);
+    };
     try {
       // Everything the request needs, fetched in parallel rather than one
       // after another. The IP is only a hint: the desktop uses the address
@@ -107,7 +117,17 @@ export default function ScanScreen() {
         }),
         signal: AbortSignal.timeout(5_000),
       })
-        .then((res) => {
+        .then(async (res) => {
+          if (res.status === 409) {
+            giveUp("Busy", `${peer.name} is pairing with another device right now. Try again in a moment.`);
+            return null;
+          }
+          if (res.status === 429) {
+            const body = await res.json().catch(() => null);
+            const secs = Number(body?.retry_after_secs) || 60;
+            giveUp("Declined recently", `${peer.name} declined recently. You can ask again in ${waitPhrase(secs)}.`);
+            return null;
+          }
           if (!res.ok) throw new Error("Server rejected pairing request");
           return res.json();
         })
@@ -119,12 +139,10 @@ export default function ScanScreen() {
           }
         })
         .catch(() => {
-          setPairingTarget(null);
-          Alert.alert("Connection Failed", "Could not connect to the peer. Make sure its server is running.");
+          giveUp("Connection Failed", "Could not connect to the peer. Make sure its server is running.");
         });
     } catch {
-      setPairingTarget(null);
-      Alert.alert("Error", "An error occurred while initiating pairing.");
+      giveUp("Error", "An error occurred while initiating pairing.");
     }
   }, []);
 
@@ -134,6 +152,7 @@ export default function ScanScreen() {
    * this user did not vouch for.
    */
   const handleRejectPairing = useCallback(() => {
+    if (pairingTarget && !pairingSucceeded) pairingGuard.decline(pairingTarget.id);
     if (pairingTarget && pairingFingerprint && !pairingSucceeded) {
       sendPairingCancel(pairingTarget.ip, pairingTarget.port).catch(() => {});
     }
@@ -171,6 +190,7 @@ export default function ScanScreen() {
     setIsPairingSubmitting(true);
     try {
       await savePairedPeer(pairingTarget);
+      pairingGuard.confirmed(pairingTarget.id);
       // Announce ourselves now instead of on the next 20s heartbeat. If the
       // desktop has confirmed too, both sides show online straight away; if
       // not, its confirm says hello back to us.

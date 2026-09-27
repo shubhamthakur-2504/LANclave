@@ -266,6 +266,15 @@ class ExpoNativeServerModule : Module() {
       LocalNetwork.releaseMulticast()
     }
 
+    // ---- Pairing guard: one ceremony at a time, rejections mute ---------
+
+    /** Our code is on screen for a pairing started here; others wait. */
+    Function("beginOutgoingPairing") { deviceId: String -> PairingGuard.shared.beginOutgoing(deviceId) }
+    /** The user rejected the codes; a device that asked us is muted a while. */
+    Function("declinePairing") { deviceId: String -> PairingGuard.shared.decline(deviceId) }
+    /** Paired: forgive the device and free the screen. */
+    Function("pairingConfirmed") { deviceId: String -> PairingGuard.shared.paired(deviceId) }
+
     /** Private IPv4s on Wi-Fi, hotspot, USB or Ethernet; the scan sweeps their /24s. */
     Function("getLocalIpv4Addresses") { LocalNetwork.ipv4Addresses() }
 
