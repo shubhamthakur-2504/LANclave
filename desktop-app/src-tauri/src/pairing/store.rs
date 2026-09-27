@@ -57,8 +57,22 @@ impl DeviceStore {
     pub fn load(app_data_dir: &Path) -> Result<Self, PairingError> {
         let path = app_data_dir.join("paired_devices.json");
         match std::fs::read_to_string(&path) {
-            Ok(json) => serde_json::from_str(&json)
-                .map_err(|e| PairingError::StorageError(e.to_string())),
+            Ok(json) => {
+                let mut store: Self = serde_json::from_str(&json)
+                    .map_err(|e| PairingError::StorageError(e.to_string()))?;
+                // Older builds could save an unbracketed IPv6 ("2409:..::50:8377")
+                // that no URL accepts; forget it and let discovery find the peer.
+                for dev in store.devices.values_mut() {
+                    if dev
+                        .last_addr
+                        .as_deref()
+                        .is_some_and(|a| a.parse::<std::net::SocketAddr>().is_err())
+                    {
+                        dev.last_addr = None;
+                    }
+                }
+                Ok(store)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::new()),
             Err(e) => Err(PairingError::IoError(e.to_string())),
         }
@@ -181,6 +195,23 @@ mod tests {
         assert!(loaded.devices.contains_key("device-a"));
         let stored_key = loaded.get_peer_key("device-a").unwrap();
         assert_eq!(stored_key, key.verifying_key());
+    }
+
+    #[test]
+    fn load_drops_unusable_last_addr() {
+        let dir = TempDir::new().unwrap();
+        let key = SigningKey::generate(&mut OsRng);
+        let mut store = DeviceStore::new();
+        store.add_peer("bad".into(), &key.verifying_key(), None).unwrap();
+        store.add_peer("good".into(), &key.verifying_key(), None).unwrap();
+        store.devices.get_mut("bad").unwrap().last_addr =
+            Some("2409:40c0:1009:3a8a::50:8377".into());
+        store.devices.get_mut("good").unwrap().last_addr = Some("[2409:40c0::50]:8377".into());
+        store.save(dir.path()).unwrap();
+
+        let loaded = DeviceStore::load(dir.path()).unwrap();
+        assert_eq!(loaded.devices["bad"].last_addr, None);
+        assert_eq!(loaded.devices["good"].last_addr.as_deref(), Some("[2409:40c0::50]:8377"));
     }
 
     #[test]
