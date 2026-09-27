@@ -181,20 +181,9 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<DiscoveredPeer>, Stri
     let start = std::time::Instant::now();
     let mut peers: Vec<DiscoveredPeer> = Vec::new();
 
-    loop {
-        let remaining = deadline.saturating_sub(start.elapsed());
-        if remaining.is_zero() {
-            break;
-        }
-        match receiver.recv_timeout(remaining) {
-            Ok(ServiceEvent::ServiceResolved(info)) => {
-                if let Some(entry) = parse_peer(&*info) {
-                    if !peers.iter().any(|p| p.device_id == entry.device_id) {
-                        peers.push(entry);
-                    }
-                }
-            }
-            _ => {} // timeout / channel closed
+    while let Some(entry) = next_resolved(&receiver, deadline.saturating_sub(start.elapsed())).await {
+        if !peers.iter().any(|p| p.device_id == entry.device_id) {
+            peers.push(entry);
         }
     }
 
@@ -274,26 +263,41 @@ pub async fn resolve_peer_addr(device_id: &str) -> Option<String> {
     let start = std::time::Instant::now();
     let mut found = None;
 
-    loop {
-        let remaining = deadline.saturating_sub(start.elapsed());
-        if remaining.is_zero() {
+    while let Some(peer) = next_resolved(&receiver, deadline.saturating_sub(start.elapsed())).await {
+        if peer.device_id == device_id {
+            found = Some(peer.addr);
             break;
-        }
-        match receiver.recv_timeout(remaining) {
-            Ok(ServiceEvent::ServiceResolved(info)) => {
-                if let Some(peer) = parse_peer(&*info) {
-                    if peer.device_id == device_id {
-                        found = Some(peer.addr);
-                        break;
-                    }
-                }
-            }
-            _ => break,
         }
     }
 
     let _ = mdns.stop_browse(SERVICE_TYPE);
     found
+}
+
+/// The next LANclave peer a browse resolves, or `None` once `remaining` runs
+/// out or the browse ends.
+///
+/// Every other event is skipped. A browse always opens with `SearchStarted`,
+/// and `resolve_peer_addr` used to give up on the first non-resolved event,
+/// so it returned `None` before any peer could answer. Awaited rather than
+/// blocking, so a scan does not tie up a runtime worker for its whole window.
+async fn next_resolved(
+    receiver: &mdns_sd::Receiver<ServiceEvent>,
+    remaining: Duration,
+) -> Option<DiscoveredPeer> {
+    let deadline = tokio::time::Instant::now() + remaining;
+    loop {
+        match tokio::time::timeout_at(deadline, receiver.recv_async()).await {
+            Ok(Ok(ServiceEvent::ServiceResolved(info))) => {
+                if let Some(peer) = parse_peer(&info) {
+                    return Some(peer);
+                }
+            }
+            Ok(Ok(_)) => {}
+            // Timed out, or the browse was replaced or stopped.
+            _ => return None,
+        }
+    }
 }
 
 async fn probe_ip(client: reqwest::Client, ip: &str, semaphore: Arc<tokio::sync::Semaphore>) -> Option<DiscoveredPeer> {
