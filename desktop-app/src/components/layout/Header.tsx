@@ -1,6 +1,7 @@
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useTransfers } from "../../contexts/TransferContext";
 import { useTheme } from "../../lib/useTheme";
+import Mark from "../brand/Mark";
 
 interface HeaderProps {
   /** Real server state — see the note on honesty below. */
@@ -39,13 +40,18 @@ export default function Header({ serverRunning, serverBusy }: HeaderProps) {
   return (
     <header className="relative border-b border-border">
       <div className="flex items-center justify-between px-6 py-3">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-content">
-            LANclave
-          </h1>
-          <p className="text-[11px] text-content-faint">
-            Local network vault — no internet, ever
-          </p>
+        <div className="flex items-center gap-3">
+          <Mark size={36} className="shrink-0 text-action" />
+          <div>
+            {/* The brand writes it "LAN" bold, "clave" regular. */}
+            <h1 className="text-xl tracking-tight text-content">
+              <span className="font-bold">LAN</span>
+              <span className="font-normal">clave</span>
+            </h1>
+            <p className="text-[11px] text-content-faint">
+              Local network vault — no internet, ever
+            </p>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">

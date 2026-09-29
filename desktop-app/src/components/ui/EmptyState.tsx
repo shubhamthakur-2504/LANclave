@@ -43,6 +43,8 @@ interface EmptyStateProps {
   hint?: string;
   /** A primary action, e.g. Scan or Add files. */
   action?: ReactNode;
+  /** Replaces the icon tile, e.g. with an animation. */
+  visual?: ReactNode;
 }
 
 export default function EmptyState({
@@ -50,19 +52,22 @@ export default function EmptyState({
   message,
   hint,
   action,
+  visual,
 }: EmptyStateProps) {
   const preset = PRESETS[kind];
   const Icon = preset.icon;
 
   return (
     <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-border-strong bg-surface-active">
-        <Icon
-          className="h-8 w-8 text-content-faint"
-          strokeWidth={1.5}
-          aria-hidden="true"
-        />
-      </div>
+      {visual ?? (
+        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-border-strong bg-surface-active">
+          <Icon
+            className="h-8 w-8 text-content-faint"
+            strokeWidth={1.5}
+            aria-hidden="true"
+          />
+        </div>
+      )}
       <p className="text-sm font-medium text-content">
         {message ?? preset.title}
       </p>

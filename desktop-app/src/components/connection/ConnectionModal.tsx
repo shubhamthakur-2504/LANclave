@@ -1,7 +1,9 @@
-import { Check, HelpCircle, Laptop, ShieldCheck, Smartphone, Tablet, X } from "lucide-react";
+import { HelpCircle, Laptop, ShieldCheck, Smartphone, Tablet, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as api from "../../api";
 import { colorForDevice, deviceKind } from "../../lib/identity";
+import PairedAnimation from "../brand/PairedAnimation";
+import { token } from "../brand/geometry";
 
 const KIND_ICONS = {
   laptop: Laptop,
@@ -336,11 +338,16 @@ export default function ConnectionModal({
 
           {confirmed && (
             <>
-              {/* The payoff for the only friction in the product. */}
-              <div className="mx-auto mt-6 flex h-16 w-16 animate-[ping_0.6s_ease-out_1] items-center justify-center rounded-full bg-ok/20">
-                <Check className="h-8 w-8 text-ok" strokeWidth={2.5} aria-hidden="true" />
+              {/* The payoff for the only friction in the product: this
+                  computer's stream (the accent) and the peer's (its identity
+                  colour) meet and become the folder. */}
+              <div className="mx-auto mt-2 flex justify-center">
+                <PairedAnimation
+                  size={200}
+                  colors={[token("--color-action-hover") || "#38bdf8", identityColor]}
+                />
               </div>
-              <p className="mt-4 text-base font-semibold text-content">
+              <p className="mt-1 text-base font-semibold text-content">
                 Paired with {initialDeviceName || targetAddr || "this device"}
               </p>
               <p className="mt-1 text-xs text-content-muted">

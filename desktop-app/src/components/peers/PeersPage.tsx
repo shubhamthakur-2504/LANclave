@@ -1,6 +1,7 @@
 import type { PeerInfo } from "../../types";
 import PeersListPanel from "./PeersListPanel";
 import EmptyState from "../ui/EmptyState";
+import ScanAnimation from "../brand/ScanAnimation";
 
 interface PeersPageProps {
   peers: PeerInfo[];
@@ -44,6 +45,7 @@ export default function PeersPage({
         {peers.length === 0 ? (
           <EmptyState
             kind="peers"
+            visual={isScanning ? <div className="mb-2"><ScanAnimation size={200} /></div> : undefined}
             message={isScanning ? "Scanning the network…" : undefined}
             hint={isScanning ? "Checking every address on this network." : undefined}
             action={
