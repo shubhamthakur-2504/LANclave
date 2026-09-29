@@ -7,6 +7,8 @@ interface PeersPageProps {
   peers: PeerInfo[];
   onOpenConnection: (peer: PeerInfo) => void;
   onBrowseFiles?: (peer: PeerInfo) => void;
+  /** Pick files and offer them to this peer. */
+  onSendFiles?: (peer: PeerInfo) => void;
   isScanning?: boolean;
   onScan?: () => void;
   onRescanPeer?: (peer: PeerInfo) => void;
@@ -17,6 +19,7 @@ export default function PeersPage({
   peers,
   onOpenConnection,
   onBrowseFiles,
+  onSendFiles,
   isScanning = false,
   onScan,
   onRescanPeer,
@@ -84,6 +87,7 @@ export default function PeersPage({
                 peers={peers}
                 onConnect={onOpenConnection}
                 onBrowseFiles={onBrowseFiles}
+                onSendFiles={onSendFiles}
                 onRescanPeer={onRescanPeer}
                 dropTargetId={dropTargetId}
               />

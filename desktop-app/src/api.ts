@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { invoke } from "@tauri-apps/api/core";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, open } from "@tauri-apps/plugin-dialog";
 import type { PeerInfo, FileEntry, SandboxFile, HistoryEntry, OffersSnapshot, TransferRow } from "./types";
 
 // ── Dialogs ────────────────────────────────────────────────────────
@@ -53,6 +53,13 @@ export async function rescanPeer(deviceId: string): Promise<boolean> {
 }
 
 /** Copy files from anywhere on disk into the sandbox. Returns their names. */
+/** Let the user pick files to send; empty when they cancel. */
+export async function pickFiles(): Promise<string[]> {
+  const picked = await open({ multiple: true, directory: false, title: "Choose files to send" });
+  if (!picked) return [];
+  return Array.isArray(picked) ? picked : [picked];
+}
+
 export async function importFiles(paths: string[]): Promise<string[]> {
   return await invoke("import_files", { paths });
 }

@@ -114,9 +114,12 @@ function AppInner() {
     return el?.closest<HTMLElement>("[data-peer-id]")?.dataset.peerId ?? null;
   }, []);
 
-  const handleDrop = useCallback(
-    async (paths: string[], position: { x: number; y: number }) => {
-      const targetId = peerUnder(position);
+  /**
+   * Add files to the sandbox and, with a target, offer them to that peer.
+   * Shared by dropping files on a peer row and its "Send files" button.
+   */
+  const addAndSend = useCallback(
+    async (paths: string[], target: PeerInfo | undefined) => {
       try {
         const imported = await api.importFiles(paths);
         if (imported.length === 0) {
@@ -124,10 +127,6 @@ function AppInner() {
           return;
         }
         await refreshFiles();
-
-        const target = targetId
-          ? peers.find((p) => p.device_id === targetId)
-          : undefined;
 
         if (target) {
           const plural = `${imported.length} file${imported.length > 1 ? "s" : ""}`;
@@ -152,7 +151,28 @@ function AppInner() {
         toast.error(e);
       }
     },
-    [peerUnder, refreshFiles, peers, sendFiles, startUpload, toast],
+    [refreshFiles, sendFiles, startUpload, toast],
+  );
+
+  const handleDrop = useCallback(
+    (paths: string[], position: { x: number; y: number }) => {
+      const targetId = peerUnder(position);
+      return addAndSend(paths, targetId ? peers.find((p) => p.device_id === targetId) : undefined);
+    },
+    [peerUnder, peers, addAndSend],
+  );
+
+  /** "Send files" on a peer row: the picker, then the same path as a drop. */
+  const sendFilesTo = useCallback(
+    async (peer: PeerInfo) => {
+      try {
+        const paths = await api.pickFiles();
+        if (paths.length > 0) await addAndSend(paths, peer);
+      } catch (e) {
+        toast.error(e);
+      }
+    },
+    [addAndSend, toast],
   );
 
   const { isDragging, position: dragPosition } = useFileDrop(handleDrop);
@@ -338,6 +358,7 @@ function AppInner() {
               setIsConnectModalOpen(true);
             }}
             onBrowseFiles={(peer) => setViewingPeer(peer)}
+            onSendFiles={sendFilesTo}
           />
         );
       case "files":

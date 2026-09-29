@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { HelpCircle, Laptop, Smartphone, Tablet } from "lucide-react";
+import { FolderOpen, HelpCircle, Laptop, Send, Smartphone, Tablet } from "lucide-react";
 import { colorForDevice, deviceKind, initialForDevice } from "../../lib/identity";
 import { useTransfers } from "../../contexts/TransferContext";
 import type { PeerInfo, Transfer } from "../../types";
@@ -10,6 +10,7 @@ interface PeersListPanelProps {
   peers: PeerInfo[];
   onConnect: (peer: PeerInfo) => void;
   onBrowseFiles?: (peer: PeerInfo) => void;
+  onSendFiles?: (peer: PeerInfo) => void;
   onRescanPeer?: (peer: PeerInfo) => void;
   /** device_id of the row files are currently hovering over. */
   dropTargetId?: string | null;
@@ -64,6 +65,7 @@ function PeerRow({
   isDropTarget,
   onConnect,
   onBrowseFiles,
+  onSendFiles,
   onRescan,
 }: {
   peer: PeerInfo;
@@ -71,6 +73,7 @@ function PeerRow({
   isDropTarget: boolean;
   onConnect: () => void;
   onBrowseFiles: (() => void) | undefined;
+  onSendFiles: (() => void) | undefined;
   onRescan?: () => Promise<void> | void;
 }) {
   const isOnline = peer.addr !== "";
@@ -232,6 +235,26 @@ function PeerRow({
             Unpair
           </button>
         )}
+        {/* Sending and opening used to be a drag onto the row and a click
+            on it -- neither visible. Both get a button. */}
+        {peer.paired && !peer.untrusted && isOnline && onSendFiles && (
+          <button
+            onClick={onSendFiles}
+            className="flex items-center gap-1.5 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active"
+          >
+            <Send className="h-3.5 w-3.5" aria-hidden="true" />
+            Send files
+          </button>
+        )}
+        {canOpen && (
+          <button
+            onClick={onBrowseFiles}
+            className="flex items-center gap-1.5 rounded-lg bg-action px-3 py-1.5 text-xs font-medium text-on-action transition-colors hover:bg-action-hover"
+          >
+            <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
+            Open
+          </button>
+        )}
         {peer.paired && !peer.untrusted && !isOnline && onRescan && (
           <button
             onClick={handleRescan}
@@ -282,6 +305,7 @@ export default function PeersListPanel({
   peers,
   onConnect,
   onBrowseFiles,
+  onSendFiles,
   onRescanPeer,
   dropTargetId = null,
 }: PeersListPanelProps) {
@@ -307,6 +331,7 @@ export default function PeersListPanel({
         isDropTarget={dropTargetId === peer.device_id}
         onConnect={() => onConnect(peer)}
         onBrowseFiles={onBrowseFiles ? () => onBrowseFiles(peer) : undefined}
+        onSendFiles={onSendFiles ? () => onSendFiles(peer) : undefined}
         onRescan={onRescanPeer ? () => onRescanPeer(peer) : undefined}
       />
     ));
