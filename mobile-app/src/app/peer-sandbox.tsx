@@ -20,8 +20,6 @@ import { SortBar } from "@/components/SortBar";
 import { getLastSort, rememberSort, sortFiles, type SortState } from "@/utils/sort-files";
 import { useMemo, useState } from "react";
 
-import * as DocumentPicker from "expo-document-picker";
-
 export default function PeerSandboxScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ ip: string; port: string; name: string; id?: string }>();
@@ -32,7 +30,7 @@ export default function PeerSandboxScreen() {
   const id = params.id || undefined;
 
   const { refreshFiles } = useSandboxFiles();
-  const { transfers, startDownload, startUpload } = useTransfers();
+  const { transfers, startDownload } = useTransfers();
 
   const {
     remoteFiles,
@@ -59,18 +57,6 @@ export default function PeerSandboxScreen() {
     rememberSort(next);
   };
 
-  const handleSendFile = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: false });
-      if (result.canceled || result.assets.length === 0) return;
-
-      const file = result.assets[0];
-      await startUpload({ ip, port, name, id }, file.uri, file.name, file.size || 0, fetchPeerFiles);
-    } catch (err) {
-      console.warn("Failed to pick or send file:", err);
-    }
-  };
-
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.surface} />
@@ -79,32 +65,29 @@ export default function PeerSandboxScreen() {
         {/* Header with Back Button */}
         <View style={styles.header}>
           <View style={styles.topRow}>
+            {/* Sending moved to the peer's card on the Peers tab. */}
             <Pressable
-              style={styles.backBtn}
+              style={({ pressed }) => [styles.navBtn, pressed && styles.pressed]}
               onPress={() => router.back()}
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+              hitSlop={6}
             >
-              <Text style={styles.backText}>‹ Back</Text>
+              <Text style={styles.navText}>‹ Back</Text>
             </Pressable>
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              <Pressable
-                style={styles.refreshBtn}
-                onPress={handleSendFile}
-              >
-                <View style={styles.btnInner}>
-                  <Icon name="upload" size={14} color={C.action} />
-                  <Text style={styles.refreshText}>Send</Text>
-                </View>
-              </Pressable>
-              <Pressable
-                style={styles.refreshBtn}
-                onPress={() => fetchPeerFiles()}
-                disabled={isFetching}
-              >
-                <Text style={styles.refreshText}>
-                  {isFetching ? "Syncing…" : "Sync"}
-                </Text>
-              </Pressable>
-            </View>
+            <Pressable
+              style={({ pressed }) => [styles.navBtn, pressed && styles.pressed, isFetching && styles.disabled]}
+              onPress={() => fetchPeerFiles()}
+              disabled={isFetching}
+              accessibilityRole="button"
+              accessibilityLabel="Refresh the file list"
+              hitSlop={6}
+            >
+              <View style={styles.btnInner}>
+                <Icon name="refresh" size={16} color={C.action} />
+                <Text style={styles.navText}>{isFetching ? "Syncing…" : "Sync"}</Text>
+              </View>
+            </Pressable>
           </View>
 
           <Text style={styles.title}>{name}&apos;s Sandbox</Text>
@@ -180,30 +163,27 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
 
   // Header
-  header: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 14 },
+  header: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16 },
   topRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
+    marginBottom: 18,
   },
-  backBtn: {
+  // 44 pt tall: comfortably tappable, and clear of the status bar.
+  navBtn: {
+    minHeight: 44,
+    justifyContent: "center",
     backgroundColor: C.surfaceActive,
     borderWidth: 1,
     borderColor: C.borderStrong,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    borderRadius: 12,
+    paddingHorizontal: 16,
   },
-  backText: { fontSize: 13, fontWeight: "600", color: C.action },
-  refreshBtn: {
-    backgroundColor: C.borderStrong,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  refreshText: { fontSize: 12, fontWeight: "600", color: C.action },
-  btnInner: { flexDirection: "row", alignItems: "center", gap: 6 },
+  navText: { fontSize: 15, fontWeight: "600", color: C.action },
+  pressed: { opacity: 0.75 },
+  disabled: { opacity: 0.6 },
+  btnInner: { flexDirection: "row", alignItems: "center", gap: 8 },
 
   title: { fontSize: 24, fontWeight: "700", color: C.content },
   subtitle: { marginTop: 2, fontSize: 12, color: C.contentMuted },

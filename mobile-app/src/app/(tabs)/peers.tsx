@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import * as DocumentPicker from "expo-document-picker";
 
 import { C, idColor, short } from "@/constants/colors";
 import { Icon } from "@/components/Icon";
@@ -102,23 +103,31 @@ export default function PairedPeersScreen() {
     }
   }, [peersWithStatus, load]);
 
-  /** Send everything pending to this peer, then clear the queue. */
-  const handleSendShares = useCallback(
-    async (peer: PairedPeerStatus) => {
-      if (shares.length === 0) return;
+  /**
+   * Offer `files` to this peer: files from the share sheet, or picked with
+   * "Send files". `fromShares` clears the share queue once they're sent.
+   */
+  const sendTo = useCallback(
+    async (peer: PairedPeerStatus, files: PendingShare[], fromShares: boolean) => {
+      if (files.length === 0) return;
+      const done = () => {
+        if (fromShares) {
+          clearPendingShares();
+          setShares([]);
+        }
+      };
       setSendingTo(peer.id);
       const addr = `${peer.ip}:${peer.port}`;
       let sent = 0;
 
       // One offer for everything shared: one prompt on the other side.
       try {
-        const offerId = await offerFiles(peer, shares);
+        const offerId = await offerFiles(peer, files);
         if (offerId) {
-          clearPendingShares();
-          setShares([]);
+          done();
           Alert.alert(
             "Offered",
-            `${shares.length} file${shares.length === 1 ? "" : "s"} offered to ${peer.name}. They'll be sent once accepted.`,
+            `${files.length} file${files.length === 1 ? "" : "s"} offered to ${peer.name}. They'll be sent once accepted.`,
           );
           setSendingTo(null);
           return;
@@ -131,7 +140,7 @@ export default function PairedPeersScreen() {
 
       // A peer from before offers: upload them the old way.
       try {
-        for (const share of shares) {
+        for (const share of files) {
           try {
             const result = await uploadRemoteFile(addr, share.uri, share.name);
             void recordTransfer({
@@ -157,8 +166,7 @@ export default function PairedPeersScreen() {
           }
           sent += 1;
         }
-        clearPendingShares();
-        setShares([]);
+        done();
         Alert.alert(
           "Sent",
           `${sent} file${sent === 1 ? "" : "s"} sent to ${peer.name}.`,
@@ -166,14 +174,32 @@ export default function PairedPeersScreen() {
       } catch (err) {
         Alert.alert(
           "Couldn't send",
-          `Sent ${sent} of ${shares.length}. Check ${peer.name} is still reachable and try again.`,
+          `Sent ${sent} of ${files.length}. Check ${peer.name} is still reachable and try again.`,
         );
         console.warn("[share] upload failed:", err);
       } finally {
         setSendingTo(null);
       }
     },
-    [shares],
+    [],
+  );
+
+  /** "Send files": pick from the phone, then offer them to this peer. */
+  const handlePickAndSend = useCallback(
+    async (peer: PairedPeerStatus) => {
+      try {
+        const picked = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: false });
+        if (picked.canceled) return;
+        await sendTo(
+          peer,
+          picked.assets.map((a) => ({ uri: a.uri, name: a.name })),
+          false,
+        );
+      } catch (err) {
+        Alert.alert("Couldn't send", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [sendTo],
   );
 
   /** Forget a peer on both sides (best effort for the other side). */
@@ -329,40 +355,60 @@ export default function PairedPeersScreen() {
               {/* Action Button */}
               <View style={styles.actionRow}>
                 {item.isOnline ? (
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.openBtn,
-                      pressed && styles.btnPressed,
-                      sendingTo === item.id && styles.btnDisabled,
-                    ]}
-                    disabled={sendingTo !== null}
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                      shares.length > 0
-                        ? `Send ${shares.length} file${shares.length === 1 ? "" : "s"} to ${item.name}`
-                        : `Open ${item.name}'s sandbox`
-                    }
-                    onPress={() =>
-                      shares.length > 0
-                        ? handleSendShares(item)
-                        : handleOpenSandbox(item)
-                    }
-                  >
-                    {sendingTo === item.id ? (
-                      <ActivityIndicator size="small" color={C.onAction} />
-                    ) : (
-                      <>
-                        <Icon
-                          name={shares.length > 0 ? "send" : "folder"}
-                          size={16}
-                          color={C.onAction}
-                        />
-                        <Text style={styles.openBtnText}>
-                          {shares.length > 0 ? "Send here" : "Open sandbox"}
-                        </Text>
-                      </>
+                  <View style={styles.buttons}>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.openBtn,
+                        pressed && styles.btnPressed,
+                        sendingTo === item.id && styles.btnDisabled,
+                      ]}
+                      disabled={sendingTo !== null}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        shares.length > 0
+                          ? `Send ${shares.length} file${shares.length === 1 ? "" : "s"} to ${item.name}`
+                          : `Open ${item.name}'s sandbox`
+                      }
+                      onPress={() =>
+                        shares.length > 0
+                          ? sendTo(item, shares, true)
+                          : handleOpenSandbox(item)
+                      }
+                    >
+                      {sendingTo === item.id ? (
+                        <ActivityIndicator size="small" color={C.onAction} />
+                      ) : (
+                        <>
+                          <Icon
+                            name={shares.length > 0 ? "send" : "folder"}
+                            size={16}
+                            color={C.onAction}
+                          />
+                          <Text style={styles.openBtnText}>
+                            {shares.length > 0 ? "Send here" : "Open sandbox"}
+                          </Text>
+                        </>
+                      )}
+                    </Pressable>
+                    {/* Sending used to live only inside the peer's sandbox
+                        screen; it belongs here, next to opening it. */}
+                    {shares.length === 0 && (
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.sendBtn,
+                          pressed && styles.btnPressed,
+                          sendingTo !== null && styles.btnDisabled,
+                        ]}
+                        disabled={sendingTo !== null}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Send files to ${item.name}`}
+                        onPress={() => handlePickAndSend(item)}
+                      >
+                        <Icon name="send" size={16} color={C.action} />
+                        <Text style={styles.sendBtnText}>Send files</Text>
+                      </Pressable>
                     )}
-                  </Pressable>
+                  </View>
                 ) : (
                   <Text style={styles.offlineHint}>
                     {item.untrusted
@@ -530,6 +576,7 @@ const styles = StyleSheet.create({
   // Action row
   actionRow: { marginTop: 14 },
   openBtn: {
+    flex: 1,
     flexDirection: "row",
     gap: 8,
     borderRadius: 10,
@@ -539,6 +586,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   openBtnText: { fontSize: 13, fontWeight: "700", color: C.onAction },
+  buttons: { flexDirection: "row", gap: 10 },
+  sendBtn: {
+    flex: 1,
+    flexDirection: "row",
+    gap: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.borderStrong,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sendBtnText: { fontSize: 13, fontWeight: "700", color: C.action },
   btnPressed: { opacity: 0.75 },
   offlineHint: {
     fontSize: 11,
