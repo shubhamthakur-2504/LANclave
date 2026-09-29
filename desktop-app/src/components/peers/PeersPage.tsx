@@ -61,13 +61,34 @@ export default function PeersPage({
             }
           />
         ) : (
-          <PeersListPanel
-            peers={peers}
-            onConnect={onOpenConnection}
-            onBrowseFiles={onBrowseFiles}
-            onRescanPeer={onRescanPeer}
-            dropTargetId={dropTargetId}
-          />
+          <div className="flex h-full flex-col">
+            {/* Scanning with devices already listed (the usual case: paired
+                devices are always here). The empty state above only covers
+                a list with nothing in it. */}
+            {isScanning && (
+              <div
+                className="flex items-center gap-4 border-b border-border bg-surface-raised px-6 py-3"
+                aria-live="polite"
+              >
+                <ScanAnimation size={128} />
+                <div>
+                  <p className="text-sm font-medium text-content">Looking for nearby devices…</p>
+                  <p className="mt-0.5 text-xs text-content-faint">
+                    Checking every address on this network. New devices appear under Nearby.
+                  </p>
+                </div>
+              </div>
+            )}
+            <div className="min-h-0 flex-1">
+              <PeersListPanel
+                peers={peers}
+                onConnect={onOpenConnection}
+                onBrowseFiles={onBrowseFiles}
+                onRescanPeer={onRescanPeer}
+                dropTargetId={dropTargetId}
+              />
+            </div>
+          </div>
         )}
       </div>
     </div>
