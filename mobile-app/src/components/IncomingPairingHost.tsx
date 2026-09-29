@@ -103,7 +103,7 @@ export function IncomingPairingHost() {
       setTimeout(() => {
         setRequest(null);
         setSucceeded(false);
-      }, 1200);
+      }, 1900);
     } catch (err) {
       console.warn("[pairing] could not save incoming pairing:", err);
       Alert.alert("Pairing failed", "Could not save this device. Try again from either device.");
@@ -120,6 +120,7 @@ export function IncomingPairingHost() {
       fingerprint={request?.fingerprint ?? null}
       isSubmitting={submitting}
       succeeded={succeeded}
+      peerId={request?.deviceId}
       selfName={selfName}
       onClose={reject}
       onConfirm={confirm}

@@ -1,7 +1,7 @@
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { LaunchOverlay } from '@/components/brand/LaunchOverlay';
 import { TransferProvider } from '@/contexts/TransferContext';
 import { IncomingPairingHost } from '@/components/IncomingPairingHost';
 import { IncomingOfferHost } from '@/components/IncomingOfferHost';
@@ -18,7 +18,7 @@ export default function RootLayout() {
   return (
     <TransferProvider>
       <OffersProvider>
-      <AnimatedSplashOverlay />
+      <LaunchOverlay />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="peer-sandbox" options={{ headerShown: false }} />

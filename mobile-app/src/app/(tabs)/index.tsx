@@ -16,6 +16,7 @@ import { C } from "@/constants/colors";
 import { useSandboxFiles } from "@/hooks/use-sandbox-files";
 import { startServer, stopServer, isServerRunning } from "@/services/server";
 import { Icon } from "@/components/Icon";
+import { Wordmark } from "@/components/brand/Mark";
 import { SortBar } from "@/components/SortBar";
 import { SendToSheet } from "@/components/SendToSheet";
 import { openSandboxFile, shareSandboxFile } from "@/services/open-file";
@@ -74,6 +75,9 @@ export default function MySandboxScreen() {
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         {/* Header */}
         <View style={styles.header}>
+          <View style={styles.brand}>
+            <Wordmark markSize={26} color={C.action} textColor={C.content} />
+          </View>
           <View style={styles.headerRow}>
             <Text style={styles.title}>My Sandbox</Text>
             <View style={styles.badge}>
@@ -147,6 +151,7 @@ const styles = StyleSheet.create({
 
   // Header
   header: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14 },
+  brand: { marginBottom: 12 },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",

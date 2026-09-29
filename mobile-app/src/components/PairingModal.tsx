@@ -15,19 +15,17 @@
  * - The stakes are one plain sentence, not a paragraph.
  */
 
-import { useEffect, useMemo } from "react";
 import {
   ActivityIndicator,
-  Animated,
-  Easing,
   Modal,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { C } from "@/constants/colors";
+import { C, idColor } from "@/constants/colors";
 import { Icon } from "@/components/Icon";
+import { PairedAnimation } from "@/components/brand/PairedAnimation";
 
 export interface PairingModalProps {
   visible: boolean;
@@ -39,6 +37,8 @@ export interface PairingModalProps {
   succeeded?: boolean;
   /** This device's own name, so both sides of the pair are named. */
   selfName?: string;
+  /** The other device's id: its identity colour is its stream in the paired animation. */
+  peerId?: string;
   onClose: () => void;
   onConfirm: () => void;
 }
@@ -58,27 +58,10 @@ export function PairingModal({
   isSubmitting,
   succeeded,
   selfName = "This phone",
+  peerId,
   onClose,
   onConfirm,
 }: PairingModalProps) {
-  // Motion only for state change: the success mark scales in once.
-  // useMemo, not useRef: reading ref.current during render is a bug waiting
-  // to happen, and this value is read in the style below.
-  const pop = useMemo(() => new Animated.Value(0), []);
-
-  useEffect(() => {
-    if (!succeeded) {
-      pop.setValue(0);
-      return;
-    }
-    Animated.timing(pop, {
-      toValue: 1,
-      duration: 320,
-      easing: Easing.out(Easing.back(2)),
-      useNativeDriver: true,
-    }).start();
-  }, [succeeded, pop]);
-
   return (
     <Modal
       animationType="fade"
@@ -90,14 +73,14 @@ export function PairingModal({
         <View style={styles.card}>
           {succeeded ? (
             <View style={styles.successWrap}>
-              <Animated.View
-                style={[
-                  styles.successBadge,
-                  { transform: [{ scale: pop }], opacity: pop },
-                ]}
-              >
-                <Icon name="check" size={34} color={C.ok} />
-              </Animated.View>
+              {/* The payoff for the only friction in the product: this
+                  phone's stream (the accent) and the peer's (its identity
+                  colour) meet and become the folder. */}
+              <PairedAnimation
+                size={180}
+                colors={[C.actionHover, peerId ? idColor(peerId) : C.actionHover]}
+                bg={C.surfaceRaised}
+              />
               <Text style={styles.successTitle}>Paired with {peerName}</Text>
               <Text style={styles.successSub}>
                 You can now browse and send files between these two devices.
@@ -283,17 +266,6 @@ const styles = StyleSheet.create({
   btnDisabled: { opacity: 0.6 },
 
   successWrap: { alignItems: "center", paddingVertical: 8 },
-  successBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: C.okBg,
-    borderWidth: 1,
-    borderColor: C.okBorder,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
-  },
   successTitle: {
     fontSize: 17,
     fontWeight: "700",

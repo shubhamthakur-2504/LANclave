@@ -30,6 +30,7 @@ import ExpoNativeServerModule from "../../../modules/expo-native-server/src/Expo
 import { getSettings } from "@/services/settings";
 import { rescanPeer } from "@/services/presence";
 import { Icon } from "@/components/Icon";
+import { ScanAnimation } from "@/components/brand/ScanAnimation";
 import * as Network from "expo-network";
 
 export default function ScanScreen() {
@@ -206,7 +207,7 @@ export default function ScanScreen() {
         setPairingTarget(null);
         setPairingSucceeded(false);
         router.replace("/peers" as any);
-      }, 1200);
+      }, 1900);
     } catch (err) {
       console.warn("[scan] pairing confirmation failed:", err);
       Alert.alert(
@@ -260,7 +261,11 @@ export default function ScanScreen() {
         <View style={styles.content}>
           {peers.length === 0 ? (
             <View style={styles.empty}>
-              <Icon name="scan" size={40} color={C.contentFaint} />
+              {isScanning ? (
+                <ScanAnimation size={200} />
+              ) : (
+                <Icon name="scan" size={40} color={C.contentFaint} />
+              )}
               <Text style={styles.emptyTitle}>
                 {isScanning
                   ? "Scanning local network…"
@@ -313,6 +318,7 @@ export default function ScanScreen() {
         fingerprint={pairingFingerprint}
         isSubmitting={isPairingSubmitting}
         succeeded={pairingSucceeded}
+        peerId={pairingTarget?.id}
         selfName={selfName}
         onClose={handleRejectPairing}
         onConfirm={handleConfirmPairing}
