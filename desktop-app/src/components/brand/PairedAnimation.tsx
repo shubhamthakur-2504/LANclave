@@ -112,8 +112,10 @@ export default function PairedAnimation({ size = 160, colors }: { size?: number;
     }
     let raf = 0;
     const start = performance.now();
-    const loop = (now: number) => {
-      const t = Math.min((now - start) / 1000, DURATION);
+    const loop = () => {
+      // performance.now(), not the rAF timestamp: that can be earlier than
+      // `start`, making t negative.
+      const t = Math.min(Math.max(0, (performance.now() - start) / 1000), DURATION);
       draw(fitCanvas(cv, W, W), t, colors);
       if (t < DURATION) raf = requestAnimationFrame(loop);
     };

@@ -34,7 +34,7 @@ function draw(ctx: CanvasRenderingContext2D, t: number, still: boolean) {
   ctx.translate(W / 2, W / 2);
 
   const phase = (t % 2.4) / 2.4;
-  const pingR = easeOut(phase) * 152;
+  const pingR = Math.max(0, easeOut(phase) * 152); // arc() throws on a negative radius
   const pingA = 1 - phase;
 
   ctx.strokeStyle = edge;
@@ -106,9 +106,13 @@ export default function ScanAnimation({ size = 200 }: { size?: number }) {
     }
     let raf = 0;
     const start = performance.now();
-    const loop = (now: number) => {
-      draw(fitCanvas(cv, W, W), (now - start) / 1000, false);
+    const loop = () => {
+      // Queue the next frame first: one frame that throws must not end the
+      // loop, which is how the field used to freeze after its boundary ring.
       raf = requestAnimationFrame(loop);
+      // performance.now(), not the rAF timestamp: that is the frame's start
+      // time and can be earlier than `start`, making t negative.
+      draw(fitCanvas(cv, W, W), Math.max(0, (performance.now() - start) / 1000), false);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
