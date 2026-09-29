@@ -159,8 +159,16 @@ pub fn install<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
             }
         });
 
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
+    // The tray gets the mark drawn on the 16-px grid (at 2x), not the app
+    // icon shrunk: its tile and fine arrows turned to mush at tray size. The
+    // accent reads on both light and dark taskbars. Built by branding/gen.mjs.
+    match tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png")) {
+        Ok(icon) => tray = tray.icon(icon),
+        Err(_) => {
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+        }
     }
     tray.build(app)?;
     Ok(())
