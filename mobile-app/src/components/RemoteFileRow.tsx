@@ -7,7 +7,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { C, mb } from "@/constants/colors";
 import { fileKind } from "@/constants/file-kind";
-import { Icon } from "@/components/Icon";
+import { FileIcon } from "@/components/FileIcon";
 
 export interface RemoteFileRowProps {
   name: string;
@@ -40,9 +40,8 @@ export function RemoteFileRow({
 
   return (
     <View style={styles.row}>
-      {/* Icon */}
       <View style={styles.iconWrap}>
-        <Icon name={kind.icon} size={20} color={C[kind.tone]} />
+        <FileIcon name={name} isDirectory={is_directory} />
       </View>
 
       {/* Name + size / progress bar */}
@@ -56,7 +55,7 @@ export function RemoteFileRow({
           </View>
         ) : (
           <Text style={styles.sub}>
-            {is_directory ? "Folder" : mb(size)}
+            {is_directory ? kind.label : `${kind.label} · ${mb(size)}`}
           </Text>
         )}
       </View>
@@ -95,15 +94,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  iconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: C.borderStrong,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
+  // The tile draws its own tinted background.
+  iconWrap: { marginRight: 12 },
   icon: { fontSize: 18 },
   meta: { flex: 1 },
   name: { fontSize: 14, fontWeight: "600", color: C.content },

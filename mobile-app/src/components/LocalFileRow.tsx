@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SandboxFileEntry } from "@/services/storage";
 import { C, mb } from "@/constants/colors";
 import { fileKind } from "@/constants/file-kind";
-import { Icon } from "@/components/Icon";
+import { FileIcon } from "@/components/FileIcon";
 
 export interface LocalFileRowProps {
   file: SandboxFileEntry;
@@ -25,7 +25,7 @@ export function LocalFileRow({ file, onPress, onLongPress }: LocalFileRowProps) 
       accessibilityLabel={`${file.name}. Tap to open, long-press for more.`}
     >
       <View style={styles.iconWrap}>
-        <Icon name={kind.icon} size={20} color={C[kind.tone]} />
+        <FileIcon name={file.name} isDirectory={file.isDirectory} />
       </View>
       <View style={styles.meta}>
         <Text style={styles.name} numberOfLines={1}>
@@ -50,15 +50,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  iconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: C.borderStrong,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
+  // The tile draws its own tinted background.
+  iconWrap: { marginRight: 12 },
   pressed: { backgroundColor: C.surfaceActive },
   icon: { fontSize: 18 },
   meta: { flex: 1 },
