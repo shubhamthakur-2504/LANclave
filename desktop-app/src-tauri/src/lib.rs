@@ -169,6 +169,7 @@ pub fn run() {
             commands::get_transfer_history,
             // Offers
             offers::send_files,
+            offers::send_paths,
             offers::cancel_offer,
             offers::pause_offer,
             offers::list_offers,

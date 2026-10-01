@@ -139,6 +139,22 @@ export async function discardTransfer(transferId: string): Promise<void> {
 
 // ── Offers ─────────────────────────────────────────────────────────
 
+/**
+ * Offer files from anywhere on this computer, without copying them into the
+ * sandbox. `legacy`: the peer predates offers; import and push instead.
+ */
+export async function sendPaths(
+  peer: PeerInfo,
+  paths: string[],
+): Promise<{ kind: "offer"; offer_id: string } | { kind: "legacy" }> {
+  return await invoke("send_paths", {
+    peerAddr: peer.addr,
+    peerId: peer.device_id,
+    peerName: peer.device_name ?? null,
+    paths,
+  });
+}
+
 /** Offer sandbox files to a peer. `legacy`: it predates offers; push instead. */
 export async function sendFiles(
   peer: PeerInfo,

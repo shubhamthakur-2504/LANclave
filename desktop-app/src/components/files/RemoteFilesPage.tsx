@@ -7,11 +7,13 @@ import { useTransfers } from "../../contexts/TransferContext";
 
 interface RemoteFilesPageProps {
   peer: PeerInfo;
+  /** Files are being dragged over the window: a drop here goes to this peer. */
+  isDropping?: boolean;
   onBack: () => void;
   onFileDownloaded: () => void;
 }
 
-export default function RemoteFilesPage({ peer, onBack, onFileDownloaded }: RemoteFilesPageProps) {
+export default function RemoteFilesPage({ peer, isDropping = false, onBack, onFileDownloaded }: RemoteFilesPageProps) {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -54,8 +56,10 @@ export default function RemoteFilesPage({ peer, onBack, onFileDownloaded }: Remo
     }
   };
 
+  const who = peer.device_name || `${peer.device_id.slice(0, 10)}...`;
+
   return (
-    <div className="flex h-full flex-col">
+    <div className={`flex h-full flex-col ${isDropping ? "ring-2 ring-inset ring-action" : ""}`}>
       {/* Header */}
       <div className="flex items-center gap-4 border-b border-border bg-surface-raised px-6 py-4">
         <button
@@ -66,7 +70,7 @@ export default function RemoteFilesPage({ peer, onBack, onFileDownloaded }: Remo
         </button>
         <div className="flex-1 min-w-0">
           <h2 className="truncate text-lg font-semibold text-content">
-            Browsing {peer.device_name || `${peer.device_id.slice(0, 10)}...`}
+            Browsing {who}
           </h2>
           <p className="truncate text-xs text-content-muted">{peer.addr}</p>
         </div>
@@ -91,7 +95,13 @@ export default function RemoteFilesPage({ peer, onBack, onFileDownloaded }: Remo
 
       {/* Main Content */}
       <div className="flex-1 overflow-hidden">
-        {loading ? (
+        {isDropping ? (
+          // Say where the files will go before they are let go: with this
+          // device's files open, a drop sends to it, not to the local sandbox.
+          <div className="flex h-full items-center justify-center text-sm text-action">
+            Drop files to send them to {who}
+          </div>
+        ) : loading ? (
           <div className="flex h-full items-center justify-center text-sm text-content-faint">
             Loading files...
           </div>

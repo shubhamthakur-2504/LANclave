@@ -24,7 +24,7 @@ function AppInner() {
   const [localFiles, setLocalFiles] = useState<FileEntry[]>([]);
   const toast = useToast();
   const { startUpload, transfers } = useTransfers();
-  const { sendFiles, pendingIncoming } = useOffers();
+  const { pendingIncoming } = useOffers();
 
   // Badges the Transfers nav item, so the page is for detail rather than for
   // watching. Pending counts too: a queued transfer is still movement, and
@@ -102,8 +102,10 @@ function AppInner() {
   }, []);
 
   /**
-   * OS file drops (U3.1). Dropping on a peer row sends the files to that
-   * peer; dropping anywhere else adds them to the local sandbox.
+   * OS file drops (U3.1). Where the files go depends on where you are:
+   * - a peer's sandbox is open: to that peer, wherever the drop lands;
+   * - over a peer row: to that peer;
+   * - anywhere else: into the local sandbox.
    *
    * Tauri reports drops against the window rather than an element, so the
    * row under the cursor is found by hit-testing the DOM.
@@ -114,52 +116,69 @@ function AppInner() {
     return el?.closest<HTMLElement>("[data-peer-id]")?.dataset.peerId ?? null;
   }, []);
 
-  /**
-   * Add files to the sandbox and, with a target, offer them to that peer.
-   * Shared by dropping files on a peer row and its "Send files" button.
-   */
-  const addAndSend = useCallback(
-    async (paths: string[], target: PeerInfo | undefined) => {
-      try {
-        const imported = await api.importFiles(paths);
-        if (imported.length === 0) {
-          toast.info("Nothing to add", "Folders can't be dropped yet — pick files.");
-          return;
-        }
-        await refreshFiles();
+  /** Copy files into the local sandbox. */
+  const addToSandbox = useCallback(
+    async (paths: string[]) => {
+      const imported = await api.importFiles(paths);
+      if (imported.length === 0) {
+        toast.info("Nothing to add", "Folders can't be dropped yet — pick files.");
+        return [];
+      }
+      await refreshFiles();
+      return imported;
+    },
+    [refreshFiles, toast],
+  );
 
+  /**
+   * Offer files to a peer straight from where they are. They used to be
+   * copied into the local sandbox first, so sending something to a peer left
+   * a copy here that nobody asked for.
+   */
+  const sendPathsTo = useCallback(
+    async (paths: string[], target: PeerInfo) => {
+      const who = target.device_name || "peer";
+      const plural = (n: number) => `${n} file${n > 1 ? "s" : ""}`;
+      // One offer for the whole drop: one prompt on the other side.
+      if ((await api.sendPaths(target, paths)).kind === "offer") {
+        toast.success(`Offered ${plural(paths.length)} to ${who}.`, "They'll be sent once accepted.");
+        return;
+      }
+      // A peer from before offers can only be pushed sandbox files.
+      const imported = await addToSandbox(paths);
+      for (const name of imported) {
+        await startUpload(target, name, name);
+      }
+      if (imported.length > 0) toast.success(`Sending ${plural(imported.length)}`, `To ${who}.`);
+    },
+    [addToSandbox, startUpload, toast],
+  );
+
+  const handleDrop = useCallback(
+    async (paths: string[], position: { x: number; y: number }) => {
+      // The open peer wins: its view has no rows to aim at, and a drop there
+      // used to fall through to the local sandbox.
+      const targetId = viewingPeer?.device_id ?? peerUnder(position);
+      const target = targetId
+        ? (peers.find((p) => p.device_id === targetId) ?? viewingPeer ?? undefined)
+        : undefined;
+      try {
         if (target) {
-          const plural = `${imported.length} file${imported.length > 1 ? "s" : ""}`;
-          const who = target.device_name || "peer";
-          // One offer for the whole drop: one prompt on the other side.
-          if ((await sendFiles(target, imported)) === "offer") {
-            toast.success(`Offered ${plural} to ${who}.`, "They'll be sent once accepted.");
-          } else {
-            // A peer from before offers: push them the old way.
-            for (const name of imported) {
-              await startUpload(target, name, name);
-            }
-            toast.success(`Sending ${plural}`, `To ${who}.`);
-          }
+          await sendPathsTo(paths, target);
         } else {
-          toast.success(
-            `Added ${imported.length} file${imported.length > 1 ? "s" : ""}`,
-            "Saved to your sandbox.",
-          );
+          const imported = await addToSandbox(paths);
+          if (imported.length > 0) {
+            toast.success(
+              `Added ${imported.length} file${imported.length > 1 ? "s" : ""}`,
+              "Saved to your sandbox.",
+            );
+          }
         }
       } catch (e) {
         toast.error(e);
       }
     },
-    [refreshFiles, sendFiles, startUpload, toast],
-  );
-
-  const handleDrop = useCallback(
-    (paths: string[], position: { x: number; y: number }) => {
-      const targetId = peerUnder(position);
-      return addAndSend(paths, targetId ? peers.find((p) => p.device_id === targetId) : undefined);
-    },
-    [peerUnder, peers, addAndSend],
+    [viewingPeer, peerUnder, peers, sendPathsTo, addToSandbox, toast],
   );
 
   /** "Send files" on a peer row: the picker, then the same path as a drop. */
@@ -167,12 +186,12 @@ function AppInner() {
     async (peer: PeerInfo) => {
       try {
         const paths = await api.pickFiles();
-        if (paths.length > 0) await addAndSend(paths, peer);
+        if (paths.length > 0) await sendPathsTo(paths, peer);
       } catch (e) {
         toast.error(e);
       }
     },
-    [addAndSend, toast],
+    [sendPathsTo, toast],
   );
 
   const { isDragging, position: dragPosition } = useFileDrop(handleDrop);
@@ -338,6 +357,7 @@ function AppInner() {
       return (
         <RemoteFilesPage
           peer={viewingPeer}
+          isDropping={isDragging}
           onBack={() => setViewingPeer(null)}
           onFileDownloaded={() => refreshFiles()}
         />

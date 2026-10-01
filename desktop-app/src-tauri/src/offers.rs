@@ -778,17 +778,64 @@ pub async fn send_files(
     }
 
     let sandbox_root = PathBuf::from(&state.settings.read().map_err(|e| e.to_string())?.sandbox_path);
-    let mut files = Vec::new();
-    let mut paths = HashMap::new();
+    let mut resolved = Vec::new();
     for name in &local_names {
         let path = crate::sandbox::verify_sandboxed_path(&sandbox_root, name)
             .map_err(|e| format!("{name}: {e}"))?;
-        let meta = std::fs::metadata(&path).map_err(|e| format!("{name}: {e}"))?;
+        resolved.push(path);
+    }
+    post_offer(&state, &offers, peer_addr, peer_id, peer_name, resolved).await
+}
+
+/// Offer files from anywhere on this computer -- ones the user dropped or
+/// picked -- without copying them into the sandbox first. Sending something
+/// to a peer should not leave a copy behind here.
+///
+/// Only the offered files become readable, by offer and file id, and only
+/// to the peer the offer was made to; the sandbox stays the only thing a
+/// peer can browse. Folders are skipped.
+#[tauri::command]
+pub async fn send_paths(
+    state: tauri::State<'_, crate::commands::CliState>,
+    offers: tauri::State<'_, Arc<OfferStore>>,
+    peer_addr: String,
+    peer_id: String,
+    peer_name: Option<String>,
+    paths: Vec<String>,
+) -> Result<SendResult, String> {
+    let files: Vec<PathBuf> = paths
+        .iter()
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute() && p.is_file())
+        .collect();
+    if files.is_empty() {
+        return Err("Nothing to send. Folders can't be sent yet; pick files.".into());
+    }
+    if !peer_supports_offers(&peer_addr, &state.device_id, &state.identity_key).await {
+        return Ok(SendResult::Legacy);
+    }
+    post_offer(&state, &offers, peer_addr, peer_id, peer_name, files).await
+}
+
+/// Register one offer for `resolved` files and post it to the peer.
+async fn post_offer(
+    state: &crate::commands::CliState,
+    offers: &Arc<OfferStore>,
+    peer_addr: String,
+    peer_id: String,
+    peer_name: Option<String>,
+    resolved: Vec<PathBuf>,
+) -> Result<SendResult, String> {
+    let mut files = Vec::new();
+    let mut paths = HashMap::new();
+    for path in resolved {
+        let shown = path.display().to_string();
+        let meta = std::fs::metadata(&path).map_err(|e| format!("{shown}: {e}"))?;
         if !meta.is_file() {
-            return Err(format!("{name} is not a file"));
+            return Err(format!("{shown} is not a file"));
         }
         let id = uuid::Uuid::new_v4().simple().to_string();
-        let display = path.file_name().and_then(|n| n.to_str()).unwrap_or(name).to_string();
+        let display = path.file_name().and_then(|n| n.to_str()).map(str::to_owned).unwrap_or(shown);
         files.push(OfferFile { id: id.clone(), name: display, size: meta.len(), modified: crate::fs_util::modified_ms(&meta) });
         paths.insert(id, path);
     }
