@@ -1,6 +1,8 @@
 import { ExternalLink, FolderOpen, Send, X } from "lucide-react";
 import type { FileEntry, PeerInfo } from "../../types";
 import { formatBytes } from "../../lib/stats";
+import { describeFile } from "../../lib/fileKind";
+import FileIcon from "./FileIcon";
 
 interface FileDetailPanelProps {
   file: FileEntry;
@@ -12,25 +14,6 @@ interface FileDetailPanelProps {
   onClose: () => void;
 }
 
-/** "PDF document", "JPG image"... from the extension; plain "File" if none. */
-function kindOf(name: string): string {
-  const dot = name.lastIndexOf(".");
-  if (dot <= 0) return "File";
-  const ext = name.slice(dot + 1).toLowerCase();
-  const groups: [string[], string][] = [
-    [["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "svg", "avif"], "image"],
-    [["mp4", "mov", "mkv", "webm", "avi", "m4v"], "video"],
-    [["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus"], "audio"],
-    [["pdf"], "document"],
-    [["doc", "docx", "odt", "rtf", "txt", "md"], "document"],
-    [["xls", "xlsx", "ods", "csv"], "spreadsheet"],
-    [["ppt", "pptx", "odp"], "presentation"],
-    [["zip", "7z", "rar", "tar", "gz"], "archive"],
-  ];
-  const group = groups.find(([exts]) => exts.includes(ext))?.[1] ?? "file";
-  return `${ext.toUpperCase()} ${group}`;
-}
-
 function formatDate(ms: number | null | undefined): string {
   if (ms == null) return "—";
   return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -40,7 +23,8 @@ function formatDate(ms: number | null | undefined): string {
 export default function FileDetailPanel({ file, sendTargets, onOpen, onReveal, onSend, onClose }: FileDetailPanelProps) {
   return (
     <div className="flex h-full flex-col" aria-label={`Details for ${file.name}`}>
-      <div className="flex items-start gap-2 border-b border-border px-5 py-4">
+      <div className="flex items-start gap-3 border-b border-border px-5 py-4">
+        <FileIcon name={file.name} isDirectory={file.is_directory} size={44} />
         <h3 className="min-w-0 flex-1 break-words text-sm font-semibold text-content">{file.name}</h3>
         <button
           onClick={onClose}
@@ -54,7 +38,7 @@ export default function FileDetailPanel({ file, sendTargets, onOpen, onReveal, o
       <dl className="space-y-2 px-5 py-4 text-xs">
         <div className="flex justify-between gap-4">
           <dt className="text-content-faint">Type</dt>
-          <dd className="text-right text-content">{kindOf(file.name)}</dd>
+          <dd className="text-right text-content">{describeFile(file.name, file.is_directory)}</dd>
         </div>
         <div className="flex justify-between gap-4">
           <dt className="text-content-faint">Size</dt>

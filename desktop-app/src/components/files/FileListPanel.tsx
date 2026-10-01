@@ -1,5 +1,6 @@
-import { ArrowDown, ArrowUp, Download, File, FileText, Folder, Image, Loader2, Volume2 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { ArrowDown, ArrowUp, Download, Loader2 } from "lucide-react";
+import FileIcon from "./FileIcon";
+import { useState } from "react";
 import type { FileEntry } from "../../types";
 import { loadSort, nextSort, saveSort, sortFiles, type SortKey, type SortState } from "../../lib/sortFiles";
 
@@ -26,37 +27,6 @@ interface FileListPanelProps {
   /** Open with the default app: double-click or Enter. */
   onOpen?: (name: string) => void;
   selectedName?: string | null;
-}
-
-function iconForFile(file: FileEntry): ReactNode {
-  if (file.is_directory) {
-    return (
-      <Folder className="h-5 w-5 text-warn" strokeWidth={1.75} aria-hidden="true" />
-    );
-  }
-  const ext = file.name.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "pdf":
-      return (
-        <FileText className="h-5 w-5 text-danger" strokeWidth={1.75} aria-hidden="true" />
-      );
-    case "mp4":
-    case "mov":
-      return (
-        <Volume2 className="h-5 w-5 text-ok" strokeWidth={1.75} aria-hidden="true" />
-      );
-    case "jpeg":
-    case "jpg":
-    case "png":
-    case "gif":
-      return (
-        <Image className="h-5 w-5 text-action" strokeWidth={1.75} aria-hidden="true" />
-      );
-    default:
-      return (
-        <File className="h-5 w-5 text-content-muted" strokeWidth={1.75} aria-hidden="true" />
-      );
-  }
 }
 
 function formatSize(bytes: number): string {
@@ -133,7 +103,7 @@ export default function FileListPanel({
                 file.name === selectedName ? "bg-action/10" : ""
               } ${onSelect ? 'cursor-pointer hover:bg-surface-active' : 'hover:bg-surface-active'}`}
             >
-              <span className="shrink-0">{iconForFile(file)}</span>
+              <FileIcon name={file.name} isDirectory={file.is_directory} />
               <div className="flex-1 min-w-0">
                 <p className="truncate text-sm text-content">{file.name}</p>
               </div>
