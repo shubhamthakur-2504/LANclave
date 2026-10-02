@@ -33,6 +33,33 @@ import { Icon } from "@/components/Icon";
 import { ScanAnimation } from "@/components/brand/ScanAnimation";
 import * as Network from "expo-network";
 
+/**
+ * Why a pairing request failed, as an alert's title and message. The three
+ * causes need different fixes, and one catch-all ("make sure its server is
+ * running") sent the user to check the one thing that was fine.
+ */
+function pairingFailure(err: unknown, peer: DiscoveredPeer): [string, string] {
+  const where = `${peer.ip}:${peer.port}`;
+  const e = err as { name?: string; status?: number } | null;
+  if (typeof e?.status === "number") {
+    return [
+      "Pairing refused",
+      `${peer.name} answered but would not start pairing (HTTP ${e.status}). Update LANclave on both devices and try again.`,
+    ];
+  }
+  // Our own 5 s limit: the request went out and nothing came back.
+  if (e?.name === "AbortError" || e?.name === "TimeoutError") {
+    return [
+      "No answer",
+      `${peer.name} did not answer at ${where} within 5 seconds. A firewall on that device may be blocking LANclave, or this phone is not sending over the Wi-Fi it shares with it.`,
+    ];
+  }
+  return [
+    "Connection Failed",
+    `Could not open a connection to ${peer.name} at ${where}. Make sure LANclave is open there and both devices are on the same Wi-Fi or hotspot.`,
+  ];
+}
+
 export default function ScanScreen() {
   const router = useRouter();
   const { peers: allDiscovered, isScanning, progress, lastScan, scan } = usePeerDiscovery();
@@ -129,7 +156,7 @@ export default function ScanScreen() {
             giveUp("Declined recently", `${peer.name} declined recently. You can ask again in ${waitPhrase(secs)}.`);
             return null;
           }
-          if (!res.ok) throw new Error("Server rejected pairing request");
+          if (!res.ok) throw Object.assign(new Error("pairing request rejected"), { status: res.status });
           return res.json();
         })
         .then((data) => {
@@ -139,8 +166,8 @@ export default function ScanScreen() {
             setPairingFingerprint(data.fingerprint);
           }
         })
-        .catch(() => {
-          giveUp("Connection Failed", "Could not connect to the peer. Make sure its server is running.");
+        .catch((err) => {
+          giveUp(...pairingFailure(err, peer));
         });
     } catch {
       giveUp("Error", "An error occurred while initiating pairing.");
