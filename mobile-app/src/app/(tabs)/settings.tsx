@@ -11,9 +11,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StorageAccessFramework } from "expo-file-system/legacy";
-import { Paths } from "expo-file-system";
 import { C } from "@/constants/colors";
-import { AppSettings, getSettings, saveSettings } from "@/services/settings";
+import { AppSettings, builtInSandboxUri, getSettings, isBuiltInSandbox, saveSettings } from "@/services/settings";
 import { startServer, isServerRunning } from "@/services/server";
 import ExpoNativeServerModule from "../../../modules/expo-native-server/src/ExpoNativeServerModule";
 
@@ -107,7 +106,7 @@ export default function SettingsScreen() {
     if (!settings) return;
     handleSave({
       ...settings,
-      sandboxPath: Paths.document.uri,
+      sandboxPath: builtInSandboxUri(),
       sandboxLabel: "Internal Sandbox",
     });
   };
@@ -186,7 +185,7 @@ export default function SettingsScreen() {
                 <Text style={styles.btnTextPrimary}>Change Folder</Text>
               </TouchableOpacity>
 
-              {settings.sandboxPath !== Paths.document.uri && (
+              {!isBuiltInSandbox(settings.sandboxPath) && (
                 <TouchableOpacity
                   style={[styles.btn, styles.btnSecondary]}
                   onPress={handleResetDirectory}

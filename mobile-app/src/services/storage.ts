@@ -4,7 +4,7 @@
  * Uses `Directory`, `File`, and `Paths` from `expo-file-system` instead of the
  * now-deprecated `*Async` helpers.
  *
- * All paths are validated to stay strictly inside `Paths.document` before any
+ * All paths are validated to stay strictly inside the sandbox folder before any
  * I/O is performed (path-traversal protection).
  */
 
