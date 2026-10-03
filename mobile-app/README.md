@@ -1,56 +1,104 @@
-# Welcome to your Expo app 👋
+# LANclave — mobile app
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+The Android app. A React Native interface built with Expo, with the engine
+(the file server, transfers and pairing checks) written in Kotlin as a local
+native module.
 
-## Get started
+For what LANclave does, see the [main README](../README.md).
 
-1. Install dependencies
+## What you need
 
-   ```bash
-   npm install
-   ```
+- An Android phone running **Android 13 or later**, with USB debugging turned
+  on. An emulator runs the app but cannot be reached by other devices on your
+  Wi-Fi.
+- [Node.js](https://nodejs.org/) (LTS) with npm.
+- JDK 17 and the Android SDK. Installing
+  [Android Studio](https://developer.android.com/studio) provides both.
+- `adb` on your PATH (it comes with the Android SDK's platform tools).
 
-2. Start the app
+**Expo Go will not work.** The app includes its own native code, so it has to
+be built and installed as a development build, which the steps below do.
 
-   ```bash
-   npx expo start
-   ```
+## Run it
 
-In the output, you'll find options to open the app in a
+Connect the phone by USB, then:
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```powershell
+cd mobile-app
+npm install
+npx expo run:android
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+The first run generates the `android/` project, builds it and installs it on
+the phone, which takes several minutes. After that, as long as you have not
+changed any native code or `app.json`, starting the bundler is enough:
 
-### Other setup steps
+```powershell
+npx expo start
+```
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+### Without the cable
 
-## Learn more
+With the phone connected by USB once:
 
-To learn more about developing your project with Expo, look at the following resources:
+```powershell
+adb tcpip 5555
+adb connect <phone-ip>:5555
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+You can then unplug it. `adb devices` shows what is connected; use
+`adb disconnect <phone-ip>:5555` to drop a stale wireless connection.
 
-## Join the community
+## Build an APK
 
-Join our community of developers creating universal apps.
+```powershell
+cd android
+.\gradlew assembleRelease
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+The APK is written to
+`android/app/build/outputs/apk/release/app-release.apk`.
+
+This build is signed with Android's debug key, which is fine for installing on
+your own devices. To distribute the app, sign it with your own keystore.
+
+## Tests and lint
+
+```powershell
+cd android
+.\gradlew :expo-native-server:testDebugUnitTest   # Kotlin unit tests
+cd ..
+npm run lint
+```
+
+## Things to know
+
+- **The `android/` folder is generated and is not in git.** Do not edit it by
+  hand; your changes are lost the next time it is regenerated. Permissions and
+  build settings belong in `app.json`, and native code belongs in
+  `modules/expo-native-server/`.
+- After changing `app.json` or anything under `modules/`, run
+  `npx expo run:android` again so the change is built in.
+- The phone can only be found, browsed or sent to while the app is open with
+  its server on. The server starts when the app opens and has a switch on the
+  My Sandbox screen. Nothing listens once the app is closed; only a transfer
+  already under way continues in the background.
+- There is no iPhone version. The native module's iOS half is a placeholder.
+
+## Layout
+
+```
+src/
+  app/                 Screens (Expo Router): sandbox, peers, scan, transfers,
+                       settings, and a paired device's sandbox
+  components/          Rows, cards and dialogs shared by the screens
+  contexts/            Transfer and offer state shared across screens
+  services/            Calls to other devices, pairing, settings, storage
+modules/expo-native-server/android/src/main/java/…/nativeserver/
+  NativeServer.kt      The HTTP server other devices talk to
+  TransferEngine.kt    Downloads: queue, pause, resume
+  TransferService.kt   Keeps a transfer running in the background
+  Offers.kt            Sending: offers, consent, expiry
+  PairingGuard.kt      One pairing at a time, and the cooldown on rejections
+  Sandbox.kt           Keeps every path inside the shared folder
+```
