@@ -44,6 +44,7 @@ async fn start_server(
         offers: std::sync::Arc::new(crate::offers::OfferStore::default()),
         auth: Arc::new(crate::pairing::AuthState::disabled()),
     });
+    let tls = crate::tls::server_config(&state.identity_key).unwrap();
     let router = build_raw_router(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -51,9 +52,7 @@ async fn start_server(
         .unwrap();
     let port = listener.local_addr().unwrap().port();
 
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
+    tokio::spawn(crate::tls::serve(listener, router, tls, std::future::pending()));
 
     format!("127.0.0.1:{port}")
 }
@@ -254,9 +253,15 @@ async fn push_file_exceeds_peer_limit_returns_413() {
 async fn capture_push_head(listener: tokio::net::TcpListener) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    // Any LANclave identity will do: the client under test only checks that
+    // the certificate is honest about whose it is.
+    let tls = crate::tls::server_config(&test_keypair()).unwrap();
+    let acceptor = tokio_rustls::TlsAcceptor::from(tls);
+
     let mut chunk = [0u8; 4096];
     let (mut sock, buf) = loop {
-        let (mut sock, _) = listener.accept().await.unwrap();
+        let (tcp, _) = listener.accept().await.unwrap();
+        let mut sock = acceptor.accept(tcp).await.unwrap();
         let mut buf = Vec::new();
 
         // Read until the blank line that ends the head.

@@ -369,6 +369,9 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
                 axum::Json(serde_json::json!({
                     "status": "ok",
                     "app": "lanclave",
+                    // Version 2 speaks TLS only; a device that reports no
+                    // `proto` is version 1 and cannot be talked to.
+                    "proto": crate::presence::PROTOCOL_VERSION,
                     "device_id": state.device_id,
                     "device_name": display_name,
                     // Lets peers show a laptop/phone glyph instead of a
@@ -493,20 +496,12 @@ impl ServerController {
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let router = build_router(state.clone());
+        // A fresh certificate each start, vouched for by the identity key.
+        let tls = crate::tls::server_config(&state.identity_key).map_err(ServerError::BindFailed)?;
 
-        tokio::spawn(async move {
-            // Connect info lets presence learn a peer's address from the TCP
-            // connection itself, with no reliance on anything the peer claims.
-            axum::serve(
-                listener,
-                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-                .with_graceful_shutdown(async {
-                    shutdown_rx.await.ok();
-                })
-                .await
-                .ok();
-        });
+        tokio::spawn(crate::tls::serve(listener, router, tls, async {
+            shutdown_rx.await.ok();
+        }));
 
         let handle = ServerHandle::new(shutdown_tx);
         *self.handle.lock().unwrap() = Some(handle);

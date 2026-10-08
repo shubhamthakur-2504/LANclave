@@ -2,16 +2,7 @@ use super::ClientError;
 use crate::pairing::{sign_request, HEADER_DEVICE_ID, HEADER_SIGNATURE, HEADER_TIMESTAMP};
 use base64::Engine;
 use ed25519_dalek::SigningKey;
-use std::sync::LazyLock;
 use std::time::Duration;
-
-/// Reusable HTTP client shared across all transport calls.
-static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .build()
-        .expect("valid reqwest client config")
-});
 
 pub(crate) fn encode_path(path: &str) -> String {
     path.split('/')
@@ -32,12 +23,12 @@ pub async fn get_stream_at(
     device_id: &str,
     signing_key: &SigningKey,
 ) -> Result<reqwest::Response, ClientError> {
-    let url = format!("http://{peer_addr}{path}");
+    let url = format!("https://{peer_addr}{path}");
 
     let (ts, sig) = sign_request(signing_key, device_id);
     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
 
-    let mut request = CLIENT
+    let mut request = crate::tls::paired()
         .get(&url)
         .header(HEADER_DEVICE_ID, device_id)
         .header(HEADER_TIMESTAMP, ts.to_string())
@@ -54,7 +45,7 @@ pub async fn get_stream_at(
         .map_err(|e| ClientError::ConnectionFailed(e.to_string()))
 }
 
-/// Issue a signed PUT to `http://{peer_addr}/files/{remote_path}`.
+/// Issue a signed PUT to `https://{peer_addr}/files/{remote_path}`.
 ///
 /// `content_length` is declared explicitly. A streaming body has no length
 /// reqwest can infer, so without this header hyper frames the request as
@@ -72,12 +63,12 @@ pub async fn put_stream(
     signing_key: &SigningKey,
 ) -> Result<(reqwest::StatusCode, Option<String>), ClientError> {
     let encoded = encode_path(remote_path);
-    let url = format!("http://{}/files/{}", peer_addr, encoded);
+    let url = format!("https://{}/files/{}", peer_addr, encoded);
 
     let (ts, sig) = sign_request(signing_key, device_id);
     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
 
-    let response = CLIENT
+    let response = crate::tls::paired()
         .put(&url)
         .header(HEADER_DEVICE_ID, device_id)
         .header(HEADER_TIMESTAMP, ts.to_string())
@@ -127,7 +118,7 @@ pub async fn get_fingerprint_at(
     device_id: &str,
     signing_key: &SigningKey,
 ) -> Result<Option<crate::dedupe::Fingerprint>, ClientError> {
-    let mut url = format!("http://{peer_addr}{path}");
+    let mut url = format!("https://{peer_addr}{path}");
     if let Some(size) = expected_size {
         let join = if path.contains('?') { '&' } else { '?' };
         url.push_str(&format!("{join}size={size}"));
@@ -136,7 +127,7 @@ pub async fn get_fingerprint_at(
     let (ts, sig) = sign_request(signing_key, device_id);
     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
 
-    let response = CLIENT
+    let response = crate::tls::paired()
         .get(&url)
         .header(HEADER_DEVICE_ID, device_id)
         .header(HEADER_TIMESTAMP, ts.to_string())
@@ -171,8 +162,9 @@ pub async fn send_pairing_cancel(
     let (ts, sig) = sign_request(signing_key, device_id);
     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
 
-    let response = CLIENT
-        .post(format!("http://{peer_addr}/api/pairing/cancel"))
+    // The peer may never have been paired, or has just been removed.
+    let response = crate::tls::open()
+        .post(format!("https://{peer_addr}/api/pairing/cancel"))
         .header(HEADER_DEVICE_ID, device_id)
         .header(HEADER_TIMESTAMP, ts.to_string())
         .header(HEADER_SIGNATURE, &sig_b64)
@@ -200,8 +192,8 @@ pub async fn post_json<T: serde::Serialize + ?Sized>(
     let (ts, sig) = sign_request(signing_key, device_id);
     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
 
-    let response = CLIENT
-        .post(format!("http://{peer_addr}{path}"))
+    let response = crate::tls::paired()
+        .post(format!("https://{peer_addr}{path}"))
         .header(HEADER_DEVICE_ID, device_id)
         .header(HEADER_TIMESTAMP, ts.to_string())
         .header(HEADER_SIGNATURE, &sig_b64)

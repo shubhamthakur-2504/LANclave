@@ -83,6 +83,7 @@ pub fn advertise(device_id: &str, device_name: &str) -> Result<(), String> {
 
     let mut props = HashMap::new();
     props.insert("version".to_string(), "1.0.0".to_string());
+    props.insert("proto".to_string(), crate::presence::PROTOCOL_VERSION.to_string());
     props.insert("node_type".to_string(), "desktop".to_string());
     props.insert("device_type".to_string(), crate::presence::DEVICE_TYPE.to_string());
     props.insert("device_id".to_string(), device_id.to_owned());
@@ -178,10 +179,12 @@ pub async fn browse_peers(timeout_secs: u64) -> Result<Vec<DiscoveredPeer>, Stri
     // Because hotspots drop mDNS, we query the gateway instantly, then scan the local /24 subnet.
     let mut probe_tasks = Vec::new();
 
-    let client = reqwest::Client::builder()
+    // Nothing found by a sweep is trusted yet: it only has to prove the
+    // identity it claims. Pairing decides the rest.
+    let client = crate::tls::client_builder(crate::tls::Trust::Anyone)
         .timeout(Duration::from_millis(600))
         .build()
-        .unwrap_or_default();
+        .expect("valid reqwest client config");
     let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
 
     let mut subnets_to_scan = std::collections::HashSet::new();
@@ -285,7 +288,7 @@ async fn next_resolved(
 
 async fn probe_ip(client: reqwest::Client, ip: &str, semaphore: Arc<tokio::sync::Semaphore>) -> Option<DiscoveredPeer> {
     let _permit = semaphore.acquire().await.ok()?;
-    let url = format!("http://{ip}:8377/health");
+    let url = format!("https://{ip}:8377/health");
     
     let res = client.get(&url).send().await.ok()?;
     if res.status().is_success() || res.status() == 401 {

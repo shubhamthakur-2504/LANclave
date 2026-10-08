@@ -43,6 +43,10 @@ pub const SERVER_PORT: u16 = 8377;
 /// What we advertise ourselves as over `/health`.
 pub const DEVICE_TYPE: &str = "laptop";
 
+/// The wire protocol this build speaks. 2 is TLS-only; version 1 was plain
+/// HTTP and is refused.
+pub const PROTOCOL_VERSION: u32 = 2;
+
 pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -222,7 +226,7 @@ pub struct PresenceAck {
 // ---------------------------------------------------------------------------
 
 static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
-    reqwest::Client::builder()
+    crate::tls::client_builder(crate::tls::Trust::Paired)
         .timeout(HEARTBEAT_TIMEOUT)
         .build()
         .expect("valid reqwest client config")
@@ -313,7 +317,7 @@ impl PresenceContext {
         // 200 means paired on both sides and a 401 means paired here only.
         // A 404 is a peer from before the endpoint existed: fall back to the
         // open `/health`, which cannot tell the two apart.
-        let Some(res) = self.signed_get(&format!("http://{addr}/api/pairing/status")).await else {
+        let Some(res) = self.signed_get(&format!("https://{addr}/api/pairing/status")).await else {
             return false;
         };
         match res.status().as_u16() {
@@ -329,7 +333,7 @@ impl PresenceContext {
 
         // Signed so the peer can count this heartbeat as contact from us and
         // learn our current address. /health still answers unsigned probes.
-        let Some(res) = self.signed_get(&format!("http://{addr}/health")).await else {
+        let Some(res) = self.signed_get(&format!("https://{addr}/health")).await else {
             return false;
         };
         self.accept_identity(device_id, addr, res).await
@@ -376,7 +380,7 @@ impl PresenceContext {
 
     /// Announce ourselves to one peer and record whatever it answers with.
     pub async fn hello_one(&self, device_id: &str, addr: &str) -> bool {
-        let url = format!("http://{addr}/api/presence/hello");
+        let url = format!("https://{addr}/api/presence/hello");
         let (ts, sig) = self.sign_headers();
         let payload = HelloPayload {
             device_name: self.display_name(),
@@ -427,7 +431,7 @@ impl PresenceContext {
     pub async fn announce_bye(&self) {
         for (device_id, addr) in self.paired_targets() {
             let Some(addr) = addr else { continue };
-            let url = format!("http://{addr}/api/presence/bye");
+            let url = format!("https://{addr}/api/presence/bye");
             let (ts, sig) = self.sign_headers();
             let _ = CLIENT
                 .post(&url)

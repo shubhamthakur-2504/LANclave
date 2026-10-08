@@ -15,6 +15,7 @@ mod range;
 mod sandbox;
 mod server;
 mod settings;
+mod tls;
 mod transfers;
 mod tray;
 
@@ -66,6 +67,9 @@ pub fn run() {
 
     // Seed presence with the addresses we knew last run so paired peers can be
     // reached without a subnet sweep.
+    // Whose certificates the paired client accepts.
+    tls::set_paired_store(device_store.clone());
+
     if let Ok(store) = device_store.read() {
         for dev in store.devices.values() {
             if let Some(addr) = &dev.last_addr {

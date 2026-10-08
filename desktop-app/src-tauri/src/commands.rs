@@ -23,13 +23,6 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use tauri::{Manager, State};
 
-static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
-    reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .build()
-        .expect("valid reqwest client config")
-});
-
 use crate::settings::{AppSettings, save_settings};
 
 // ---------------------------------------------------------------------------
@@ -456,7 +449,7 @@ pub async fn list_peer_files(
     state: State<'_, CliState>,
     peer_addr: String,
 ) -> Result<Vec<FileEntry>, String> {
-    let url = format!("http://{peer_addr}/api/sandbox/files");
+    let url = format!("https://{peer_addr}/api/sandbox/files");
 
     let (ts, sig) = crate::pairing::sign_request(&state.identity_key, &state.device_id);
     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
@@ -468,7 +461,7 @@ pub async fn list_peer_files(
             tokio::time::sleep(std::time::Duration::from_millis(500 * (attempt as u64))).await;
         }
 
-        let result = CLIENT
+        let result = crate::tls::paired()
             .get(&url)
             .header(crate::pairing::HEADER_DEVICE_ID, &state.device_id)
             .header(crate::pairing::HEADER_TIMESTAMP, ts.to_string())
@@ -672,8 +665,8 @@ pub async fn initiate_pairing(
             .read()
             .map(|s| s.display_name.clone())
             .unwrap_or_default();
-        let res = CLIENT
-            .post(format!("http://{addr}/api/pairing/request"))
+        let res = crate::tls::open()
+            .post(format!("https://{addr}/api/pairing/request"))
             .timeout(std::time::Duration::from_secs(5))
             .json(&serde_json::json!({
                 "device_id": state.device_id,
