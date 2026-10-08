@@ -152,7 +152,7 @@ async fn presence_hello_handler(
         .settings
         .read()
         .map(|s| s.display_name.clone())
-        .unwrap_or_else(|_| "Desktop Workstation".to_string());
+        .unwrap_or_else(|_| crate::settings::default_display_name());
 
     Ok(axum::Json(crate::presence::PresenceAck {
         status: "ok".to_string(),
@@ -208,7 +208,7 @@ async fn pairing_status_handler(
         .settings
         .read()
         .map(|s| s.display_name.clone())
-        .unwrap_or_else(|_| "Desktop Workstation".to_string());
+        .unwrap_or_else(|_| crate::settings::default_display_name());
 
     Ok(axum::Json(serde_json::json!({
         "paired": true,
@@ -364,7 +364,7 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
                     .settings
                     .read()
                     .map(|s| s.display_name.clone())
-                    .unwrap_or_else(|_| "Desktop Workstation".to_string());
+                    .unwrap_or_else(|_| crate::settings::default_display_name());
 
                 axum::Json(serde_json::json!({
                     "status": "ok",

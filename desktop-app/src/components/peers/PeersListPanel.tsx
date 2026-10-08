@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { FolderOpen, HelpCircle, Laptop, Send, Smartphone, Tablet } from "lucide-react";
-import { colorForDevice, deviceKind, initialForDevice } from "../../lib/identity";
+import { colorForDevice, deviceKind, deviceTag, initialForDevice } from "../../lib/identity";
 import { useTransfers } from "../../contexts/TransferContext";
 import type { PeerInfo, Transfer } from "../../types";
 import { useToast } from "../ui/Toast";
@@ -171,6 +171,9 @@ function PeerRow({
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium text-content">
             {peer.device_name || `${peer.device_id.substring(0, 8)}…`}
+          </span>
+          <span className="shrink-0 font-mono text-xs text-content-muted" title="Short tag from this device's id">
+            {deviceTag(peer.device_id)}
           </span>
           {peer.auto_accept && !peer.untrusted && (
             <span

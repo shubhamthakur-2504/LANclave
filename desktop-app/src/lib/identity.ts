@@ -23,6 +23,15 @@ const PALETTE = [
   "#2DD4BF",
 ];
 
+/**
+ * A short tag from the device id, shown after the name ("Galaxy A14 · 7KQ2")
+ * so two devices with the same name can still be told apart, and so people
+ * can say which card to pick. Kept in step with mobile's `deviceTag()`.
+ */
+export function deviceTag(deviceId: string): string {
+  return deviceId.replace(/[^A-Za-z0-9]/g, "").slice(0, 4).toUpperCase();
+}
+
 export function colorForDevice(deviceId: string): string {
   let hash = 0;
   for (let i = 0; i < deviceId.length; i++) {

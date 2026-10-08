@@ -244,7 +244,7 @@ impl PresenceContext {
         self.settings
             .read()
             .map(|s| s.display_name.clone())
-            .unwrap_or_else(|_| "Desktop Workstation".to_string())
+            .unwrap_or_else(|_| crate::settings::default_display_name())
     }
 
     /// Paired peers as `(device_id, last_known_addr)`.

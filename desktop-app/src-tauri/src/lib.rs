@@ -185,6 +185,7 @@ pub fn run() {
             commands::take_pairing_request,
             commands::unpair_peer,
             // Settings
+            commands::get_device_id,
             commands::get_settings,
             commands::update_settings,
             commands::pick_directory,

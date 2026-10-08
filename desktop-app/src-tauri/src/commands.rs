@@ -891,6 +891,12 @@ pub async fn get_paired_peers(
 // Settings
 // ---------------------------------------------------------------------------
 
+/// This device's id, so the page can show the tag others see beside its name.
+#[tauri::command]
+pub fn get_device_id(state: State<'_, CliState>) -> String {
+    state.device_id.clone()
+}
+
 #[tauri::command]
 pub async fn get_settings(state: State<'_, CliState>) -> Result<AppSettings, String> {
     let settings = state.settings.read().map_err(|e| e.to_string())?;
