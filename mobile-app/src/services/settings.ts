@@ -1,3 +1,4 @@
+import * as Device from 'expo-device';
 import * as SecureStore from 'expo-secure-store';
 import { Directory, File, Paths } from 'expo-file-system';
 
@@ -63,11 +64,31 @@ export function isBuiltInSandbox(path: string): boolean {
   return sameDir(path, builtInSandboxUri());
 }
 
+/** What every phone was called before names defaulted to the device's. */
+const LEGACY_DEFAULT_NAME = 'Mobile Device';
+
+/**
+ * The name this phone goes by until the user picks one: the name set in
+ * Android's settings, else the model, which is what its owner knows it as.
+ */
+export function defaultDisplayName(): string {
+  return Device.deviceName?.trim() || Device.modelName?.trim() || 'Phone';
+}
+
+/** Whether `name` was chosen by the user, as opposed to never set. */
+function isChosenName(name: string | undefined): boolean {
+  const trimmed = name?.trim();
+  return !!trimmed && trimmed !== LEGACY_DEFAULT_NAME;
+}
+
 export async function getSettings(): Promise<AppSettings> {
   try {
     const data = await SecureStore.getItemAsync(SETTINGS_KEY);
     if (data) {
       const saved = JSON.parse(data) as AppSettings;
+      if (!isChosenName(saved.displayName)) {
+        saved.displayName = defaultDisplayName();
+      }
       // Saved while the sandbox was still the private folder's root.
       if (sameDir(saved.sandboxPath, Paths.document.uri)) {
         saved.sandboxPath = builtInSandboxUri();
@@ -80,7 +101,7 @@ export async function getSettings(): Promise<AppSettings> {
 
   // Default settings
   return {
-    displayName: 'Mobile Device',
+    displayName: defaultDisplayName(),
     sandboxPath: builtInSandboxUri(),
     sandboxLabel: 'Internal Sandbox',
   };

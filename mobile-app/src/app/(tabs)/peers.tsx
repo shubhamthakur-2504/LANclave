@@ -15,7 +15,7 @@ import * as DocumentPicker from "expo-document-picker";
 
 import { C, idColor, short } from "@/constants/colors";
 import { Icon } from "@/components/Icon";
-import { deviceKind, initialForDevice, KIND_ICON } from "@/constants/device";
+import { deviceKind, deviceTag, initialForDevice, KIND_ICON } from "@/constants/device";
 import {
   clearPendingShares,
   collectIncomingShares,
@@ -321,7 +321,7 @@ export default function PairedPeersScreen() {
                 <View style={styles.info}>
                   <Text style={styles.name}>{short(item.name)}</Text>
                   <Text style={styles.ip}>
-                    {item.ip}:{item.port}
+                    {deviceTag(item.id)} · {item.ip}:{item.port}
                   </Text>
                   {autoAccept.has(item.id) && !item.untrusted && (
                     <Text style={styles.autoAcceptNote}>Accepts files without asking</Text>

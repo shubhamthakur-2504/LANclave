@@ -33,6 +33,15 @@ export const KIND_ICON: Record<DeviceKind, IconName> = {
 };
 
 /** Initial for an avatar, or null when there is no usable name. */
+/**
+ * A short tag from the device id, shown after the name ("Galaxy A14 · 7KQ2")
+ * so two devices with the same name can still be told apart, and so people
+ * can say which card to pick. Kept in step with the desktop's `deviceTag()`.
+ */
+export function deviceTag(deviceId: string): string {
+  return deviceId.replace(/[^A-Za-z0-9]/g, "").slice(0, 4).toUpperCase();
+}
+
 export function initialForDevice(deviceName?: string | null): string | null {
   const trimmed = deviceName?.trim();
   if (!trimmed) return null;

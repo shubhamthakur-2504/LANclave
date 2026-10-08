@@ -27,6 +27,7 @@ import {
   waitPhrase,
 } from "@/services/pairing";
 import ExpoNativeServerModule from "../../../modules/expo-native-server/src/ExpoNativeServerModule";
+import { deviceTag } from "@/constants/device";
 import { getSettings } from "@/services/settings";
 import { rescanPeer } from "@/services/presence";
 import { Icon } from "@/components/Icon";
@@ -68,6 +69,8 @@ export default function ScanScreen() {
   const [pairedIds, setPairedIds] = useState<Set<string>>(new Set());
   /** Our own name, so the pairing sheet can show both ends of the pair. */
   const [selfName, setSelfName] = useState("This phone");
+  /** The short tag other devices show beside this phone's name. */
+  const [selfTag, setSelfTag] = useState("");
 
   // Refresh paired IDs every time this screen gains focus
   useFocusEffect(
@@ -77,6 +80,9 @@ export default function ScanScreen() {
       );
       getSettings()
         .then((s) => setSelfName(s.displayName || "This phone"))
+        .catch(() => {});
+      getOrCreateDeviceIdentity()
+        .then((identity) => setSelfTag(deviceTag(identity.deviceId)))
         .catch(() => {});
     }, []),
   );
@@ -259,6 +265,10 @@ export default function ScanScreen() {
               <Text style={styles.subtitle}>
                 Discover nearby LANclave devices on local network
               </Text>
+              <Text style={styles.subtitle}>
+                You appear as <Text style={styles.selfName}>{selfName}</Text>
+                {selfTag ? ` · ${selfTag}` : ""}
+              </Text>
             </View>
             <Pressable
               onPress={scan}
@@ -383,6 +393,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   subtitle: { marginTop: 4, fontSize: 13, color: C.contentMuted },
+  selfName: { color: C.content, fontWeight: "600" },
 
   divider: {
     height: 1,

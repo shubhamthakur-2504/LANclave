@@ -7,7 +7,7 @@ import Animated, {
 import { DiscoveredPeer } from "@/hooks/use-peer-discovery";
 import { C, idColor, short } from "@/constants/colors";
 import { Icon } from "@/components/Icon";
-import { deviceKind, initialForDevice, KIND_ICON } from "@/constants/device";
+import { deviceKind, deviceTag, initialForDevice, KIND_ICON } from "@/constants/device";
 
 export interface PeerCardProps {
   peer: DiscoveredPeer;
@@ -53,7 +53,7 @@ export function PeerCard({
       {/* Identity */}
       <Text style={styles.name}>{short(peer.name)}</Text>
       <Text style={styles.ip}>
-        {peer.ip}:{peer.port}
+        {deviceTag(peer.id)} · {peer.ip}:{peer.port}
       </Text>
 
       {/* Action */}
