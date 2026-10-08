@@ -183,7 +183,11 @@ function PeerRow({
               Auto-accept
             </span>
           )}
-          {peer.untrusted ? (
+          {peer.needs_update ? (
+            <span className="shrink-0 text-[10px] uppercase tracking-wide text-warn">
+              Needs update
+            </span>
+          ) : peer.untrusted ? (
             <span className="shrink-0 text-[10px] uppercase tracking-wide text-warn">
               Not paired there
             </span>
@@ -196,7 +200,11 @@ function PeerRow({
           )}
         </div>
 
-        {peer.untrusted ? (
+        {peer.needs_update ? (
+          <p className="truncate text-xs text-content-faint">
+            It runs an older LANclave that does not encrypt. Update it there to connect.
+          </p>
+        ) : peer.untrusted ? (
           <p className="truncate text-xs text-content-faint">
             It rejected the pairing or unpaired this computer. Remove it, then pair again.
           </p>
@@ -258,7 +266,7 @@ function PeerRow({
             Open
           </button>
         )}
-        {peer.paired && !peer.untrusted && !isOnline && onRescan && (
+        {peer.paired && !peer.untrusted && !peer.needs_update && !isOnline && onRescan && (
           <button
             onClick={handleRescan}
             disabled={retrying}
@@ -267,7 +275,7 @@ function PeerRow({
             {retrying ? "Finding…" : "Retry"}
           </button>
         )}
-        {!peer.paired && (
+        {!peer.paired && !peer.needs_update && (
           <button
             onClick={onConnect}
             disabled={!isOnline}

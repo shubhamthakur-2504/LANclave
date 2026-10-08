@@ -93,6 +93,9 @@ pub struct PeerInfo {
     /// Its offers are taken without asking.
     #[serde(default)]
     pub auto_accept: bool,
+    /// Seen on the network, but running a version this one cannot talk to.
+    #[serde(default)]
+    pub needs_update: bool,
 }
 
 #[derive(Serialize)]
@@ -195,8 +198,15 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
             // Use live details if we found them, otherwise leave addr empty
             // (the peer is offline).
             let live = live_map.remove(&d.device_id);
+            let needs_update = live.as_ref().is_some_and(|p| p.needs_update);
             PeerInfo {
-                addr: live.as_ref().map(|p| p.addr.clone()).unwrap_or_default(),
+                // An outdated peer has an address but cannot be reached on
+                // it; an address here means "online" to everything else.
+                addr: live
+                    .as_ref()
+                    .filter(|p| !p.needs_update)
+                    .map(|p| p.addr.clone())
+                    .unwrap_or_default(),
                 device_id: d.device_id.clone(),
                 device_name: live
                     .as_ref()
@@ -210,6 +220,7 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
                 paired: true,
                 untrusted: state.presence.is_untrusted(&d.device_id),
                 auto_accept: d.auto_accept,
+                needs_update,
             }
         })
         .collect();
@@ -229,13 +240,14 @@ pub async fn discover_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>,
     // Add any live-discovered peers that are NOT already in the paired store
     for (id, p) in live_map {
         peers.push(PeerInfo {
-            addr: p.addr,
+            addr: if p.needs_update { String::new() } else { p.addr },
             device_id: id,
             device_name: Some(p.device_name),
             device_type: p.device_type,
             paired: false,
             untrusted: false,
             auto_accept: false,
+            needs_update: p.needs_update,
         });
     }
 
@@ -390,6 +402,7 @@ pub fn list_peers(state: State<'_, CliState>) -> Result<Vec<PeerInfo>, String> {
                 paired: true,
                 untrusted: pres.as_ref().map(|p| p.untrusted).unwrap_or(false),
                 auto_accept: d.auto_accept,
+                needs_update: false,
             }
         })
         .collect())

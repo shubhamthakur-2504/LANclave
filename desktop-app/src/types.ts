@@ -17,6 +17,8 @@ export interface PeerInfo {
   untrusted?: boolean;
   /** Its offers are taken without asking. */
   auto_accept?: boolean;
+  /** Seen on the network, but running a version this one cannot talk to. */
+  needs_update?: boolean;
 }
 
 export interface FileEntry {

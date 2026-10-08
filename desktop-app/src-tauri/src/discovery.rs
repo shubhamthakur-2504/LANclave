@@ -26,6 +26,9 @@ pub struct DiscoveredPeer {
     pub device_id: String,
     pub device_name: String,
     pub device_type: Option<String>,
+    /// Runs a version that only speaks plain HTTP, so it can be seen (it
+    /// still advertises itself) but not talked to.
+    pub needs_update: bool,
 }
 
 const SERVICE_TYPE: &str = "_lanclave-portal._tcp.local.";
@@ -250,7 +253,7 @@ pub async fn resolve_peer_addr(device_id: &str) -> Option<String> {
     let mut found = None;
 
     while let Some(peer) = next_resolved(&receiver, deadline.saturating_sub(start.elapsed())).await {
-        if peer.device_id == device_id {
+        if peer.device_id == device_id && !peer.needs_update {
             found = Some(peer.addr);
             break;
         }
@@ -299,6 +302,8 @@ async fn probe_ip(client: reqwest::Client, ip: &str, semaphore: Arc<tokio::sync:
                     device_id: body.device_id,
                     device_name: body.device_name,
                     device_type: body.device_type,
+                    // It answered over TLS, so it is current.
+                    needs_update: false,
                 });
             }
         }
@@ -324,11 +329,18 @@ fn parse_peer(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer> {
         .or_else(|| info.get_property_val_str("node_type"))
         .map(|s| s.to_owned());
 
+    // Version 1 advertised no `proto` at all.
+    let proto = info
+        .get_property_val_str("proto")
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(1);
+
     Some(DiscoveredPeer {
         addr,
         device_id,
         device_name,
         device_type,
+        needs_update: proto < crate::presence::PROTOCOL_VERSION,
     })
 }
 
