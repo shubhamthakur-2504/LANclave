@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useToast } from "../ui/Toast";
 
 interface AppSettings {
   display_name: string;
@@ -11,6 +12,7 @@ interface AppSettings {
 export function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [saving, setSaving] = useState(false);
+  const toast = useToast();
 
   useEffect(() => {
     invoke<AppSettings>("get_settings")
@@ -21,17 +23,13 @@ export function SettingsPage() {
   const handleSave = async (newSettings: AppSettings) => {
     setSaving(true);
     try {
+      // Applies at once: the running server reads settings live, and a new
+      // name is re-announced to the network by the backend.
       await invoke("update_settings", { newSettings });
       setSettings(newSettings);
-      
-      // If server is currently running, restart it to apply new settings
-      const isRunning = await invoke<boolean>("is_server_running");
-      if (isRunning) {
-        await invoke("start_server");
-      }
     } catch (e) {
       console.error("Failed to save settings:", e);
-      alert("Failed to save settings");
+      toast.error(e);
     } finally {
       setSaving(false);
     }

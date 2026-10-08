@@ -1,7 +1,6 @@
 use mdns_sd::{DaemonEvent, ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -65,84 +64,68 @@ pub fn mdns_tag(device_id: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Starts an mDNS service broadcaster on a background thread and keeps it
-/// alive for the lifetime of the process (or until the returned shutdown
-/// flag is set).
+/// The instance name this device is registered under: `LANclave-<tag>`.
 ///
-/// The service advertises our `device_id` in the TXT record so that peers
-/// who browse the network can pair with us by identifier.
-pub fn start_mdns_broadcast(device_id: &str, device_name: &str) -> Arc<AtomicBool> {
-    let shutdown = Arc::new(AtomicBool::new(false));
+/// Instance and host names must be unique on the network: with a fixed name,
+/// two desktops advertised the same service and host, and mDNS treated them
+/// as one device.
+fn mdns_fullname(device_id: &str) -> String {
+    format!("LANclave-{}.{SERVICE_TYPE}", mdns_tag(device_id))
+}
 
-    thread::spawn({
-        let shutdown = shutdown.clone();
-        let device_id = device_id.to_owned();
-        let device_name = device_name.to_owned();
-        move || {
-            let mdns = match shared_daemon() {
-                Ok(d) => d,
-                Err(e) => {
-                    eprintln!("[lanclave] {e}");
-                    return;
-                }
-            };
+/// Advertise this device over mDNS, with `device_id` in the TXT record so
+/// peers browsing the network can pair with it by identifier.
+///
+/// Calling it again replaces the record, which is how a new display name
+/// reaches the network without the server restarting.
+pub fn advertise(device_id: &str, device_name: &str) -> Result<(), String> {
+    let mdns = shared_daemon()?;
 
-            let mut props = HashMap::new();
-            props.insert("version".to_string(), "1.0.0".to_string());
-            props.insert("node_type".to_string(), "desktop".to_string());
-            props.insert("device_type".to_string(), crate::presence::DEVICE_TYPE.to_string());
-            props.insert("device_id".to_string(), device_id.clone());
-            props.insert("device_name".to_string(), device_name);
+    let mut props = HashMap::new();
+    props.insert("version".to_string(), "1.0.0".to_string());
+    props.insert("node_type".to_string(), "desktop".to_string());
+    props.insert("device_type".to_string(), crate::presence::DEVICE_TYPE.to_string());
+    props.insert("device_id".to_string(), device_id.to_owned());
+    props.insert("device_name".to_string(), device_name.to_owned());
 
-            // Instance and host names must be unique on the network: with a
-            // fixed name, two desktops advertised the same service and host,
-            // and mDNS treated them as one device.
-            let tag = mdns_tag(&device_id);
-            let instance = format!("LANclave-{tag}");
-            let host = format!("lanclave-{tag}.local.");
+    let tag = mdns_tag(device_id);
+    let service_info = ServiceInfo::new(
+        SERVICE_TYPE,
+        &format!("LANclave-{tag}"),
+        &format!("lanclave-{tag}.local."),
+        "",
+        8377u16,
+        props,
+    )
+    .map_err(|e| format!("Failed to build ServiceInfo: {e}"))?
+    .enable_addr_auto();
 
-            let service_info = match ServiceInfo::new(
-                SERVICE_TYPE,
-                &instance,
-                &host,
-                "",
-                8377u16,
-                props,
-            ) {
-                Ok(info) => info,
-                Err(e) => {
-                    eprintln!("[lanclave] Failed to build ServiceInfo: {e}");
-                    return;
+    mdns.register(service_info)
+        .map_err(|e| format!("Failed to register mDNS service: {e}"))?;
+    log_daemon_errors(mdns);
+    Ok(())
+}
+
+/// Withdraw the advertisement, so peers stop listing this device.
+pub fn stop_advertising(device_id: &str) {
+    if let Ok(mdns) = shared_daemon() {
+        let _ = mdns.unregister(&mdns_fullname(device_id));
+    }
+}
+
+/// Print the daemon's errors, from one thread for the life of the process.
+fn log_daemon_errors(mdns: &'static ServiceDaemon) {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        let Ok(monitor) = mdns.monitor() else { return };
+        thread::spawn(move || {
+            while let Ok(event) = monitor.recv() {
+                if let DaemonEvent::Error(e) = event {
+                    eprintln!("[lanclave] mDNS daemon error: {e}");
                 }
             }
-            .enable_addr_auto();
-
-            if let Err(e) = mdns.register(service_info) {
-                eprintln!("[lanclave] Failed to register mDNS service: {e}");
-                return;
-            }
-
-            eprintln!("[lanclave] mDNS broadcast active: {SERVICE_TYPE} port 8377");
-
-            let error_monitor = mdns.monitor().expect("valid monitor receiver");
-            thread::spawn(move || {
-                while let Ok(event) = error_monitor.recv() {
-                    if let DaemonEvent::Error(e) = event {
-                        eprintln!("[lanclave] mDNS daemon error: {e}");
-                    }
-                }
-            });
-
-            while !shutdown.load(Ordering::Relaxed) {
-                thread::sleep(Duration::from_secs(5));
-            }
-
-            let _ = mdns.unregister(SERVICE_TYPE);
-            eprintln!("[lanclave] mDNS broadcast shutting down.");
-        }
+        });
     });
-
-    shutdown
 }
 
 /// Browse the LAN for other LANclave peers advertising

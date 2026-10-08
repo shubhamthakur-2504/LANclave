@@ -906,7 +906,17 @@ pub async fn update_settings(
     save_settings(&state.app_data_dir, &new_settings)?;
 
     // Update active settings
-    *state.settings.write().map_err(|e| e.to_string())? = new_settings;
+    let renamed = {
+        let mut settings = state.settings.write().map_err(|e| e.to_string())?;
+        let renamed = settings.display_name != new_settings.display_name;
+        *settings = new_settings.clone();
+        renamed
+    };
+    // Everything else is read live; the mDNS record is the one place the
+    // name was copied to when the server started.
+    if renamed {
+        state.server_controller.readvertise(&new_settings.display_name);
+    }
     // A higher download limit starts waiting downloads now.
     transfers.pump();
     Ok(())

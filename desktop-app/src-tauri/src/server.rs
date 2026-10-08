@@ -454,14 +454,15 @@ impl ServerHandle {
 /// it internally.
 pub struct ServerController {
     handle: Mutex<Option<ServerHandle>>,
-    mdns_shutdown: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    /// The device id advertised over mDNS while the server runs.
+    advertised: Mutex<Option<String>>,
 }
 
 impl ServerController {
     pub fn new() -> Self {
         Self {
             handle: Mutex::new(None),
-            mdns_shutdown: Mutex::new(None),
+            advertised: Mutex::new(None),
         }
     }
 
@@ -511,18 +512,32 @@ impl ServerController {
         *self.handle.lock().unwrap() = Some(handle);
 
         let device_name = state.settings.read().unwrap().display_name.clone();
-        let mdns_flag = crate::discovery::start_mdns_broadcast(&state.device_id, &device_name);
-        *self.mdns_shutdown.lock().unwrap() = Some(mdns_flag);
+        // Discovery falls back to the subnet sweep; nothing else needs this.
+        if let Err(e) = crate::discovery::advertise(&state.device_id, &device_name) {
+            eprintln!("[lanclave] {e}");
+        }
+        *self.advertised.lock().unwrap() = Some(state.device_id.clone());
 
         Ok(())
+    }
+
+    /// Advertise under a new display name. The server keeps running: only
+    /// the mDNS record carries the name, `/health` reads it live.
+    pub fn readvertise(&self, device_name: &str) {
+        let Some(device_id) = self.advertised.lock().unwrap().clone() else {
+            return;
+        };
+        if let Err(e) = crate::discovery::advertise(&device_id, device_name) {
+            eprintln!("[lanclave] {e}");
+        }
     }
 
     /// Stop the HTTP listener gracefully.
     ///
     /// Returns [`ServerError::NotRunning`] if no server is active.
     pub fn stop(&self) -> Result<(), ServerError> {
-        if let Some(flag) = self.mdns_shutdown.lock().unwrap().take() {
-            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(device_id) = self.advertised.lock().unwrap().take() {
+            crate::discovery::stop_advertising(&device_id);
         }
 
         let mut guard = self.handle.lock().unwrap();
