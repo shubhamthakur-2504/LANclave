@@ -464,6 +464,40 @@ mod tests {
         assert!(Trust::Anyone.allows(&stranger.verifying_key()));
     }
 
+    /// RFC 8032, section 7.1, TEST 1: a seed and its public key. The phone's
+    /// tests (`TlsTest.kt`) use the same identity.
+    const SEED: &str = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+    const DEVICE: &str = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+
+    fn unhex(hex: &str) -> Vec<u8> {
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// Prints a certificate for the phone's own cross-check; not an assertion.
+    #[test]
+    fn print_a_certificate_for_the_phone_tests() {
+        let seed: [u8; 32] = unhex(SEED).try_into().unwrap();
+        let (cert, _) = generate(&SigningKey::from_bytes(&seed)).unwrap();
+        let hex: String = cert.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+        println!("DESKTOP_CERTIFICATE={hex}");
+    }
+
+    /// A certificate made by the phone (`Tls.kt`) for the identity above.
+    /// The phone writes its certificate by hand, so check both that the
+    /// claim in it holds and that the TLS handshake's own parser reads it.
+    const PHONE_CERTIFICATE: &str =
+        "3082019130820137a0030201020210703922e00bc5489129ce15edac696d63300a06082a8648ce3d04030230133111300f06035504030c084c414e636c617665301e170d3230303130313030303030305a170d3439313233313233353935395a30133111300f06035504030c084c414e636c6176653059301306072a8648ce3d020106082a8648ce3d030107034200044c1ba43fcba39fb0f94c2b9bc290e008bb137c3d503080b806c8d7f9afad65ff50e2261504b9ef387b69da6b765815a8768829c6dbb552465f2aa94df1d2caeda36d306b306906056983ffa5290460d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511aabdd90d0c4947e7618b9b74b8a4fec2961a1c42c7f09b0e1860ccbdd00b4b2cc4fb9aa7552b46576734cd6b901150bc4b0597d278a99332b2370b8a6c2619209300a06082a8648ce3d0403020348003045022007fe864f174f04bd171b499713418c65fc1d11ceb947cb22eb066db22af61522022100ba628aff68c3910cc0499a5b6134d3cbd7457c350d4b2f320ad7ce76b4f1e701";
+
+    #[test]
+    fn a_phone_certificate_is_understood() {
+        let cert = CertificateDer::from(unhex(PHONE_CERTIFICATE));
+        assert_eq!(attested_device(cert.as_ref()).unwrap().as_bytes().as_slice(), unhex(DEVICE));
+        assert!(webpki::EndEntityCert::try_from(&cert).is_ok(), "rustls cannot parse the phone's certificate");
+    }
+
     /// A TLS server for `device` on a free port, answering `GET /` with "ok".
     async fn serve_as(device: &SigningKey) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

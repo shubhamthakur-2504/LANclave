@@ -55,4 +55,6 @@ uuid = { version = "1.24.1", features = ["v4"] }
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+# Reads a certificate the way the TLS handshake will.
+rustls-webpki = "0.103"
 
