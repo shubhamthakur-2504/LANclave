@@ -18,14 +18,35 @@ const PORT = 8377;
 
 let publisher: Zeroconf | null = null;
 let publishedName: string | null = null;
+/** The display name in the published record, to notice a rename. */
+let publishedDeviceName: string | null = null;
 
 /** DNS-label-safe tag from the device id; matches the desktop's `mdns_tag`. */
 function mdnsTag(deviceId: string): string {
   return deviceId.replace(/[^A-Za-z0-9]/g, "").slice(0, 12).toLowerCase();
 }
 
+/** How long Android is given to withdraw a record before it is published again. */
+const REPUBLISH_DELAY_MS = 1000;
+let republishTimer: ReturnType<typeof setTimeout> | null = null;
+
 function advertise(deviceId: string, deviceName: string): void {
-  if (publishedName) return;
+  if (publishedName && publishedDeviceName === deviceName) return;
+  if (publishedName) {
+    // Renamed. The record carries the name, so it has to be published
+    // afresh, and under the same service name: wait for the old one to go,
+    // or Android registers the new one as "LANclave-… (2)".
+    stopAdvertising();
+    republishTimer = setTimeout(() => {
+      republishTimer = null;
+      if (serverDesiredOn) publish(deviceId, deviceName);
+    }, REPUBLISH_DELAY_MS);
+    return;
+  }
+  publish(deviceId, deviceName);
+}
+
+function publish(deviceId: string, deviceName: string): void {
   try {
     publisher = publisher ?? new Zeroconf();
     const name = `LANclave-${mdnsTag(deviceId)}`;
@@ -37,6 +58,7 @@ function advertise(deviceId: string, deviceName: string): void {
       device_name: deviceName,
     });
     publishedName = name;
+    publishedDeviceName = deviceName;
   } catch (err) {
     // Discovery falls back to the manual sweep; nothing else depends on this.
     console.warn("[server] mDNS advertise failed:", err);
@@ -44,6 +66,10 @@ function advertise(deviceId: string, deviceName: string): void {
 }
 
 function stopAdvertising(): void {
+  if (republishTimer) {
+    clearTimeout(republishTimer);
+    republishTimer = null;
+  }
   if (!publisher || !publishedName) return;
   try {
     publisher.unpublishService(publishedName);
@@ -51,6 +77,7 @@ function stopAdvertising(): void {
     // best effort
   }
   publishedName = null;
+  publishedDeviceName = null;
 }
 
 function startWatchdog(): void {
