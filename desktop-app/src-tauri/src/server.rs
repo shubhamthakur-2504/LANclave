@@ -145,6 +145,7 @@ async fn presence_hello_handler(
         .unwrap_or(crate::presence::SERVER_PORT);
 
     let addr = remote.map(|axum::Extension(ci)| std::net::SocketAddr::new(ci.0.ip(), port).to_string());
+    crate::presence::remember_name(&state.auth.store, state.auth.data_dir.as_deref(), &device_id, peer_name.as_deref());
     state.presence.mark_seen(&device_id, peer_name, addr);
     notify_presence(&state);
 

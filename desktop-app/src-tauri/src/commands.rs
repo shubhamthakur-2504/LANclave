@@ -424,6 +424,7 @@ pub async fn rescan_peer(
         device_id: state.device_id.clone(),
         identity_key: state.identity_key.clone(),
         app_handle: None,
+        app_data_dir: Some(state.app_data_dir.clone()),
     };
 
     if let Some(addr) = crate::discovery::resolve_peer_addr(&device_id).await {
@@ -896,6 +897,43 @@ pub async fn get_paired_peers(
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
+
+/// Who answers at a typed address, for pairing with a device the scan did
+/// not find. Over TLS, accepting any device that proves its identity: it is
+/// not paired yet, and comparing the codes decides whether to trust it.
+#[derive(Serialize)]
+pub struct IdentifiedPeer {
+    pub device_id: String,
+    pub device_name: Option<String>,
+    pub device_type: Option<String>,
+}
+
+#[tauri::command]
+pub async fn identify_peer(peer_addr: String) -> Result<Option<IdentifiedPeer>, String> {
+    let Some(addr) = normalize_peer_addr(&peer_addr) else {
+        return Ok(None);
+    };
+    let Ok(res) = crate::tls::open()
+        .get(format!("https://{addr}/health"))
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await
+    else {
+        return Ok(None);
+    };
+    let Ok(body) = res.json::<serde_json::Value>().await else {
+        return Ok(None);
+    };
+    if body.get("app").and_then(|v| v.as_str()) != Some("lanclave") {
+        return Ok(None);
+    }
+    let text = |key: &str| body.get(key).and_then(|v| v.as_str()).map(str::to_string);
+    Ok(text("device_id").map(|device_id| IdentifiedPeer {
+        device_id,
+        device_name: text("device_name"),
+        device_type: text("device_type"),
+    }))
+}
 
 /// This device's id, so the page can show the tag others see beside its name.
 #[tauri::command]

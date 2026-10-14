@@ -52,6 +52,8 @@ export default function ConnectionModal({
   const [loading, setLoading] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Who answered at a typed address: the id and name to pair with. */
+  const [resolved, setResolved] = useState<{ id: string; name?: string } | null>(null);
   // Latest `dismiss` for the Esc listener, which is registered once per open.
   const dismissRef = useRef<() => void>(() => {});
 
@@ -120,16 +122,14 @@ export default function ConnectionModal({
     }
 
     try {
-      // If device_id is missing, probe /health or check connection
+      // Typed address: ask who is there. The answer is kept for the confirm
+      // step, which needs the real device id, and the name to store.
       if (!devId) {
-        const res = await fetch(`http://${normalizedAddr}/health`, {
-          method: "GET",
-          signal: AbortSignal.timeout(2000),
-        });
-        if (res.ok) {
-          const body = await res.json();
-          if (body.device_id) devId = body.device_id;
-          if (body.device_name) devName = body.device_name;
+        const found = await api.identifyPeer(normalizedAddr);
+        if (found) {
+          devId = found.device_id;
+          devName = found.device_name ?? devName;
+          setResolved({ id: found.device_id, name: devName });
         }
       }
 
@@ -160,7 +160,11 @@ export default function ConnectionModal({
       let normalizedAddr = targetAddr.trim();
       if (!normalizedAddr.includes(":")) normalizedAddr += ":8377";
 
-      await api.confirmPairing(normalizedAddr, initialDeviceId || normalizedAddr, initialDeviceName);
+      await api.confirmPairing(
+        normalizedAddr,
+        initialDeviceId || resolved?.id || normalizedAddr,
+        initialDeviceName || resolved?.name,
+      );
       setConfirmed(true);
       onPaired();
       setTimeout(onClose, 1500);

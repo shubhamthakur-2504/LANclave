@@ -120,6 +120,24 @@ impl DeviceStore {
         Ok(())
     }
 
+    /// Record the name a paired peer goes by now. `true` when it changed.
+    ///
+    /// Names come from the peer itself (hello, heartbeat), so a rename there
+    /// shows here, and the last one known is still shown while it is offline.
+    pub fn set_peer_name(&mut self, device_id: &str, name: &str) -> bool {
+        let name = name.trim();
+        if name.is_empty() {
+            return false;
+        }
+        match self.devices.get_mut(device_id) {
+            Some(dev) if dev.device_name.as_deref() != Some(name) => {
+                dev.device_name = Some(name.to_string());
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Forget a peer. Returns whether it was paired.
     pub fn remove_peer(&mut self, device_id: &str) -> bool {
         self.devices.remove(device_id).is_some()
@@ -248,5 +266,26 @@ mod tests {
     fn get_peer_key_returns_none_for_unknown() {
         let store = DeviceStore::new();
         assert!(store.get_peer_key("ghost").is_none());
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+    use rand::rngs::OsRng;
+
+    #[test]
+    fn a_peer_keeps_the_last_name_it_reported() {
+        let key = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let id = crate::pairing::public_key_b64(&key);
+        let mut store = DeviceStore::new();
+        // Paired by typed address: no name known yet.
+        store.add_peer(id.clone(), &key.verifying_key(), None).unwrap();
+
+        assert!(store.set_peer_name(&id, "Galaxy A14"));
+        assert!(!store.set_peer_name(&id, "Galaxy A14"), "an unchanged name is not a change");
+        assert!(!store.set_peer_name(&id, "  "), "a blank name never replaces a real one");
+        assert_eq!(store.devices[&id].device_name.as_deref(), Some("Galaxy A14"));
+        assert!(!store.set_peer_name("not-paired", "x"));
     }
 }

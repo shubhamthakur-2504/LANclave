@@ -232,6 +232,25 @@ static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|
         .expect("valid reqwest client config")
 });
 
+/// Keep the name a paired peer reports in the paired list, saved, so it
+/// survives the peer going offline and the app restarting. Live presence
+/// only lasts while the app runs, and the name stored at pairing time could
+/// be missing (pairing by typed address) or out of date (renamed since).
+pub fn remember_name(
+    store: &RwLock<DeviceStore>,
+    data_dir: Option<&std::path::Path>,
+    device_id: &str,
+    name: Option<&str>,
+) {
+    let Some(name) = name else { return };
+    let Ok(mut store) = store.write() else { return };
+    if store.set_peer_name(device_id, name) {
+        if let Some(dir) = data_dir {
+            let _ = store.save(dir);
+        }
+    }
+}
+
 /// Everything the background presence tasks need.
 #[derive(Clone)]
 pub struct PresenceContext {
@@ -241,6 +260,8 @@ pub struct PresenceContext {
     pub device_id: String,
     pub identity_key: SigningKey,
     pub app_handle: Option<tauri::AppHandle>,
+    /// Where the paired list is saved, for names learned along the way.
+    pub app_data_dir: Option<std::path::PathBuf>,
 }
 
 impl PresenceContext {
@@ -371,6 +392,7 @@ impl PresenceContext {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        remember_name(&self.device_store, self.app_data_dir.as_deref(), device_id, name.as_deref());
         self.presence
             .mark_seen(device_id, name, Some(addr.to_string()));
         self.remember_addr(device_id, addr);
@@ -411,6 +433,7 @@ impl PresenceContext {
             .await
             .ok()
             .map(|ack| ack.device_name);
+        remember_name(&self.device_store, self.app_data_dir.as_deref(), device_id, name.as_deref());
         self.presence
             .mark_seen(device_id, name, Some(addr.to_string()));
         self.remember_addr(device_id, addr);

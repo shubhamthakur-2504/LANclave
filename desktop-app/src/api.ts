@@ -251,6 +251,13 @@ export async function unpairPeer(deviceId: string): Promise<void> {
   await invoke("unpair_peer", { deviceId });
 }
 
+/** Who answers at a typed address, if it is a LANclave device. */
+export async function identifyPeer(
+  peerAddr: string,
+): Promise<{ device_id: string; device_name?: string; device_type?: string } | null> {
+  return invoke("identify_peer", { peerAddr });
+}
+
 export async function confirmPairing(
   peerAddr: string,
   peerDeviceId: string,

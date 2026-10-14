@@ -85,6 +85,7 @@ pub fn run() {
         device_id: device_id.clone(),
         identity_key: identity_key.clone(),
         app_handle: None,
+        app_data_dir: Some(app_data_dir.clone()),
     };
 
     tauri::Builder::default()
@@ -189,6 +190,7 @@ pub fn run() {
             commands::take_pairing_request,
             commands::unpair_peer,
             // Settings
+            commands::identify_peer,
             commands::get_device_id,
             commands::get_settings,
             commands::update_settings,
