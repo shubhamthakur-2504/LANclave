@@ -196,6 +196,24 @@ class ExpoNativeServerModule : Module() {
       }
     }
 
+    // ---- Blocked devices --------------------------------------------------
+
+    /** Refuse every future pairing request from this device. */
+    Function("blockDevice") { deviceId: String, deviceName: String? ->
+      val context = appContext.reactContext ?: throw Exception("React context is null")
+      BlockList.shared(context).block(deviceId, deviceName)
+    }
+    Function("unblockDevice") { deviceId: String ->
+      val context = appContext.reactContext ?: throw Exception("React context is null")
+      BlockList.shared(context).unblock(deviceId)
+    }
+    Function("listBlocked") {
+      val context = appContext.reactContext ?: return@Function emptyList<Map<String, Any?>>()
+      BlockList.shared(context).list().map {
+        mapOf("deviceId" to it.deviceId, "deviceName" to it.deviceName, "blockedAtMs" to it.blockedAtMs.toDouble())
+      }
+    }
+
     Function("isRunning") {
       server?.isAlive == true
     }

@@ -41,6 +41,8 @@ export interface PairingModalProps {
   peerId?: string;
   onClose: () => void;
   onConfirm: () => void;
+  /** Reject and refuse this device from now on. Only for requests that came to us. */
+  onBlock?: () => void;
 }
 
 /** Group the six digits as `428 106`. */
@@ -60,6 +62,7 @@ export function PairingModal({
   selfName = "This phone",
   peerId,
   onClose,
+  onBlock,
   onConfirm,
 }: PairingModalProps) {
   return (
@@ -153,6 +156,17 @@ export function PairingModal({
                   )}
                 </Pressable>
               </View>
+              {onBlock && (
+                <Pressable
+                  onPress={onBlock}
+                  disabled={isSubmitting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Block this device and refuse its pairing requests"
+                  style={({ pressed }) => [styles.blockBtn, pressed && styles.btnPressed]}
+                >
+                  <Text style={styles.blockText}>Block this device</Text>
+                </Pressable>
+              )}
             </>
           )}
         </View>
@@ -263,6 +277,8 @@ const styles = StyleSheet.create({
   },
   confirmText: { fontSize: 13, fontWeight: "700", color: C.ok },
   btnPressed: { opacity: 0.75 },
+  blockBtn: { marginTop: 14, paddingVertical: 6 },
+  blockText: { fontSize: 12, color: C.contentMuted, textAlign: "center" },
   btnDisabled: { opacity: 0.6 },
 
   successWrap: { alignItems: "center", paddingVertical: 8 },

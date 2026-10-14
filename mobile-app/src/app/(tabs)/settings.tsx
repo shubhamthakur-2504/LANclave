@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useFocusEffect } from "expo-router";
 import {
   StatusBar,
   StyleSheet,
@@ -12,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StorageAccessFramework } from "expo-file-system/legacy";
 import { C } from "@/constants/colors";
+import { deviceTag } from "@/constants/device";
 import { AppSettings, builtInSandboxUri, getSettings, isBuiltInSandbox, saveSettings } from "@/services/settings";
 import { startServer, isServerRunning } from "@/services/server";
 import ExpoNativeServerModule from "../../../modules/expo-native-server/src/ExpoNativeServerModule";
@@ -29,6 +31,18 @@ export default function SettingsScreen() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [maxDownloads, setMaxDownloads] = useState<number | null>(readMaxDownloads);
+  const [blocked, setBlocked] = useState(readBlocked);
+  // A device can be blocked from the pairing prompt while this tab stays mounted.
+  useFocusEffect(useCallback(() => setBlocked(readBlocked()), []));
+
+  const unblock = (deviceId: string) => {
+    try {
+      ExpoNativeServerModule.unblockDevice(deviceId);
+    } catch {
+      // older native build
+    }
+    setBlocked(readBlocked());
+  };
   
   // Local state for the text input to show save/cancel buttons
   const [localDisplayName, setLocalDisplayName] = useState("");
@@ -197,6 +211,30 @@ export default function SettingsScreen() {
             </View>
           </View>
 
+          <View style={styles.section}>
+            <Text style={styles.label}>Blocked devices</Text>
+            <Text style={styles.hint}>Their requests to pair are refused without asking you.</Text>
+            {blocked.length === 0 ? (
+              <Text style={styles.hint}>No blocked devices.</Text>
+            ) : (
+              blocked.map((device) => (
+                <View key={device.deviceId} style={styles.blockedRow}>
+                  <Text style={styles.blockedName} numberOfLines={1}>
+                    {device.deviceName || "Unnamed device"} · {deviceTag(device.deviceId)}
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.btn, styles.btnSecondary]}
+                    onPress={() => unblock(device.deviceId)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Unblock ${device.deviceName || "this device"}`}
+                  >
+                    <Text style={styles.btnTextSecondary}>Unblock</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+          </View>
+
           {maxDownloads !== null && (
             <View style={styles.section}>
               <Text style={styles.label}>Downloads at once</Text>
@@ -227,6 +265,15 @@ export default function SettingsScreen() {
   );
 }
 
+/** Devices refused from pairing; empty off Android or on an older build. */
+function readBlocked() {
+  try {
+    return ExpoNativeServerModule.listBlocked();
+  } catch {
+    return [];
+  }
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.surface },
   safe: { flex: 1 },
@@ -248,6 +295,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
   },
+  blockedRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 8 },
+  blockedName: { flex: 1, fontSize: 14, color: C.content },
   section: {
     marginBottom: 32,
   },

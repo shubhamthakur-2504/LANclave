@@ -86,6 +86,18 @@ export function IncomingPairingHost() {
     setRequest(null);
   }, [request, succeeded]);
 
+  /** Reject, and refuse this device from now on. Undo in Settings. */
+  const block = useCallback(() => {
+    if (request) {
+      try {
+        ExpoNativeServerModule.blockDevice(request.deviceId, request.name || null);
+      } catch {
+        // older native build: still rejected below
+      }
+    }
+    reject();
+  }, [request, reject]);
+
   const confirm = useCallback(async () => {
     if (!request) return;
     setSubmitting(true);
@@ -124,6 +136,7 @@ export function IncomingPairingHost() {
       selfName={selfName}
       onClose={reject}
       onConfirm={confirm}
+      onBlock={block}
     />
   );
 }

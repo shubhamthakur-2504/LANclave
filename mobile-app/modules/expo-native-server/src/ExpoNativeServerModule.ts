@@ -140,6 +140,11 @@ declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
     signed: boolean,
     timeoutMs: number,
   ): Promise<{ status: number; body: string }>;
+  /** Refuse every future pairing request from this device. */
+  blockDevice(deviceId: string, deviceName: string | null): void;
+  /** `true` when it was blocked. */
+  unblockDevice(deviceId: string): boolean;
+  listBlocked(): { deviceId: string; deviceName: string | null; blockedAtMs: number }[];
   /** `/health` of each `ip:port` at once; the bodies of those that answered. */
   probeHealth(addrs: string[], timeoutMs: number): Promise<Record<string, string>>;
 }

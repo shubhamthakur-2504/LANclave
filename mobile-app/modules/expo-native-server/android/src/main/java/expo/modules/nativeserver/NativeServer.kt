@@ -234,6 +234,23 @@ class NativeServer(
             return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Invalid device id")
         }
 
+        // Signed by the device it names. Otherwise anyone could ask in a
+        // friend's name and get that friend muted by the cooldown, or blocked.
+        val signedBy = session.headers["x-lanclave-device-id"]
+        val ts = session.headers["x-lanclave-timestamp"]
+        val sig = session.headers["x-lanclave-signature"]
+        val fresh = ts?.toLongOrNull()?.let { kotlin.math.abs(System.currentTimeMillis() / 1000 - it) <= 30 } == true
+        val valid = signedBy == peerId && fresh && sig != null &&
+            try { verifyEd25519(peerId, ts!!, sig) } catch (_: Exception) { false }
+        if (!valid) {
+            return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Pairing requests must be signed")
+        }
+
+        // Blocked here: refused without putting anything on screen.
+        if (BlockList.shared(context).contains(peerId)) {
+            return newFixedLengthResponse(Response.Status.FORBIDDEN, "application/json", "{\"status\":\"blocked\"}")
+        }
+
         // Busy with another device's code, or this one was declined recently:
         // say so without putting anything on screen.
         when (val admit = PairingGuard.shared.admit(peerId, session.remoteIpAddress ?: "")) {

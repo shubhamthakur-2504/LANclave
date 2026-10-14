@@ -150,11 +150,11 @@ export default function ScanScreen() {
       // Ask the desktop to open its side of the ceremony. Bounded: without a
       // timeout an unreachable peer left the sheet up until the OS gave up.
       // Not paired yet, so any device that proves its identity is accepted;
-      // comparing the codes is what decides whether to trust it.
+      // comparing the codes is what decides whether to trust it. Signed, so
+      // it knows the request really is from this phone.
       peerFetch(`${peer.ip}:${peer.port}`, "/api/pairing/request", {
         method: "POST",
         anyone: true,
-        signed: false,
         body: {
           device_id: identity.deviceId,
           name: settings.displayName,
@@ -163,6 +163,10 @@ export default function ScanScreen() {
         timeoutMs: 5_000,
       })
         .then((res) => {
+          if (res.status === 403) {
+            giveUp("Not accepted", `${peer.name} is not accepting pairing requests from this phone.`);
+            return null;
+          }
           if (res.status === 409) {
             giveUp("Busy", `${peer.name} is pairing with another device right now. Try again in a moment.`);
             return null;
