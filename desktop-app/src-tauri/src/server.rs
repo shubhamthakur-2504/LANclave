@@ -49,6 +49,7 @@ pub struct PairingReqPayload {
 async fn pairing_request_handler(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     remote: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: axum::http::HeaderMap,
     axum::Json(body): axum::Json<PairingReqPayload>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
@@ -57,6 +58,19 @@ async fn pairing_request_handler(
     let Ok(peer_key) = crate::pairing::public_key_from_str(&body.device_id) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
+
+    // Signed by the device it names. Otherwise anyone could ask in a
+    // friend's name and get that friend muted by the cooldown, or blocked.
+    match crate::pairing::verify_caller_signature(&headers) {
+        Ok(caller) if caller == body.device_id => {}
+        _ => return StatusCode::UNAUTHORIZED.into_response(),
+    }
+
+    // Blocked here: refused without putting anything on screen.
+    if crate::pairing::blocklist().contains(&body.device_id) {
+        return (StatusCode::FORBIDDEN, axum::Json(serde_json::json!({ "status": "blocked" })))
+            .into_response();
+    }
 
     // Busy with another device's code, or this one was declined recently:
     // say so without putting anything on screen.
@@ -728,6 +742,58 @@ mod tests {
             )
             .body(axum::body::Body::empty())
             .unwrap()
+    }
+
+    /// A pairing request from `asker`'s id, signed by `signer` (or unsigned).
+    fn pairing_request(asker: &ed25519_dalek::SigningKey, signer: Option<&ed25519_dalek::SigningKey>) -> axum::http::Request<axum::body::Body> {
+        let asker_id = crate::pairing::public_key_b64(asker);
+        let body = serde_json::json!({ "device_id": asker_id, "name": "Asker" }).to_string();
+        let mut request = match signer {
+            Some(key) => signed("POST", "/api/pairing/request", key, &asker_id),
+            None => axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/pairing/request")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        };
+        request.headers_mut().insert(axum::http::header::CONTENT_TYPE, "application/json".parse().unwrap());
+        *request.body_mut() = axum::body::Body::from(body);
+        request
+    }
+
+    // Only the refusals are checked here: they all happen before the
+    // process-wide pairing guard, which a successful request would occupy.
+
+    #[tokio::test]
+    async fn an_unsigned_pairing_request_is_refused() {
+        use rand::rngs::OsRng;
+        use tower::ServiceExt;
+        let asker = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let (_state, app) = paired_router(&ed25519_dalek::SigningKey::generate(&mut OsRng));
+        let res = app.oneshot(pairing_request(&asker, None)).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn nobody_can_ask_to_pair_in_another_devices_name() {
+        use rand::rngs::OsRng;
+        use tower::ServiceExt;
+        let victim = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let impostor = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let (_state, app) = paired_router(&ed25519_dalek::SigningKey::generate(&mut OsRng));
+        let res = app.oneshot(pairing_request(&victim, Some(&impostor))).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn a_blocked_device_is_refused_before_anything_shows() {
+        use rand::rngs::OsRng;
+        use tower::ServiceExt;
+        let pest = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        crate::pairing::blocklist().block(&crate::pairing::public_key_b64(&pest), None);
+        let (_state, app) = paired_router(&ed25519_dalek::SigningKey::generate(&mut OsRng));
+        let res = app.oneshot(pairing_request(&pest, Some(&pest))).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

@@ -82,6 +82,14 @@ export default function ConnectionModal({
     onClose();
   };
 
+  /** Reject, and refuse this device from now on. Undo in Settings. */
+  const handleBlock = () => {
+    if (initialDeviceId) {
+      api.blockDevice(initialDeviceId, initialDeviceName).catch(() => {});
+    }
+    dismiss();
+  };
+
   // Esc closes the modal (U3.4). Registered before the early return so the
   // hook order stays stable across renders.
   useEffect(() => {
@@ -337,6 +345,17 @@ export default function ConnectionModal({
                   {loading ? "Confirming…" : "They match"}
                 </button>
               </div>
+              {/* Only for a request that came to us: blocking a device we
+                  asked ourselves would make no sense. */}
+              {initialFingerprint && initialDeviceId && (
+                <button
+                  onClick={handleBlock}
+                  disabled={loading}
+                  className="mt-3 w-full text-center text-xs text-content-faint transition-colors hover:text-danger disabled:opacity-40"
+                >
+                  Block this device — refuse its pairing requests from now on
+                </button>
+              )}
             </>
           )}
 

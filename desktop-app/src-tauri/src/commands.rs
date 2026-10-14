@@ -679,8 +679,16 @@ pub async fn initiate_pairing(
             .read()
             .map(|s| s.display_name.clone())
             .unwrap_or_default();
+        // Signed, so the other device knows the request really is ours.
+        let (ts, sig) = crate::pairing::sign_request(&state.identity_key, &state.device_id);
         let res = crate::tls::open()
             .post(format!("https://{addr}/api/pairing/request"))
+            .header(crate::pairing::HEADER_DEVICE_ID, &state.device_id)
+            .header(crate::pairing::HEADER_TIMESTAMP, ts.to_string())
+            .header(
+                crate::pairing::HEADER_SIGNATURE,
+                base64::engine::general_purpose::STANDARD.encode(sig.to_bytes()),
+            )
             .timeout(std::time::Duration::from_secs(5))
             .json(&serde_json::json!({
                 "device_id": state.device_id,
@@ -700,6 +708,9 @@ pub async fn initiate_pairing(
             reqwest::StatusCode::NOT_FOUND => {}
             reqwest::StatusCode::CONFLICT => {
                 return Err("That device is pairing with another device right now. Try again in a moment.".into());
+            }
+            reqwest::StatusCode::FORBIDDEN => {
+                return Err("That device is not accepting pairing requests from this computer.".into());
             }
             reqwest::StatusCode::TOO_MANY_REQUESTS => {
                 let secs = res
@@ -826,6 +837,23 @@ pub async fn cancel_pairing(
     client::transport::send_pairing_cancel(&addr, &state.device_id, &state.identity_key)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Refuse every future pairing request from this device. Used from the
+/// incoming pairing prompt, which also rejects the request in hand.
+#[tauri::command]
+pub fn block_device(device_id: String, device_name: Option<String>) {
+    crate::pairing::blocklist().block(&device_id, device_name);
+}
+
+#[tauri::command]
+pub fn unblock_device(device_id: String) -> bool {
+    crate::pairing::blocklist().unblock(&device_id)
+}
+
+#[tauri::command]
+pub fn list_blocked() -> Vec<crate::pairing::BlockedDevice> {
+    crate::pairing::blocklist().list()
 }
 
 /// Forget a paired peer here, and ask it to forget us too.

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { deviceTag } from "../../lib/identity";
 import { useToast } from "../ui/Toast";
+import * as api from "../../api";
 
 interface AppSettings {
   display_name: string;
@@ -12,7 +14,21 @@ interface AppSettings {
 export function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [saving, setSaving] = useState(false);
+  const [blocked, setBlocked] = useState<api.BlockedDevice[]>([]);
   const toast = useToast();
+
+  useEffect(() => {
+    api.listBlocked().then(setBlocked).catch(() => setBlocked([]));
+  }, []);
+
+  const handleUnblock = async (device: api.BlockedDevice) => {
+    try {
+      await api.unblockDevice(device.device_id);
+      setBlocked((list) => list.filter((d) => d.device_id !== device.device_id));
+    } catch (e) {
+      toast.error(e);
+    }
+  };
 
   useEffect(() => {
     invoke<AppSettings>("get_settings")
@@ -126,6 +142,35 @@ export function SettingsPage() {
               </option>
             ))}
           </select>
+        </section>
+
+        <section>
+          <label className="block text-lg font-semibold text-content mb-1">
+            Blocked devices
+          </label>
+          <p className="text-sm text-content-muted mb-3">
+            Their requests to pair are refused without asking you.
+          </p>
+          {blocked.length === 0 ? (
+            <p className="text-sm text-content-faint">No blocked devices.</p>
+          ) : (
+            <ul className="divide-y divide-border rounded-xl border border-border">
+              {blocked.map((device) => (
+                <li key={device.device_id} className="flex items-center gap-3 px-4 py-3">
+                  <span className="min-w-0 flex-1 truncate text-sm text-content">
+                    {device.device_name || "Unnamed device"}{" "}
+                    <span className="font-mono text-xs text-content-muted">{deviceTag(device.device_id)}</span>
+                  </span>
+                  <button
+                    onClick={() => handleUnblock(device)}
+                    className="rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active"
+                  >
+                    Unblock
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       </div>
     </div>

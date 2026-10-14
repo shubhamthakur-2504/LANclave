@@ -251,6 +251,26 @@ export async function unpairPeer(deviceId: string): Promise<void> {
   await invoke("unpair_peer", { deviceId });
 }
 
+export interface BlockedDevice {
+  device_id: string;
+  device_name?: string | null;
+  /** Unix ms. */
+  blocked_at: number;
+}
+
+/** Refuse every future pairing request from this device. */
+export async function blockDevice(deviceId: string, deviceName?: string): Promise<void> {
+  await invoke("block_device", { deviceId, deviceName: deviceName ?? null });
+}
+
+export async function unblockDevice(deviceId: string): Promise<boolean> {
+  return invoke("unblock_device", { deviceId });
+}
+
+export async function listBlocked(): Promise<BlockedDevice[]> {
+  return invoke("list_blocked");
+}
+
 /** Who answers at a typed address, if it is a LANclave device. */
 export async function identifyPeer(
   peerAddr: string,

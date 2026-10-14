@@ -67,6 +67,7 @@ pub fn run() {
 
     // Seed presence with the addresses we knew last run so paired peers can be
     // reached without a subnet sweep.
+    pairing::init_blocklist(&app_data_dir);
     // Whose certificates the paired client accepts.
     tls::set_paired_store(device_store.clone());
 
@@ -191,6 +192,9 @@ pub fn run() {
             commands::unpair_peer,
             // Settings
             commands::identify_peer,
+            commands::block_device,
+            commands::unblock_device,
+            commands::list_blocked,
             commands::get_device_id,
             commands::get_settings,
             commands::update_settings,

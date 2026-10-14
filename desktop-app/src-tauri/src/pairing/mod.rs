@@ -3,10 +3,12 @@ mod store;
 mod handshake;
 mod middleware;
 mod guard;
+mod blocklist;
 
 pub use identity::{load_or_generate_identity, public_key_b64, public_key_from_b64, public_key_from_str};
 pub use store::{DeviceStore, PairedDevice};
 pub use guard::{guard, Admit};
+pub use blocklist::{blocklist, init_blocklist, BlockedDevice};
 pub use handshake::{compute_pairing_fingerprint, confirm_pairing, PairingSession};
 pub use middleware::{
     check_request, sign_request, verify_caller_signature, AuthState, Status,
