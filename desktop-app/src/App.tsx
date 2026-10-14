@@ -6,6 +6,7 @@ import Sidebar from "./components/layout/Sidebar";
 import PeersPage from "./components/peers/PeersPage";
 import FilesPage from "./components/files/FilesPage";
 import TransfersPage from "./components/transfers/TransfersPage";
+import MessagesPage from "./components/messages/MessagesPage";
 import ConnectionModal from "./components/connection/ConnectionModal";
 import IncomingOfferModal from "./components/offers/IncomingOfferModal";
 import { OffersProvider, useOffers } from "./contexts/OffersContext";
@@ -38,6 +39,25 @@ function AppInner() {
   const [pairFingerprint, setPairFingerprint] = useState<string | null>(null);
 
   const [viewingPeer, setViewingPeer] = useState<PeerInfo | null>(null);
+  /** The conversation open on the Messages page. */
+  const [chatPeerId, setChatPeerId] = useState<string | null>(null);
+  const [unreadMessages, setUnreadMessages] = useState(0);
+
+  useEffect(() => {
+    const count = () =>
+      api
+        .listThreads()
+        .then((threads) => setUnreadMessages(threads.reduce((n, t) => n + t.unread, 0)))
+        .catch(() => {});
+    count();
+    let unlisten: (() => void) | undefined;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) => listen("messages-changed", count))
+      .then((u) => {
+        unlisten = u;
+      });
+    return () => unlisten?.();
+  }, []);
   // Unpaired devices from the most recent manual scan. Paired peers come from
   // presence instead, so they stay current without any scanning.
   const nearbyRef = useRef<PeerInfo[]>([]);
@@ -379,8 +399,14 @@ function AppInner() {
             }}
             onBrowseFiles={(peer) => setViewingPeer(peer)}
             onSendFiles={sendFilesTo}
+            onMessage={(peer) => {
+              setChatPeerId(peer.device_id);
+              setActivePage("messages");
+            }}
           />
         );
+      case "messages":
+        return <MessagesPage peers={peers} selectedId={chatPeerId} onSelect={setChatPeerId} />;
       case "files":
         return <FilesPage files={localFiles} peers={peers} isDropping={isDragging && !hoveredPeerId} />;
       case "transfers":
@@ -397,6 +423,7 @@ function AppInner() {
           <Sidebar
             activePage={activePage}
             activeTransfers={activeTransfers}
+            unreadMessages={unreadMessages}
             onNavigate={(page) => {
               setActivePage(page);
               setViewingPeer(null);

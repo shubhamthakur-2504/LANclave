@@ -2,7 +2,7 @@
 // Shared types — mirror the backend command signatures.
 // ---------------------------------------------------------------------------
 
-export type PageType = "peers" | "files" | "transfers" | "settings";
+export type PageType = "peers" | "messages" | "files" | "transfers" | "settings";
 
 // Server lifecycle
 export interface PeerInfo {

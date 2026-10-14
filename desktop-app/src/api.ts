@@ -251,6 +251,48 @@ export async function unpairPeer(deviceId: string): Promise<void> {
   await invoke("unpair_peer", { deviceId });
 }
 
+// ─── Messages ────────────────────────────────────────────────────────────────
+
+export interface ChatMessage {
+  id: string;
+  text: string;
+  /** Unix ms, by the sender's clock. */
+  sent_at: number;
+  /** waiting / delivered: written here. received: written there. */
+  state: "waiting" | "delivered" | "received";
+  read: boolean;
+}
+
+/** A thread as the list shows it: counts, never text. */
+export interface ThreadSummary {
+  peer_id: string;
+  count: number;
+  unread: number;
+  waiting: number;
+  last_at?: number | null;
+}
+
+export async function listThreads(): Promise<ThreadSummary[]> {
+  return invoke("list_threads");
+}
+
+export async function getThread(peerId: string): Promise<ChatMessage[]> {
+  return invoke("get_thread", { peerId });
+}
+
+export async function markThreadRead(peerId: string): Promise<void> {
+  await invoke("mark_thread_read", { peerId });
+}
+
+export async function clearThread(peerId: string): Promise<void> {
+  await invoke("clear_thread", { peerId });
+}
+
+/** Sent now if the device can be reached; otherwise it waits for it. */
+export async function sendMessage(peerId: string, text: string): Promise<ChatMessage> {
+  return invoke("send_message", { peerId, text });
+}
+
 export interface BlockedDevice {
   device_id: string;
   device_name?: string | null;

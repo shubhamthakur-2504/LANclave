@@ -160,6 +160,9 @@ async fn presence_hello_handler(
 
     let addr = remote.map(|axum::Extension(ci)| std::net::SocketAddr::new(ci.0.ip(), port).to_string());
     crate::presence::remember_name(&state.auth.store, state.auth.data_dir.as_deref(), &device_id, peer_name.as_deref());
+    if let Some(addr) = &addr {
+        crate::messages::on_contact(&device_id, addr, 0, &state.device_id, &state.identity_key);
+    }
     state.presence.mark_seen(&device_id, peer_name, addr);
     notify_presence(&state);
 
@@ -234,6 +237,8 @@ async fn pairing_status_handler(
         "device_id": state.device_id,
         "device_name": display_name,
         "device_type": crate::presence::DEVICE_TYPE,
+        // Messages held here for the caller; it fetches them when non-zero.
+        "pending_messages": crate::messages::store().waiting_for(&device_id).len(),
     })))
 }
 
@@ -266,6 +271,9 @@ async fn pairing_cancel_handler(
         (was_paired, name)
     };
     state.presence.forget(&device_id);
+    if was_paired {
+        crate::messages::store().forget(&device_id);
+    }
     crate::pairing::guard().withdrawn(&device_id, std::time::Instant::now());
 
     if let Some(app) = &state.app_handle {
@@ -350,6 +358,9 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
             "/api/pairing/cancel",
             axum::routing::post(pairing_cancel_handler),
         )
+        .route("/api/messages", axum::routing::post(crate::messages::receive_message))
+        .route("/api/messages/pending", axum::routing::get(crate::messages::pending_messages))
+        .route("/api/messages/ack", axum::routing::post(crate::messages::ack_messages))
         .route("/api/offers", axum::routing::post(crate::offers::receive_offer))
         .route("/api/offers/{id}/cancel", axum::routing::post(crate::offers::offer_withdrawn))
         .route("/api/offers/{id}/accept", axum::routing::post(crate::offers::offer_accepted))
@@ -794,6 +805,64 @@ mod tests {
         let (_state, app) = paired_router(&ed25519_dalek::SigningKey::generate(&mut OsRng));
         let res = app.oneshot(pairing_request(&pest, Some(&pest))).await.unwrap();
         assert_eq!(res.status(), axum::http::StatusCode::FORBIDDEN);
+    }
+
+    fn with_json(mut request: axum::http::Request<axum::body::Body>, body: serde_json::Value) -> axum::http::Request<axum::body::Body> {
+        request.headers_mut().insert(axum::http::header::CONTENT_TYPE, "application/json".parse().unwrap());
+        *request.body_mut() = axum::body::Body::from(body.to_string());
+        request
+    }
+
+    async fn json_of(res: axum::response::Response) -> serde_json::Value {
+        use http_body_util::BodyExt;
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_paired_device_can_send_a_message_once_and_a_stranger_cannot() {
+        use rand::rngs::OsRng;
+        use tower::ServiceExt;
+        let friend = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let stranger = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let friend_id = crate::pairing::public_key_b64(&friend);
+        let stranger_id = crate::pairing::public_key_b64(&stranger);
+        let (_state, app) = paired_router(&friend);
+        let message = serde_json::json!({ "id": "otp-1", "text": "482 913", "sent_at": 1 });
+
+        for _ in 0..2 {
+            let req = with_json(signed("POST", "/api/messages", &friend, &friend_id), message.clone());
+            let res = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(res.status(), axum::http::StatusCode::OK);
+        }
+        assert_eq!(crate::messages::store().thread(&friend_id).len(), 1, "a retry is not a second message");
+
+        let req = with_json(signed("POST", "/api/messages", &stranger, &stranger_id), message);
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::UNAUTHORIZED);
+        assert!(crate::messages::store().thread(&stranger_id).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_heartbeat_reply_says_what_is_waiting_and_the_caller_fetches_it() {
+        use rand::rngs::OsRng;
+        use tower::ServiceExt;
+        let friend = ed25519_dalek::SigningKey::generate(&mut OsRng);
+        let friend_id = crate::pairing::public_key_b64(&friend);
+        let (_state, app) = paired_router(&friend);
+        let sent = crate::messages::store().queue_outgoing(&friend_id, "see you at 5").unwrap();
+
+        let status = app.clone().oneshot(signed("GET", "/api/pairing/status", &friend, &friend_id)).await.unwrap();
+        assert_eq!(json_of(status).await["pending_messages"], 1);
+
+        let pending = app.clone().oneshot(signed("GET", "/api/messages/pending", &friend, &friend_id)).await.unwrap();
+        let pending = json_of(pending).await;
+        assert_eq!(pending[0]["text"], "see you at 5");
+
+        let ack = with_json(signed("POST", "/api/messages/ack", &friend, &friend_id), serde_json::json!({ "ids": [sent.id] }));
+        app.clone().oneshot(ack).await.unwrap();
+        let status = app.oneshot(signed("GET", "/api/pairing/status", &friend, &friend_id)).await.unwrap();
+        assert_eq!(json_of(status).await["pending_messages"], 0);
     }
 
     #[tokio::test]

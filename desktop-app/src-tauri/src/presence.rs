@@ -393,6 +393,8 @@ impl PresenceContext {
             .map(|s| s.to_string());
 
         remember_name(&self.device_store, self.app_data_dir.as_deref(), device_id, name.as_deref());
+        let waiting_there = body.get("pending_messages").and_then(|v| v.as_u64()).unwrap_or(0);
+        crate::messages::on_contact(device_id, addr, waiting_there, &self.device_id, &self.identity_key);
         self.presence
             .mark_seen(device_id, name, Some(addr.to_string()));
         self.remember_addr(device_id, addr);

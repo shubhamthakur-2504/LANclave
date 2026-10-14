@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   FolderOpen,
+  MessageSquare,
   Power,
   Settings,
   Users,
@@ -12,6 +13,8 @@ interface SidebarProps {
   activePage: PageType;
   /** In-flight transfers. Badged so movement is visible without opening the page. */
   activeTransfers: number;
+  /** Messages not yet read. */
+  unreadMessages: number;
   onNavigate: (page: PageType) => void;
   serverRunning: boolean;
   onStartServer: () => void;
@@ -21,6 +24,7 @@ interface SidebarProps {
 
 const navItems: { id: PageType; label: string; icon: LucideIcon }[] = [
   { id: "peers", label: "Peers", icon: Users },
+  { id: "messages", label: "Messages", icon: MessageSquare },
   { id: "files", label: "Files", icon: FolderOpen },
   { id: "transfers", label: "Transfers", icon: ArrowLeftRight },
   { id: "settings", label: "Settings", icon: Settings },
@@ -29,6 +33,7 @@ const navItems: { id: PageType; label: string; icon: LucideIcon }[] = [
 export default function Sidebar({
   activePage,
   activeTransfers,
+  unreadMessages,
   onNavigate,
   serverRunning,
   onStartServer,
@@ -43,7 +48,8 @@ export default function Sidebar({
       <nav className="flex-1 space-y-1 px-3 py-4">
         {navItems.map((item) => {
           const isActive = activePage === item.id;
-          const badge = item.id === "transfers" ? activeTransfers : 0;
+          const badge =
+            item.id === "transfers" ? activeTransfers : item.id === "messages" ? unreadMessages : 0;
           return (
             <button
               key={item.id}
@@ -51,7 +57,7 @@ export default function Sidebar({
               title={item.label}
               aria-label={
                 badge > 0
-                  ? `${item.label}, ${badge} in progress`
+                  ? `${item.label}, ${badge} ${item.id === "messages" ? "unread" : "in progress"}`
                   : item.label
               }
               className={`relative flex w-full items-center justify-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:justify-start ${

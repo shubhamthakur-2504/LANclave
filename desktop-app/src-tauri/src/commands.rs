@@ -879,6 +879,7 @@ pub async fn unpair_peer(
         addr
     };
     state.presence.forget(&device_id);
+    crate::messages::store().forget(&device_id);
     if let Some(ctx) = app.try_state::<crate::presence::PresenceContext>() {
         ctx.emit_changed();
     }

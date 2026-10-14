@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FolderOpen, HelpCircle, Laptop, Send, Smartphone, Tablet } from "lucide-react";
+import { FolderOpen, HelpCircle, Laptop, MessageSquare, Send, Smartphone, Tablet } from "lucide-react";
 import { colorForDevice, deviceKind, deviceTag, initialForDevice } from "../../lib/identity";
 import { useTransfers } from "../../contexts/TransferContext";
 import type { PeerInfo, Transfer } from "../../types";
@@ -11,6 +11,7 @@ interface PeersListPanelProps {
   onConnect: (peer: PeerInfo) => void;
   onBrowseFiles?: (peer: PeerInfo) => void;
   onSendFiles?: (peer: PeerInfo) => void;
+  onMessage?: (peer: PeerInfo) => void;
   onRescanPeer?: (peer: PeerInfo) => void;
   /** device_id of the row files are currently hovering over. */
   dropTargetId?: string | null;
@@ -66,6 +67,7 @@ function PeerRow({
   onConnect,
   onBrowseFiles,
   onSendFiles,
+  onMessage,
   onRescan,
 }: {
   peer: PeerInfo;
@@ -74,6 +76,7 @@ function PeerRow({
   onConnect: () => void;
   onBrowseFiles: (() => void) | undefined;
   onSendFiles: (() => void) | undefined;
+  onMessage: (() => void) | undefined;
   onRescan?: () => Promise<void> | void;
 }) {
   const isOnline = peer.addr !== "";
@@ -248,6 +251,18 @@ function PeerRow({
         )}
         {/* Sending and opening used to be a drag onto the row and a click
             on it -- neither visible. Both get a button. */}
+        {/* Offline too: a message waits for the device to come back. */}
+        {peer.paired && !peer.untrusted && onMessage && (
+          <button
+            onClick={onMessage}
+            title="Message"
+            aria-label={`Message ${label}`}
+            className="flex items-center gap-1.5 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-medium text-content transition-colors hover:bg-surface-active"
+          >
+            <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+            Message
+          </button>
+        )}
         {peer.paired && !peer.untrusted && isOnline && onSendFiles && (
           <button
             onClick={onSendFiles}
@@ -317,6 +332,7 @@ export default function PeersListPanel({
   onConnect,
   onBrowseFiles,
   onSendFiles,
+  onMessage,
   onRescanPeer,
   dropTargetId = null,
 }: PeersListPanelProps) {
@@ -343,6 +359,7 @@ export default function PeersListPanel({
         onConnect={() => onConnect(peer)}
         onBrowseFiles={onBrowseFiles ? () => onBrowseFiles(peer) : undefined}
         onSendFiles={onSendFiles ? () => onSendFiles(peer) : undefined}
+        onMessage={onMessage ? () => onMessage(peer) : undefined}
         onRescan={onRescanPeer ? () => onRescanPeer(peer) : undefined}
       />
     ));

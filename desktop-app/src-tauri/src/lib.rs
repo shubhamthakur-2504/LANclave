@@ -7,6 +7,7 @@ mod files;
 mod fs_util;
 mod hash_cache;
 mod history;
+mod messages;
 mod offers;
 mod open_file;
 mod pairing;
@@ -68,6 +69,7 @@ pub fn run() {
     // Seed presence with the addresses we knew last run so paired peers can be
     // reached without a subnet sweep.
     pairing::init_blocklist(&app_data_dir);
+    messages::init(&app_data_dir);
     // Whose certificates the paired client accepts.
     tls::set_paired_store(device_store.clone());
 
@@ -132,6 +134,7 @@ pub fn run() {
             ctx.app_handle = Some(app.handle().clone());
             history.set_app_handle(app.handle().clone());
             offers.set_app_handle(app.handle().clone());
+            messages::store().set_app_handle(app.handle().clone());
             transfers.set_app_handle(app.handle().clone());
             // Downloads that were running or waiting when the app closed
             // pick up where their partial files stop.
@@ -195,6 +198,11 @@ pub fn run() {
             commands::block_device,
             commands::unblock_device,
             commands::list_blocked,
+            messages::list_threads,
+            messages::get_thread,
+            messages::mark_thread_read,
+            messages::clear_thread,
+            messages::send_message,
             commands::get_device_id,
             commands::get_settings,
             commands::update_settings,
