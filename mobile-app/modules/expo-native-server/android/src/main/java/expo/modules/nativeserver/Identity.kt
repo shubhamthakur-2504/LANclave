@@ -25,8 +25,14 @@ object Identity {
     @Volatile private var key: PrivateKey? = null
 
     fun set(deviceId: String, seedHex: String) {
-        this.key = privateKey(hexToBytes(seedHex))
+        val key = privateKey(hexToBytes(seedHex))
+        // Same identity as before: keep the certificate peers already saw.
+        val unchanged = this.deviceId == deviceId && Tls.isReady
+        this.key = key
         this.deviceId = deviceId
+        if (!unchanged) {
+            Tls.setIdentity(Base64.getMimeDecoder().decode(deviceId)) { message -> sign(key, message) }
+        }
     }
 
     val isSet: Boolean get() = key != null && deviceId != null

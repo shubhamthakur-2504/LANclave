@@ -23,8 +23,6 @@ import {
   PendingShare,
   subscribeShares,
 } from "@/services/share";
-import { uploadRemoteFile } from "@/services/peer-api";
-import { recordTransfer } from "@/services/history";
 import { offerFiles, readAutoAccept, setAutoAccept } from "@/contexts/OffersContext";
 import { unpairPeer } from "@/services/pairing";
 import {
@@ -117,8 +115,6 @@ export default function PairedPeersScreen() {
         }
       };
       setSendingTo(peer.id);
-      const addr = `${peer.ip}:${peer.port}`;
-      let sent = 0;
 
       // One offer for everything shared: one prompt on the other side.
       try {
@@ -138,48 +134,9 @@ export default function PairedPeersScreen() {
         return;
       }
 
-      // A peer from before offers: upload them the old way.
-      try {
-        for (const share of files) {
-          try {
-            const result = await uploadRemoteFile(addr, share.uri, share.name);
-            void recordTransfer({
-              direction: "sent",
-              peer_id: peer.id,
-              peer_name: peer.name,
-              file_name: share.name,
-              dest_name: result.savedAs,
-              bytes: result.bytes,
-              outcome: "completed",
-            });
-          } catch (err) {
-            void recordTransfer({
-              direction: "sent",
-              peer_id: peer.id,
-              peer_name: peer.name,
-              file_name: share.name,
-              bytes: 0,
-              outcome: "failed",
-              error: err instanceof Error ? err.message : String(err),
-            });
-            throw err;
-          }
-          sent += 1;
-        }
-        done();
-        Alert.alert(
-          "Sent",
-          `${sent} file${sent === 1 ? "" : "s"} sent to ${peer.name}.`,
-        );
-      } catch (err) {
-        Alert.alert(
-          "Couldn't send",
-          `Sent ${sent} of ${files.length}. Check ${peer.name} is still reachable and try again.`,
-        );
-        console.warn("[share] upload failed:", err);
-      } finally {
-        setSendingTo(null);
-      }
+      // No offer was made: the device is too old to take one.
+      Alert.alert("Couldn't send", `${peer.name} needs a newer LANclave to receive files.`);
+      setSendingTo(null);
     },
     [],
   );

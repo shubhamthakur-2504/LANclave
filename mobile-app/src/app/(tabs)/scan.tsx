@@ -29,6 +29,7 @@ import {
 import ExpoNativeServerModule from "../../../modules/expo-native-server/src/ExpoNativeServerModule";
 import { deviceTag } from "@/constants/device";
 import { getSettings } from "@/services/settings";
+import { peerFetch } from "@/services/peer-http";
 import { rescanPeer } from "@/services/presence";
 import { Icon } from "@/components/Icon";
 import { ScanAnimation } from "@/components/brand/ScanAnimation";
@@ -46,6 +47,13 @@ function pairingFailure(err: unknown, peer: DiscoveredPeer): [string, string] {
     return [
       "Pairing refused",
       `${peer.name} answered but would not start pairing (HTTP ${e.status}). Update LANclave on both devices and try again.`,
+    ];
+  }
+  // It answered, but not as a device this version can talk to.
+  if (e?.name === "TlsError") {
+    return [
+      "Needs update",
+      `${peer.name} runs an older LANclave that does not encrypt its connections. Update it there, then pair.`,
     ];
   }
   // Our own 5 s limit: the request went out and nothing came back.
@@ -141,24 +149,26 @@ export default function ScanScreen() {
 
       // Ask the desktop to open its side of the ceremony. Bounded: without a
       // timeout an unreachable peer left the sheet up until the OS gave up.
-      fetch(`http://${peer.ip}:${peer.port}/api/pairing/request`, {
+      // Not paired yet, so any device that proves its identity is accepted;
+      // comparing the codes is what decides whether to trust it.
+      peerFetch(`${peer.ip}:${peer.port}`, "/api/pairing/request", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        anyone: true,
+        signed: false,
+        body: {
           device_id: identity.deviceId,
           name: settings.displayName,
           ip: myIp,
-        }),
-        signal: AbortSignal.timeout(5_000),
+        },
+        timeoutMs: 5_000,
       })
-        .then(async (res) => {
+        .then((res) => {
           if (res.status === 409) {
             giveUp("Busy", `${peer.name} is pairing with another device right now. Try again in a moment.`);
             return null;
           }
           if (res.status === 429) {
-            const body = await res.json().catch(() => null);
-            const secs = Number(body?.retry_after_secs) || 60;
+            const secs = Number(res.json()?.retry_after_secs) || 60;
             giveUp("Declined recently", `${peer.name} declined recently. You can ask again in ${waitPhrase(secs)}.`);
             return null;
           }

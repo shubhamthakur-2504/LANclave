@@ -126,29 +126,6 @@ export async function getOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
   return _cachedIdentity;
 }
 
-/**
- * Build the signed authentication headers required by every peer request.
- *
- * Signs `"deviceId:timestamp"` with the device's private Ed25519 key.
- *
- * @returns An object ready to pass as the `headers` option of `fetch`.
- */
-export async function getAuthHeaders(): Promise<Record<string, string>> {
-  const identity = await getOrCreateDeviceIdentity();
-
-  const timestamp = Math.floor(Date.now() / 1000); // Unix epoch seconds
-  const message = new TextEncoder().encode(`${identity.deviceId}:${timestamp}`);
-  const seed = fromHex(identity.privateKey);
-  const signatureBytes = await ed.signAsync(message, seed);
-  const signatureB64 = toBase64(signatureBytes);
-
-  return {
-    "X-LANclave-Device-Id": identity.deviceId,
-    "X-LANclave-Timestamp": String(timestamp),
-    "X-LANclave-Signature": signatureB64,
-  };
-}
-
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
 /** Generate a fresh 32-byte seed, persist it, and return it. */

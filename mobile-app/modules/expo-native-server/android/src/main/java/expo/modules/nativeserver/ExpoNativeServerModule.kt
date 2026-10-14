@@ -1,7 +1,9 @@
 package expo.modules.nativeserver
 
+import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import java.util.concurrent.Executors
 
 class ExpoNativeServerModule : Module() {
   private var server: NativeServer? = null
@@ -14,6 +16,12 @@ class ExpoNativeServerModule : Module() {
 
   /** Identity of the running server, so a redundant start can be detected. */
   private var currentConfig: String? = null
+
+  /** Requests JS makes to other devices; they block, so not on the module's own thread. */
+  private val requests = Executors.newCachedThreadPool()
+
+  /** The subnet sweep: many short probes, most of them to addresses nobody is at. */
+  private val probes = Executors.newFixedThreadPool(64)
 
   override fun definition() = ModuleDefinition {
     Name("ExpoNativeServer")
@@ -103,6 +111,7 @@ class ExpoNativeServerModule : Module() {
         // already listening with the same config is now just a paired-device
         // refresh.
         appContext.reactContext?.let { Offers.keepAutoAcceptFor(it, pairedDevices.toList()) }
+        Tls.setPairedDevices(pairedDevices.toList())
         if (existing != null && existing.isAlive && currentConfig == config) {
           existing.updatePairedDevices(pairedDevices.toList())
           return@Function true
@@ -129,6 +138,8 @@ class ExpoNativeServerModule : Module() {
             sendEvent("onPairingRequest", request)
           }
         }
+        // TLS 1.3 only, with the certificate the identity key vouches for.
+        next.makeSecure(Tls.serverSocketFactory(), arrayOf("TLSv1.3"))
         next.start(5000, false)
         // Offers first: downloads restored from last time report to them.
         Offers.configure(context, sandboxPath, deviceName)
@@ -141,6 +152,47 @@ class ExpoNativeServerModule : Module() {
         server = null
         currentConfig = null
         throw Exception("Failed to start server: ${e.message}")
+      }
+    }
+
+    // ---- Requests to other devices, for JS --------------------------------
+    //
+    // `fetch` cannot check a certificate like ours, so every call JS makes
+    // to another device goes through here.
+
+    /**
+     * One request. `anyone` is for discovery and pairing, where the other
+     * device is not paired yet; everything else reaches paired devices only.
+     * Resolves to `{ status, body }`; status is -1 when nothing answered.
+     */
+    AsyncFunction("peerRequest") { addr: String, method: String, path: String, body: String?, anyone: Boolean, signed: Boolean, timeoutMs: Int, promise: Promise ->
+      requests.execute {
+        val trust = if (anyone) Tls.Trust.ANYONE else Tls.Trust.PAIRED
+        val reply = PeerHttp.request(addr, method, path, body, trust, signed, timeoutMs)
+        promise.resolve(mapOf("status" to reply.status, "body" to reply.body))
+      }
+    }
+
+    /**
+     * Ask each address for `/health` at once; resolves to the bodies of the
+     * ones that answered, by address. The sweep that finds unpaired devices.
+     */
+    AsyncFunction("probeHealth") { addrs: List<String>, timeoutMs: Int, promise: Promise ->
+      val found = java.util.concurrent.ConcurrentHashMap<String, String>()
+      val pending = java.util.concurrent.CountDownLatch(addrs.size)
+      for (addr in addrs) {
+        probes.execute {
+          try {
+            val reply = PeerHttp.request(addr, "GET", "/health", null, Tls.Trust.ANYONE, false, timeoutMs)
+            if (reply.status == 200) found[addr] = reply.body
+          } finally {
+            pending.countDown()
+          }
+        }
+      }
+      requests.execute {
+        pending.await()
+        promise.resolve(found.toMap())
       }
     }
 
@@ -280,6 +332,7 @@ class ExpoNativeServerModule : Module() {
 
     Function("updatePairedDevices") { devices: Array<String> ->
       appContext.reactContext?.let { Offers.keepAutoAcceptFor(it, devices.toList()) }
+      Tls.setPairedDevices(devices.toList())
       server?.updatePairedDevices(devices.toList())
     }
   }

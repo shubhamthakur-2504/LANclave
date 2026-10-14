@@ -125,6 +125,23 @@ declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
   consumePairingRequest(): PairingRequestEvent | null;
   stopServer(): void;
   updatePairedDevices(devices: string[]): void;
+  /**
+   * One request to another device, over TLS. `anyone` reaches a device that
+   * is not paired (discovery, pairing); otherwise only paired devices are
+   * accepted. `status` is negative when nothing usable came back: -1
+   * unreachable, -2 timed out, -3 not a device we accept.
+   */
+  peerRequest(
+    addr: string,
+    method: string,
+    path: string,
+    body: string | null,
+    anyone: boolean,
+    signed: boolean,
+    timeoutMs: number,
+  ): Promise<{ status: number; body: string }>;
+  /** `/health` of each `ip:port` at once; the bodies of those that answered. */
+  probeHealth(addrs: string[], timeoutMs: number): Promise<Record<string, string>>;
 }
 
 export default requireNativeModule<ExpoNativeServerModule>('ExpoNativeServer');

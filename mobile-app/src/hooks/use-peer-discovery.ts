@@ -34,6 +34,8 @@ export interface DiscoveredPeer {
   name: string;
   ip: string;
   port: number;
+  /** Seen over mDNS, but running a version that cannot be talked to. */
+  needsUpdate?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,8 +46,10 @@ const SERVICE_TYPE = "lanclave-portal";
 const PROTOCOL = "tcp";
 const DOMAIN = "local.";
 const LANCLAVE_PORT = 8377;
-/** Concurrent probes in flight. Kept low: each one can cost an ARP broadcast. */
-const PROBE_CONCURRENCY = 10;
+/** The wire protocol this build speaks; version 1 was plain HTTP. */
+const PROTOCOL_VERSION = 2;
+/** Addresses handed to the native prober at a time; progress moves per batch. */
+const PROBE_BATCH = 32;
 /** Per-probe timeout. Dead hosts never answer, so this dominates sweep time. */
 const PROBE_TIMEOUT_MS = 600;
 
@@ -57,32 +61,6 @@ function subnetPrefix(ip: string): string {
   const parts = ip.split(".");
   if (parts.length < 3) return "";
   return `${parts[0]}.${parts[1]}.${parts[2]}.`;
-}
-
-/**
- * An AbortSignal that fires on `timeoutMs` OR when `parent` aborts.
- *
- * `AbortSignal.timeout()` alone ignored the caller's controller, so cancelling
- * a sweep left every in-flight request running to completion.
- */
-function linkedSignal(parent: AbortSignal, timeoutMs: number) {
-  const ctrl = new AbortController();
-  const onParentAbort = () => ctrl.abort();
-
-  if (parent.aborted) {
-    ctrl.abort();
-  } else {
-    parent.addEventListener("abort", onParentAbort);
-  }
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-
-  return {
-    signal: ctrl.signal,
-    cleanup: () => {
-      clearTimeout(timer);
-      parent.removeEventListener("abort", onParentAbort);
-    },
-  };
 }
 
 /**
@@ -103,51 +81,44 @@ async function probeSubnet(
     allIps.push(`${prefix}${i}`);
   }
 
-  // Probe in chunks of 20 in parallel to be fast but not overwhelming
-  const CHUNK = PROBE_CONCURRENCY;
-  for (let i = 0; i < allIps.length; i += CHUNK) {
+  // The native module probes a batch at once, over TLS: `fetch` cannot check
+  // the certificate a LANclave device presents.
+  for (let i = 0; i < allIps.length; i += PROBE_BATCH) {
     if (signal.aborted) break;
 
-    const chunk = allIps.slice(i, i + CHUNK);
-    const probeResults = await Promise.all(
-      chunk.map(async (ip): Promise<DiscoveredPeer | null> => {
-        const link = linkedSignal(signal, PROBE_TIMEOUT_MS);
-        try {
-          const res = await fetch(`http://${ip}:${LANCLAVE_PORT}/health`, {
-            method: "GET",
-            signal: link.signal,
-          });
-
-          // Only a LANclave /health counts. Any 200 or 401 used to be listed
-          // as "LANclave @ ip", so an unrelated server on this port showed up
-          // as a device to pair with. Matches the desktop's probe.
-          if (res.status !== 200) return null;
-          const body = await res.json().catch(() => null);
-          if (body?.app !== "lanclave" || typeof body.device_id !== "string") return null;
-
-          const id: string = body.device_id;
-          // Skip self
-          if (myDeviceId && myDeviceId === id) return null;
-
-          return {
-            id,
-            name: body.device_name || `LANclave @ ${ip}`,
-            ip,
-            port: LANCLAVE_PORT,
-          };
-        } catch {
-          // unreachable, timed out, or no LANclave running
-        } finally {
-          link.cleanup();
-        }
-        return null;
-      }),
-    );
-
-    for (const p of probeResults) {
-      if (p) results.push(p);
+    const batch = allIps.slice(i, i + PROBE_BATCH);
+    let answers: Record<string, string> = {};
+    try {
+      answers = await ExpoNativeServerModule.probeHealth(
+        batch.map((ip) => `${ip}:${LANCLAVE_PORT}`),
+        PROBE_TIMEOUT_MS,
+      );
+    } catch {
+      // older native build, or not Android
     }
-    onProgress(chunk.length);
+
+    for (const [addr, text] of Object.entries(answers)) {
+      let body: { app?: unknown; device_id?: unknown; device_name?: unknown } | null = null;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        // not JSON: not LANclave
+      }
+      // Only a LANclave /health counts: an unrelated server on this port
+      // must not show up as a device to pair with. Matches the desktop.
+      if (body?.app !== "lanclave" || typeof body.device_id !== "string") continue;
+      // Skip self
+      if (myDeviceId && myDeviceId === body.device_id) continue;
+
+      const ip = addr.slice(0, addr.lastIndexOf(":"));
+      results.push({
+        id: body.device_id,
+        name: (typeof body.device_name === "string" && body.device_name) || `LANclave @ ${ip}`,
+        ip,
+        port: LANCLAVE_PORT,
+      });
+    }
+    onProgress(batch.length);
   }
 
   return results;
@@ -278,6 +249,8 @@ export function usePeerDiscovery(): PeerDiscovery {
               `Peer-${deviceId.slice(0, 8)}`,
             ip,
             port: service.port,
+            // Version 1 advertised no `proto` and only speaks plain HTTP.
+            needsUpdate: Number(service.txt?.proto ?? 1) < PROTOCOL_VERSION,
           });
         },
       );

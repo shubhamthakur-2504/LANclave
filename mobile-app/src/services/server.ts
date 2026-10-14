@@ -52,6 +52,9 @@ function publish(deviceId: string, deviceName: string): void {
     const name = `LANclave-${mdnsTag(deviceId)}`;
     publisher.publishService("lanclave-portal", "tcp", "local.", name, PORT, {
       version: "1.0.0",
+      // Version 2 speaks TLS only; peers list a device without this as
+      // needing an update.
+      proto: "2",
       node_type: "mobile",
       device_type: "phone",
       device_id: deviceId,

@@ -66,10 +66,14 @@ export function PeerCard({
         ]}
         onPress={() => onConnect(peer)}
         accessibilityRole="button"
-        accessibilityLabel={`Pair with ${peer.name}`}
-        disabled={isFetching}
+        accessibilityLabel={
+          peer.needsUpdate ? `${peer.name} needs updating before it can pair` : `Pair with ${peer.name}`
+        }
+        disabled={isFetching || peer.needsUpdate}
       >
-        {isSelected && isFetching ? (
+        {peer.needsUpdate ? (
+          <Text style={styles.btnText}>Needs update</Text>
+        ) : isSelected && isFetching ? (
           <ActivityIndicator size="small" color={C.onAction} />
         ) : (
           <Text style={styles.btnText}>

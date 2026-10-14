@@ -13,7 +13,8 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import ExpoNativeServerModule from "../../modules/expo-native-server/src/ExpoNativeServerModule";
-import { getAuthHeaders, getOrCreateDeviceIdentity } from "@/services/identity";
+import { getOrCreateDeviceIdentity } from "@/services/identity";
+import { peerFetch } from "@/services/peer-http";
 import { updateNativeServerPairedDevices } from "@/services/server";
 
 const PAIRED_PEERS_KEY = "lanclave_paired_peers";
@@ -140,10 +141,11 @@ export async function removePairedPeer(peerId: string): Promise<boolean> {
  * dialog closes, and if it already accepted, it drops us.
  */
 export async function sendPairingCancel(ip: string, port: number): Promise<void> {
-  const res = await fetch(`http://${ip}:${port}/api/pairing/cancel`, {
+  // The peer may never have been paired, or has just been removed.
+  const res = await peerFetch(`${ip}:${port}`, "/api/pairing/cancel", {
     method: "POST",
-    headers: await getAuthHeaders(),
-    signal: AbortSignal.timeout(5_000),
+    anyone: true,
+    timeoutMs: 5_000,
   });
   if (!res.ok) throw new Error(`peer returned HTTP ${res.status}`);
 }

@@ -7,8 +7,8 @@
  *
  * The native side hands back the content URIs from the share intent and
  * clears it, so a share is handled once rather than replayed on every
- * resume. Content URIs are uploaded directly — `uploadRemoteFile` reads
- * `content://`, so nothing is copied into the sandbox first.
+ * resume. Content URIs are offered as they are — the receiver pulls them
+ * from `content://` — so nothing is copied into the sandbox first.
  */
 
 import { Platform } from "react-native";

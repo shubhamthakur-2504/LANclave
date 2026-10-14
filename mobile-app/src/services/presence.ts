@@ -20,7 +20,7 @@ import { AppState, AppStateStatus, Platform } from "react-native";
 import ExpoNativeServerModule, {
   NativePresenceEntry,
 } from "../../modules/expo-native-server/src/ExpoNativeServerModule";
-import { getAuthHeaders } from "./identity";
+import { peerFetch, type PeerRequestInit } from "./peer-http";
 import {
   applyPairingCancels,
   getPairedPeers,
@@ -143,14 +143,9 @@ export async function getPeerPresence(): Promise<PeerPresence[]> {
 
 // ─── Network ─────────────────────────────────────────────────────────────────
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+/** A signed request to a paired peer, bounded by the heartbeat's timeout. */
+function request(a: Addr, path: string, init: PeerRequestInit = {}) {
+  return peerFetch(`${a.ip}:${a.port}`, path, { ...init, timeoutMs: REQUEST_TIMEOUT_MS });
 }
 
 /**
@@ -164,20 +159,16 @@ async function probe(peer: PairedPeerRecord, a: Addr): Promise<boolean> {
     // peer from before the endpoint existed; fall back to the open /health,
     // which cannot tell the two apart. Signed either way, so the peer counts
     // this as contact from us and learns our current address.
-    let res = await fetchWithTimeout(`http://${a.ip}:${a.port}/api/pairing/status`, {
-      headers: await getAuthHeaders(),
-    });
+    let res = await request(a, "/api/pairing/status");
     if (res.status === 401 || res.status === 403) {
       markUntrusted(peer.id);
       return true;
     }
     if (res.status === 404) {
-      res = await fetchWithTimeout(`http://${a.ip}:${a.port}/health`, {
-        headers: await getAuthHeaders(),
-      });
+      res = await request(a, "/health");
     }
     if (!res.ok) return false;
-    const body = await res.json();
+    const body = res.json();
     if (body?.app !== "lanclave" || body?.device_id !== peer.id) return false;
     markSeen(peer.id);
     await updatePairedPeerAddress(peer.id, a.ip, a.port);
@@ -189,21 +180,14 @@ async function probe(peer: PairedPeerRecord, a: Addr): Promise<boolean> {
 
 async function sendHello(peer: PairedPeerRecord, a: Addr): Promise<boolean> {
   try {
-    const [headers, settings] = await Promise.all([
-      getAuthHeaders(),
-      getSettings(),
-    ]);
-    const res = await fetchWithTimeout(
-      `http://${a.ip}:${a.port}/api/presence/hello`,
-      {
-        method: "POST",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          device_name: settings.displayName,
-          port: OWN_PORT,
-        }),
+    const settings = await getSettings();
+    const res = await request(a, "/api/presence/hello", {
+      method: "POST",
+      body: {
+        device_name: settings.displayName,
+        port: OWN_PORT,
       },
-    );
+    });
     if (res.status === 401 || res.status === 403) {
       markUntrusted(peer.id);
       return false;
@@ -219,11 +203,7 @@ async function sendHello(peer: PairedPeerRecord, a: Addr): Promise<boolean> {
 
 async function sendBye(a: Addr): Promise<void> {
   try {
-    const headers = await getAuthHeaders();
-    await fetchWithTimeout(`http://${a.ip}:${a.port}/api/presence/bye`, {
-      method: "POST",
-      headers,
-    });
+    await request(a, "/api/presence/bye", { method: "POST" });
   } catch {
     // best effort
   }

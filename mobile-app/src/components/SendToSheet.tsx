@@ -1,7 +1,6 @@
 /**
  * Pick an online paired device to send one sandbox file to. The send goes
- * through `startUpload`, which offers first and falls back to the old
- * upload for devices without offers.
+ * through `startUpload`, which offers it; the receiver accepts and pulls.
  */
 
 import { useEffect, useState } from "react";

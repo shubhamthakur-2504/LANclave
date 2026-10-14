@@ -11,6 +11,9 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileNotFoundException
 
+/** The wire protocol this build speaks. 2 is TLS-only; version 1 was plain HTTP. */
+const val PROTOCOL_VERSION = 2
+
 class NativeServer(
     private val context: Context,
     port: Int,
@@ -102,6 +105,9 @@ class NativeServer(
                     val json = JSONObject()
                     json.put("status", "ok")
                     json.put("app", "lanclave")
+                    // Version 2 speaks TLS only; a device that reports no
+                    // `proto` is version 1 and cannot be talked to.
+                    json.put("proto", PROTOCOL_VERSION)
                     json.put("device_id", deviceId)
                     json.put("device_name", deviceName)
                     // Lets peers show a phone glyph rather than a generic dot.
