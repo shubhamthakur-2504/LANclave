@@ -137,7 +137,9 @@ export async function getPeerPresence(): Promise<PeerPresence[]> {
     const isOnline =
       !untrusted && !saidBye && lastSeenMs > 0 && now - lastSeenMs < ONLINE_TTL_MS;
 
-    return { ...p, isOnline, lastSeenMs, untrusted };
+    // A peer saved without a name still has the one it last said hello with.
+    const name = p.name || theirs?.deviceName || p.name;
+    return { ...p, name, isOnline, lastSeenMs, untrusted };
   });
 }
 
@@ -171,7 +173,7 @@ async function probe(peer: PairedPeerRecord, a: Addr): Promise<boolean> {
     const body = res.json();
     if (body?.app !== "lanclave" || body?.device_id !== peer.id) return false;
     markSeen(peer.id);
-    await updatePairedPeerAddress(peer.id, a.ip, a.port);
+    await updatePairedPeerAddress(peer.id, a.ip, a.port, body.device_name);
     return true;
   } catch {
     return false;
@@ -194,7 +196,8 @@ async function sendHello(peer: PairedPeerRecord, a: Addr): Promise<boolean> {
     }
     if (!res.ok) return false;
     markSeen(peer.id);
-    await updatePairedPeerAddress(peer.id, a.ip, a.port);
+    // The reply carries the peer's current name.
+    await updatePairedPeerAddress(peer.id, a.ip, a.port, res.json()?.device_name);
     return true;
   } catch {
     return false;

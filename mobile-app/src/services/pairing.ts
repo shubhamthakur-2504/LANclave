@@ -109,12 +109,21 @@ export async function updatePairedPeerAddress(
   peerId: string,
   ip: string,
   port: number,
+  /**
+   * The name the peer reports now. Kept, so a rename on that device shows
+   * here, and the latest name is what is shown while it is offline.
+   */
+  name?: unknown,
 ): Promise<void> {
   const list = await getPairedPeers();
   const peer = list.find((p) => p.id === peerId);
-  if (!peer || (peer.ip === ip && peer.port === port)) return;
+  if (!peer) return;
+  const newName = typeof name === "string" ? name.trim() : "";
+  const renamed = newName !== "" && newName !== peer.name;
+  if (peer.ip === ip && peer.port === port && !renamed) return;
   peer.ip = ip;
   peer.port = port;
+  if (renamed) peer.name = newName;
   await SecureStore.setItemAsync(PAIRED_PEERS_KEY, JSON.stringify(list));
 }
 
