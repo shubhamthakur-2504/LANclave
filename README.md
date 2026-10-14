@@ -32,6 +32,8 @@ Any pair works: phone and desktop, two desktops, or two phones.
   after that the two devices recognise each other silently.
 - Only one pairing can be in progress at a time, and a device that keeps
   getting rejected is muted for longer each time.
+- Requests to pair are signed by the device that sends them, so nobody can
+  ask in someone else's name. A device that keeps asking can be blocked.
 
 **Share a folder, not the whole disk**
 
@@ -47,6 +49,14 @@ Any pair works: phone and desktop, two desktops, or two phones.
   accepts or declines. A trusted device can be set to always accept.
 - On the desktop, drop files onto a device to send them. On the phone, use
   Share from any other app and pick LANclave.
+
+**Messages**
+
+- A private conversation with each paired device, for links, codes and
+  notes. Nothing goes through a chat service, and notifications never show
+  the text, which matters when your screen is being shared.
+- A message written while the other device is away waits, and arrives when
+  the two can next reach each other.
 
 **Transfers that survive real networks**
 
@@ -121,9 +131,7 @@ branding/      Logo masters and the script that generates every icon
 
 ## Coming next
 
-A private text thread between paired devices for passing links and codes,
-subfolder browsing, blocking a device that keeps asking to pair, and mirroring
-a phone's screen in a desktop window.
+Subfolder browsing, and mirroring a phone's screen in a desktop window.
 
 ## Author
 
