@@ -145,6 +145,20 @@ export async function getPeerPresence(): Promise<PeerPresence[]> {
 
 // ─── Network ─────────────────────────────────────────────────────────────────
 
+/**
+ * A paired device answered: send what waits for it, and fetch what it says
+ * it holds for us (`waitingThere`, from its heartbeat reply). Native does
+ * the work in the background.
+ */
+function moveMessages(peerId: string, a: Addr, waitingThere: number): void {
+  if (Platform.OS !== "android") return;
+  try {
+    ExpoNativeServerModule.messagesContact(peerId, `${a.ip}:${a.port}`, waitingThere);
+  } catch {
+    // older native build
+  }
+}
+
 /** A signed request to a paired peer, bounded by the heartbeat's timeout. */
 function request(a: Addr, path: string, init: PeerRequestInit = {}) {
   return peerFetch(`${a.ip}:${a.port}`, path, { ...init, timeoutMs: REQUEST_TIMEOUT_MS });
@@ -174,6 +188,7 @@ async function probe(peer: PairedPeerRecord, a: Addr): Promise<boolean> {
     if (body?.app !== "lanclave" || body?.device_id !== peer.id) return false;
     markSeen(peer.id);
     await updatePairedPeerAddress(peer.id, a.ip, a.port, body.device_name);
+    moveMessages(peer.id, a, Number(body.pending_messages) || 0);
     return true;
   } catch {
     return false;
@@ -198,6 +213,7 @@ async function sendHello(peer: PairedPeerRecord, a: Addr): Promise<boolean> {
     markSeen(peer.id);
     // The reply carries the peer's current name.
     await updatePairedPeerAddress(peer.id, a.ip, a.port, res.json()?.device_name);
+    moveMessages(peer.id, a, 0);
     return true;
   } catch {
     return false;

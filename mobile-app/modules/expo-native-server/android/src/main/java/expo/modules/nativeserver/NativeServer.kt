@@ -31,6 +31,10 @@ class NativeServer(
         onPairingRequest = handler
     }
 
+    init {
+        Messages.configure(context)
+    }
+
     private val isContentUri = rawSandboxPath.startsWith("content://")
     private val sandboxPath = rawSandboxPath.removePrefix("file://")
 
@@ -127,7 +131,28 @@ class NativeServer(
                     // What this server speaks: peers choose offers over the
                     // legacy push, and know downloads resume.
                     json.put("features", JSONArray(listOf("range", "fingerprint", "offers")))
+                    // Messages held here for the caller; it fetches them when non-zero.
+                    json.put("pending_messages", Messages.waitingFor(session.headers["x-lanclave-device-id"]!!).size)
                     return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
+                }
+                uri == "/api/messages" && method == Method.POST -> {
+                    val (code, text) = Messages.handleReceive(session.headers["x-lanclave-device-id"]!!, postBody(session))
+                    val status = when (code) {
+                        200 -> Response.Status.OK
+                        413 -> Response.Status.PAYLOAD_TOO_LARGE
+                        else -> Response.Status.BAD_REQUEST
+                    }
+                    return newFixedLengthResponse(status, "application/json", text)
+                }
+                uri == "/api/messages/pending" && method == Method.GET -> {
+                    return newFixedLengthResponse(
+                        Response.Status.OK, "application/json",
+                        Messages.pendingJson(session.headers["x-lanclave-device-id"]!!),
+                    )
+                }
+                uri == "/api/messages/ack" && method == Method.POST -> {
+                    Messages.handleAck(session.headers["x-lanclave-device-id"]!!, postBody(session))
+                    return newFixedLengthResponse(Response.Status.OK, "application/json", "{\"status\":\"ok\"}")
                 }
                 uri == "/api/offers" || uri.startsWith("/api/offers/") -> {
                     // Authenticated above: the header is a verified paired device.
@@ -289,6 +314,15 @@ class NativeServer(
      * a device can only ever revoke trust in itself. Stops accepting it at
      * once; JS removes it from the stored list via [onPairingCancelled].
      */
+    /** A POST body as text; empty when there is none or it cannot be read. */
+    private fun postBody(session: IHTTPSession): String = try {
+        val files = HashMap<String, String>()
+        session.parseBody(files)
+        files["postData"] ?: ""
+    } catch (_: Exception) {
+        ""
+    }
+
     private fun handlePairingCancel(session: IHTTPSession): Response {
         val id = session.headers["x-lanclave-device-id"]
         val ts = session.headers["x-lanclave-timestamp"]
@@ -307,6 +341,7 @@ class NativeServer(
 
         pairedDevices = pairedDevices.filter { it != id }
         PresenceRegistry.forget(id)
+        Messages.forget(id)
         PairingGuard.shared.withdrawn(id)
         onPairingCancelled(id)
         return newFixedLengthResponse(Response.Status.OK, "application/json", "{\"status\":\"ok\"}")

@@ -4,8 +4,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C } from "@/constants/colors";
 import { Icon } from "@/components/Icon";
 import { useTransfers } from "@/contexts/TransferContext";
+import { useUnreadCount } from "@/hooks/use-messages";
 
 export default function TabsLayout() {
+  const unread = useUnreadCount();
   // Android runs edge-to-edge, so the bar would otherwise sit underneath the
   // gesture handle. Grow it by the bottom inset instead of fighting for the
   // same pixels.
@@ -44,6 +46,8 @@ export default function TabsLayout() {
         name="peers"
         options={{
           title: "Paired Peers",
+          // Messages not yet read; conversations open from a paired device.
+          tabBarBadge: unread > 0 ? (unread > 9 ? "9+" : unread) : undefined,
           tabBarIcon: ({ color }) => (
             <Icon name="peers" size={22} color={color} />
           ),

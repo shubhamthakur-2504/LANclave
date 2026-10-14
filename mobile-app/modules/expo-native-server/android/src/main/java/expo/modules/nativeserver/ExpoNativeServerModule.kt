@@ -33,6 +33,7 @@ class ExpoNativeServerModule : Module() {
       "onOffersChanged",
       "onOfferReceived",
       "onOfferProgress",
+      "onMessagesChanged",
     )
 
     OnCreate {
@@ -194,6 +195,48 @@ class ExpoNativeServerModule : Module() {
         pending.await()
         promise.resolve(found.toMap())
       }
+    }
+
+    // ---- Messages -----------------------------------------------------------
+
+    /** Write a message; it goes now if `peerAddr` answers, else on the next contact. */
+    Function("sendMessage") { peerId: String, peerAddr: String?, text: String ->
+      appContext.reactContext?.let { Messages.configure(it) }
+      val message = try {
+        Messages.queueOutgoing(peerId, text)
+      } catch (e: IllegalArgumentException) {
+        throw Exception(e.message)
+      }
+      if (!peerAddr.isNullOrEmpty()) Messages.onContact(peerId, peerAddr, 0)
+      Messages.toMap(message)
+    }
+    Function("getThread") { peerId: String ->
+      appContext.reactContext?.let { Messages.configure(it) }
+      Messages.thread(peerId).map { Messages.toMap(it) }
+    }
+    Function("listThreads") {
+      appContext.reactContext?.let { Messages.configure(it) }
+      Messages.summaries()
+    }
+    Function("markThreadRead") { peerId: String -> Messages.markRead(peerId) }
+    Function("clearThread") { peerId: String -> Messages.forget(peerId) }
+    /** A paired device answered: deliver to it, and fetch what it holds for us. */
+    Function("messagesContact") { peerId: String, peerAddr: String, waitingThere: Int ->
+      appContext.reactContext?.let { Messages.configure(it) }
+      Messages.onContact(peerId, peerAddr, waitingThere)
+    }
+    /**
+     * Copy text, marked sensitive: Android's clipboard preview then hides
+     * it, which matters for a code copied while the screen is shared.
+     */
+    Function("copyText") { text: String ->
+      val context = appContext.reactContext ?: throw Exception("React context is null")
+      val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+      val clip = android.content.ClipData.newPlainText("LANclave", text)
+      clip.description.extras = android.os.PersistableBundle().apply {
+        putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+      }
+      clipboard.setPrimaryClip(clip)
     }
 
     // ---- Blocked devices --------------------------------------------------

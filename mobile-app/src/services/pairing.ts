@@ -140,6 +140,12 @@ export async function removePairedPeer(peerId: string): Promise<boolean> {
   if (kept.length === list.length) return false;
   await SecureStore.setItemAsync(PAIRED_PEERS_KEY, JSON.stringify(kept));
   await updateNativeServerPairedDevices().catch(() => {});
+  // The conversation goes with the pairing, including what still waits.
+  try {
+    ExpoNativeServerModule.clearThread(peerId);
+  } catch {
+    // older native build
+  }
   return true;
 }
 

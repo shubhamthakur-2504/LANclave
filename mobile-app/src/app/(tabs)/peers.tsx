@@ -25,6 +25,7 @@ import {
 } from "@/services/share";
 import { offerFiles, readAutoAccept, setAutoAccept } from "@/contexts/OffersContext";
 import { unpairPeer } from "@/services/pairing";
+import { useThreadSummaries } from "@/hooks/use-messages";
 import {
   getPeerPresence,
   PeerPresence,
@@ -42,6 +43,8 @@ const LOCAL_REFRESH_MS = 5_000;
 
 export default function PairedPeersScreen() {
   const router = useRouter();
+  const threads = useThreadSummaries();
+  const unreadFor = (peerId: string) => threads.find((t) => t.peerId === peerId)?.unread ?? 0;
   const [peersWithStatus, setPeersWithStatus] = useState<PairedPeerStatus[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   /** Files handed to us by the share sheet, waiting for a destination (U3.2). */
@@ -175,6 +178,13 @@ export default function PairedPeersScreen() {
         },
       },
     ]);
+  };
+
+  const handleOpenChat = (peer: PairedPeerStatus) => {
+    router.push({
+      pathname: "/peer-chat" as any,
+      params: { id: peer.id, name: peer.name, ip: peer.ip, port: String(peer.port) },
+    });
   };
 
   const handleOpenSandbox = (peer: PairedPeerStatus) => {
@@ -373,6 +383,22 @@ export default function PairedPeersScreen() {
                       : "Device is offline or unreachable on local network"}
                   </Text>
                 )}
+                {/* Offline too: a message waits for the device to come back. */}
+                {!item.untrusted && (
+                  <Pressable
+                    style={({ pressed }) => [styles.chatBtn, pressed && styles.btnPressed]}
+                    onPress={() => handleOpenChat(item)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Message ${item.name}${unreadFor(item.id) ? `, ${unreadFor(item.id)} unread` : ""}`}
+                  >
+                    <Text style={styles.chatBtnText}>Message</Text>
+                    {unreadFor(item.id) > 0 && (
+                      <View style={styles.unread}>
+                        <Text style={styles.unreadText}>{unreadFor(item.id)}</Text>
+                      </View>
+                    )}
+                  </Pressable>
+                )}
                 <View style={styles.footer}>
                   {!item.untrusted && (
                     <Pressable
@@ -556,6 +582,28 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   sendBtnText: { fontSize: 13, fontWeight: "700", color: C.action },
+  chatBtn: {
+    marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.borderStrong,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  chatBtnText: { fontSize: 13, fontWeight: "700", color: C.content },
+  unread: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 5,
+    backgroundColor: C.action,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  unreadText: { fontSize: 10, fontWeight: "700", color: C.onAction },
   btnPressed: { opacity: 0.75 },
   offlineHint: {
     fontSize: 11,

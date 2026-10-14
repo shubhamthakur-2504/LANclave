@@ -10,6 +10,25 @@ export interface NativePresenceEntry {
   offline: boolean;
 }
 
+/** A message in a thread. waiting / delivered: written here. received: there. */
+export interface ChatMessage {
+  id: string;
+  text: string;
+  /** By the sender's clock. */
+  sentAtMs: number;
+  state: "waiting" | "delivered" | "received";
+  read: boolean;
+}
+
+/** A thread as a list shows it: counts, never text. */
+export interface ThreadSummary {
+  peerId: string;
+  count: number;
+  unread: number;
+  waiting: number;
+  lastAtMs: number;
+}
+
 /** Same shape as the `/api/sandbox/fingerprint` response. */
 export interface SandboxFingerprint {
   size: number;
@@ -28,6 +47,8 @@ type NativeServerEvents = {
   onOffersChanged: (event: { json: string }) => void;
   /** A new incoming offer; `json` is the offer. */
   onOfferReceived: (event: { json: string }) => void;
+  /** A message arrived, was delivered, or a thread changed. */
+  onMessagesChanged: () => void;
   /** How far the receiver has pulled a file of an offer we sent. */
   onOfferProgress: (event: { offerId: string; fileId: string; bytes: number }) => void;
 };
@@ -140,6 +161,15 @@ declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
     signed: boolean,
     timeoutMs: number,
   ): Promise<{ status: number; body: string }>;
+  sendMessage(peerId: string, peerAddr: string | null, text: string): ChatMessage;
+  getThread(peerId: string): ChatMessage[];
+  listThreads(): ThreadSummary[];
+  markThreadRead(peerId: string): void;
+  clearThread(peerId: string): void;
+  /** A paired device answered: deliver to it, and fetch what it holds for us. */
+  messagesContact(peerId: string, peerAddr: string, waitingThere: number): void;
+  /** Copy, marked sensitive so Android's clipboard preview hides it. */
+  copyText(text: string): void;
   /** Refuse every future pairing request from this device. */
   blockDevice(deviceId: string, deviceName: string | null): void;
   /** `true` when it was blocked. */

@@ -22,6 +22,7 @@ export default function RootLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="peer-sandbox" options={{ headerShown: false }} />
+        <Stack.Screen name="peer-chat" options={{ headerShown: false }} />
       </Stack>
       {/* Pairing started on another device can arrive on any screen. */}
       <IncomingPairingHost />
