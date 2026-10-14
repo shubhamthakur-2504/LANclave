@@ -77,9 +77,15 @@ the public key is the device's identity. The 6-digit code is derived from both
 devices' public keys, so matching codes mean each side holds the other's real
 key.
 
-**Requests.** Every device runs a small HTTP server. Every request to it,
-apart from the one used for discovery, must be signed by a paired device's key
-and carry a fresh timestamp. Requests from anything else are refused.
+**Encryption.** Every device runs a small server that speaks TLS 1.3 and
+nothing else. There is no certificate authority: each device makes a TLS key
+when it starts, and its identity key signs for it inside the certificate. So
+the handshake alone tells a client which device it has reached, and files and
+names are only ever sent to a device in the paired list.
+
+**Requests.** Every request to a device, apart from the ones used for
+discovery and pairing, must also be signed by a paired device's key and carry
+a fresh timestamp. Requests from anything else are refused.
 
 **Transfers.** All transfers are downloads by the receiving device. Sending is
 an offer; once accepted, the receiver pulls each file with resumable HTTP
@@ -89,10 +95,10 @@ range requests and verifies it when it is complete.
 
 - Only paired devices can list or fetch files, and only from the one sandbox
   folder. Paths that try to leave it are refused.
-- **Traffic is not encrypted in this version.** Requests are signed, which
-  proves who is asking, but file contents travel as plain HTTP and can be read
-  by someone capturing traffic on the same network. Use LANclave on networks
-  you trust. Encrypted connections are the first item planned for version 2.
+- Everything between devices is encrypted, and each side checks it reached
+  the device it paired with, not just any device at that address.
+- Version 1 of LANclave did not encrypt. A version 2 device will not talk to
+  it, and lists it as "Needs update".
 
 ## Limits
 
@@ -113,11 +119,11 @@ mobile-app/    Android app: React Native interface, Kotlin engine
 branding/      Logo masters and the script that generates every icon
 ```
 
-## Planned for version 2
+## Coming next
 
-Encrypted connections, a private text thread between paired devices for
-passing links and codes, subfolder browsing, and mirroring a phone's screen in
-a desktop window.
+A private text thread between paired devices for passing links and codes,
+subfolder browsing, blocking a device that keeps asking to pair, and mirroring
+a phone's screen in a desktop window.
 
 ## Author
 
