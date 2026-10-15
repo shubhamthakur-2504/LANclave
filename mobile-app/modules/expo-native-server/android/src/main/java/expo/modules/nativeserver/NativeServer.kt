@@ -168,12 +168,20 @@ class NativeServer(
                 }
                 uri == "/api/sandbox/files" -> {
                     val filesArray = JSONArray()
+                    // `?path=a/b` lists a folder inside the sandbox; none, the top.
+                    val folder = session.parameters["path"]?.firstOrNull()?.takeIf { it.isNotEmpty() }
+                    val segments = if (folder == null) emptyList() else
+                        SandboxPath.segments(folder)
+                            ?: return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Bad Request")
 
                     if (isContentUri) {
+                        val parent = if (segments.isEmpty()) rootDocumentId() else
+                            safFind(segments)?.takeIf { it.isDirectory }?.let { DocumentsContract.getDocumentId(it.uri) }
+                        parent ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
                         // One query for every child's name, size, type and
                         // mtime. DocumentFile.listFiles() + length()/isDirectory
                         // cost a DocumentsProvider round trip per call, per file.
-                        querySafChildren { name, size, isDir, modified ->
+                        querySafChildren(parent) { name, size, isDir, modified ->
                             if (!name.startsWith(".")) {
                                 val fileObj = JSONObject()
                                 fileObj.put("name", name)
@@ -184,7 +192,8 @@ class NativeServer(
                             }
                         }
                     } else {
-                        val dir = File(sandboxPath)
+                        val dir = SandboxPath.resolve(File(sandboxPath), segments)?.takeIf { it.isDirectory }
+                            ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
                         dir.listFiles()?.forEach { file ->
                             if (!file.name.startsWith(".")) {
                                 val fileObj = JSONObject()
@@ -204,21 +213,23 @@ class NativeServer(
                 }
                 uri.startsWith("/files/") -> {
                     val pathParam = uri.substring("/files/".length)
-                    if (pathParam.contains("..") || pathParam.contains("/") || pathParam.isEmpty()) {
-                        return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Bad Request")
-                    }
+                    val segments = SandboxPath.segments(pathParam)
+                        ?: return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Bad Request")
 
                     if (method == Method.PUT) {
+                        // The old push writes to the top of the sandbox only.
+                        if (segments.size != 1) {
+                            return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Bad Request")
+                        }
                         return handlePutFile(session, pathParam)
                     }
 
                     val served = if (isContentUri) {
-                        val tree = DocumentFile.fromTreeUri(context, Uri.parse(rawSandboxPath))
-                        tree?.findFile(pathParam)
+                        safFind(segments)
                             ?.takeIf { it.exists() && it.isFile }
-                            ?.let { ServedFile.of(context, it.uri, pathParam, it.length(), it.lastModified()) }
+                            ?.let { ServedFile.of(context, it.uri, segments.last(), it.length(), it.lastModified()) }
                     } else {
-                        ServedFile.of(File(sandboxPath, pathParam))
+                        SandboxPath.resolve(File(sandboxPath), segments)?.let { ServedFile.of(it) }
                     } ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
 
                     // Honours Range / If-Range, so an interrupted pull resumes.
@@ -418,15 +429,16 @@ class NativeServer(
      * and same-size numbered copies (`name (1).ext`...) are listed with their
      * digests. Same wire format as the desktop's handler.
      */
-    private fun handleFingerprint(session: IHTTPSession, name: String): Response {
-        if (name.contains("..") || name.contains("/") || name.isEmpty()) {
-            return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
-        }
+    private fun handleFingerprint(session: IHTTPSession, path: String): Response {
+        // A file in a folder too, so a pull from one is checked when it ends.
+        val segments = SandboxPath.segments(path)
+            ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
+        val name = segments.last()
         val expectedSize = session.parameters["size"]?.firstOrNull()?.toLongOrNull()
 
         // exact=1: this file only, not its numbered copies (download checks).
         val exact = session.parameters["exact"]?.firstOrNull() == "1"
-        val result = Fingerprint.ofSandboxFile(context, rawSandboxPath, name, expectedSize, withSiblings = !exact)
+        val result = Fingerprint.ofSandboxFile(context, rawSandboxPath, name, expectedSize, withSiblings = !exact, folder = segments.dropLast(1))
             ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
 
         val json = JSONObject()
@@ -534,13 +546,32 @@ class NativeServer(
     }
     
     /** Every child of the SAF sandbox, from a single ContentResolver query. */
-    private fun querySafChildren(visit: (name: String, size: Long, isDir: Boolean, modified: Long?) -> Unit) {
+    /** The document id of the picked folder itself. */
+    private fun rootDocumentId(): String {
         val tree = Uri.parse(rawSandboxPath)
-        val parentId = if (DocumentsContract.isDocumentUri(context, tree)) {
+        return if (DocumentsContract.isDocumentUri(context, tree)) {
             DocumentsContract.getDocumentId(tree)
         } else {
             DocumentsContract.getTreeDocumentId(tree)
         }
+    }
+
+    /**
+     * A file or folder in a picked folder, one level at a time. Each step is
+     * a lookup through the storage provider, so deep paths cost more; the
+     * built-in sandbox, a real folder, does not pay this.
+     */
+    private fun safFind(segments: List<String>): DocumentFile? {
+        var node = DocumentFile.fromTreeUri(context, Uri.parse(rawSandboxPath)) ?: return null
+        for (segment in segments) {
+            if (!node.isDirectory) return null
+            node = node.findFile(segment) ?: return null
+        }
+        return node
+    }
+
+    private fun querySafChildren(parentId: String, visit: (name: String, size: Long, isDir: Boolean, modified: Long?) -> Unit) {
+        val tree = Uri.parse(rawSandboxPath)
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
         val columns = arrayOf(
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,

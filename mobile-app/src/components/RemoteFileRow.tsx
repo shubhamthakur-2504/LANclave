@@ -16,6 +16,8 @@ export interface RemoteFileRowProps {
   /** 0–100 while downloading; undefined when idle. */
   progress?: number;
   onDownload: (name: string) => void;
+  /** Go into this folder. Without it, folders are inert. */
+  onOpenFolder?: (name: string) => void;
 }
 
 export function RemoteFileRow({
@@ -24,6 +26,7 @@ export function RemoteFileRow({
   is_directory,
   progress,
   onDownload,
+  onOpenFolder,
 }: RemoteFileRowProps) {
   const isDownloading = progress !== undefined;
   const kind = fileKind(name, is_directory);
@@ -38,8 +41,15 @@ export function RemoteFileRow({
     width: `${width.value}%`,
   }));
 
+  const opensFolder = is_directory && !!onOpenFolder;
   return (
-    <View style={styles.row}>
+    <Pressable
+      style={({ pressed }) => [styles.row, opensFolder && pressed && styles.rowPressed]}
+      onPress={opensFolder ? () => onOpenFolder(name) : undefined}
+      disabled={!opensFolder}
+      accessibilityRole={opensFolder ? "button" : undefined}
+      accessibilityLabel={opensFolder ? `Open folder ${name}` : undefined}
+    >
       <View style={styles.iconWrap}>
         <FileIcon name={name} isDirectory={is_directory} />
       </View>
@@ -79,7 +89,8 @@ export function RemoteFileRow({
           )}
         </Pressable>
       )}
-    </View>
+      {opensFolder && <Text style={styles.chevron}>›</Text>}
+    </Pressable>
   );
 }
 
@@ -94,6 +105,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
+  rowPressed: { opacity: 0.75 },
+  chevron: { fontSize: 22, color: C.contentFaint, marginLeft: 8 },
   // The tile draws its own tinted background.
   iconWrap: { marginRight: 12 },
   icon: { fontSize: 18 },

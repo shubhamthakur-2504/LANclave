@@ -37,10 +37,13 @@ function errorMessage(err: unknown): string {
 
 export function useRemotePeer(
   selectedPeer: SelectedPeer | null,
+  /** `a/b` inside the peer's sandbox; empty for the top. */
+  folder = "",
 ): UseRemotePeerResult {
-  // Keyed by address rather than by the object: callers build a new peer
-  // object on every render.
-  const addr = selectedPeer ? `${selectedPeer.ip}:${selectedPeer.port}` : "";
+  // Keyed by address and folder rather than by the object: callers build a
+  // new peer object on every render.
+  const peerAddr = selectedPeer ? `${selectedPeer.ip}:${selectedPeer.port}` : "";
+  const addr = peerAddr ? `${peerAddr}|${folder}` : "";
 
   const [listing, setListing] = useState<Listing>(EMPTY);
   const [refreshing, setRefreshing] = useState(false);
@@ -51,7 +54,7 @@ export function useRemotePeer(
   useEffect(() => {
     if (!addr) return;
     let cancelled = false;
-    fetchRemoteFileList(addr)
+    fetchRemoteFileList(peerAddr, folder)
       .then((files) => {
         if (!cancelled) setListing({ addr, files, error: null });
       })
@@ -62,14 +65,14 @@ export function useRemotePeer(
     return () => {
       cancelled = true;
     };
-  }, [addr]);
+  }, [addr, peerAddr, folder]);
 
   /** Manual refresh, e.g. after an upload or on pull-to-refresh. */
   const fetchPeerFiles = useCallback(async () => {
     if (!addr) return;
     setRefreshing(true);
     try {
-      const files = await fetchRemoteFileList(addr);
+      const files = await fetchRemoteFileList(peerAddr, folder);
       setListing({ addr, files, error: null });
     } catch (err) {
       console.warn("[useRemotePeer] refresh error:", err);
@@ -81,7 +84,7 @@ export function useRemotePeer(
     } finally {
       setRefreshing(false);
     }
-  }, [addr]);
+  }, [addr, peerAddr, folder]);
 
   const current = listing.addr === addr && addr !== "";
   return {

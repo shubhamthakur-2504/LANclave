@@ -62,9 +62,14 @@ object Fingerprint {
         name: String,
         expectedSize: Long?,
         withSiblings: Boolean = true,
+        /** The folder `name` is in, as segments; empty for the top. */
+        folder: List<String> = emptyList(),
     ): Result? {
         val lookup: (String) -> Entry? = if (rawSandboxPath.startsWith("content://")) {
-            val tree = DocumentFile.fromTreeUri(context, Uri.parse(rawSandboxPath)) ?: return null
+            var tree = DocumentFile.fromTreeUri(context, Uri.parse(rawSandboxPath)) ?: return null
+            for (segment in folder) {
+                tree = tree.findFile(segment)?.takeIf { it.isDirectory } ?: return null
+            }
             // One listing, then lookups by name: findFile() would re-list per call.
             val children = tree.listFiles().filter { it.isFile }.associateBy { it.name }
             val resolve: (String) -> Entry? = { n ->
@@ -74,7 +79,7 @@ object Fingerprint {
             }
             resolve
         } else {
-            val dir = File(rawSandboxPath.removePrefix("file://"))
+            val dir = SandboxPath.resolve(File(rawSandboxPath.removePrefix("file://")), folder) ?: return null
             val resolve: (String) -> Entry? = { n ->
                 File(dir, n).takeIf { it.isFile }?.let { f -> Entry(f.length(), f.absolutePath, f.lastModified()) { f.inputStream() } }
             }

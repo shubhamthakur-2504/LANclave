@@ -209,7 +209,11 @@ object TransferEngine {
     /** A download from a peer's sandbox, started by the user here. */
     fun pullFromSandbox(peerAddr: String, peerId: String, peerName: String?, remoteName: String, size: Long?): String {
         val safe = Offers.safeFileName(remoteName) ?: throw IllegalArgumentException("Unsafe file name")
-        val encoded = java.net.URLEncoder.encode(remoteName, "UTF-8").replace("+", "%20")
+        // A file in a folder (`photos/a.jpg`) is fetched by its path and saved
+        // at the top of our sandbox under its own name.
+        val encoded = remoteName.split('/').joinToString("/") {
+            java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20")
+        }
         val path = "/files/$encoded"
         // Asked again for a file already on its way (a double tap): continue
         // that download rather than start a twin.

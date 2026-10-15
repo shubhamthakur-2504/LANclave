@@ -1,6 +1,7 @@
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
+  BackHandler,
   FlatList,
   Pressable,
   StatusBar,
@@ -18,7 +19,7 @@ import { useTransfers } from "@/contexts/TransferContext";
 import { Icon } from "@/components/Icon";
 import { SortBar } from "@/components/SortBar";
 import { getLastSort, rememberSort, sortFiles, type SortState } from "@/utils/sort-files";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 export default function PeerSandboxScreen() {
   const router = useRouter();
@@ -28,6 +29,24 @@ export default function PeerSandboxScreen() {
   const port = Number(params.port ?? 8377);
   const name = params.name ?? "Peer";
   const id = params.id || undefined;
+
+  /** Where we are in the peer's sandbox: `a/b`, or empty for the top. */
+  const [folder, setFolder] = useState("");
+  const crumbs = folder ? folder.split("/") : [];
+  const pathOf = (fileName: string) => (folder ? `${folder}/${fileName}` : fileName);
+  const openFolder = (folderName: string) => setFolder(pathOf(folderName));
+
+  // Android's back button goes up a folder before it leaves the screen.
+  useFocusEffect(
+    useCallback(() => {
+      const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+        if (!folder) return false;
+        setFolder(folder.split("/").slice(0, -1).join("/"));
+        return true;
+      });
+      return () => sub.remove();
+    }, [folder]),
+  );
 
   const { refreshFiles } = useSandboxFiles();
   const { transfers, startDownload } = useTransfers();
@@ -39,6 +58,7 @@ export default function PeerSandboxScreen() {
     fetchPeerFiles,
   } = useRemotePeer(
     ip ? { ip, port, name } : null,
+    folder,
   );
 
   const [sort, setSort] = useState<SortState>(getLastSort);
@@ -94,6 +114,27 @@ export default function PeerSandboxScreen() {
           <Text style={styles.subtitle}>
             {ip}:{port} • Connected & Authenticated
           </Text>
+          {/* Where in its sandbox we are; each step is a way back up. */}
+          <View style={styles.crumbs}>
+            <Pressable onPress={() => setFolder("")} hitSlop={6} accessibilityRole="button" accessibilityLabel="Top of the sandbox">
+              <Text style={[styles.crumb, crumbs.length === 0 && styles.crumbHere]}>Sandbox</Text>
+            </Pressable>
+            {crumbs.map((crumb, i) => (
+              <View key={i} style={styles.crumbStep}>
+                <Text style={styles.crumbSep}>/</Text>
+                <Pressable
+                  onPress={() => setFolder(crumbs.slice(0, i + 1).join("/"))}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Folder ${crumb}`}
+                >
+                  <Text style={[styles.crumb, i === crumbs.length - 1 && styles.crumbHere]} numberOfLines={1}>
+                    {crumb}
+                  </Text>
+                </Pressable>
+              </View>
+            ))}
+          </View>
         </View>
 
         <View style={styles.divider} />
@@ -124,7 +165,7 @@ export default function PeerSandboxScreen() {
           renderItem={({ item }) => {
             // Native transfer ids are random: match on peer and file.
             const transfer = transfers.find(
-              (t) => t.direction === 'download' && t.peerAddr === `${ip}:${port}` && t.remoteName === item.name,
+              (t) => t.direction === 'download' && t.peerAddr === `${ip}:${port}` && t.remoteName === pathOf(item.name),
             );
             const progressPct = transfer && transfer.fileSize > 0 && transfer.status === 'in_progress'
               ? Math.round((transfer.progress / transfer.fileSize) * 100)
@@ -136,7 +177,9 @@ export default function PeerSandboxScreen() {
                 size={item.size}
                 is_directory={item.is_directory}
                 progress={progressPct}
-                onDownload={() => startDownload({ ip, port, name, id }, item.name, item.size, refreshFiles)}
+                // A file from a folder lands at the top of our sandbox under its own name.
+                onDownload={() => startDownload({ ip, port, name, id }, pathOf(item.name), item.size, refreshFiles)}
+                onOpenFolder={openFolder}
               />
             );
           }}
@@ -145,7 +188,7 @@ export default function PeerSandboxScreen() {
             isFetching ? null : (
               <View style={styles.empty}>
                 <Icon name="folder" size={40} color={C.contentFaint} />
-                <Text style={styles.emptyTitle}>Remote sandbox is empty</Text>
+                <Text style={styles.emptyTitle}>{folder ? "This folder is empty" : "Remote sandbox is empty"}</Text>
                 <Text style={styles.emptyHint}>
                   No files available on this peer device yet.
                 </Text>
@@ -187,6 +230,11 @@ const styles = StyleSheet.create({
 
   title: { fontSize: 24, fontWeight: "700", color: C.content },
   subtitle: { marginTop: 2, fontSize: 12, color: C.contentMuted },
+  crumbs: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", marginTop: 10 },
+  crumbStep: { flexDirection: "row", alignItems: "center" },
+  crumb: { fontSize: 13, color: C.action, maxWidth: 160 },
+  crumbHere: { color: C.content, fontWeight: "600" },
+  crumbSep: { fontSize: 13, color: C.contentFaint, marginHorizontal: 6 },
 
   divider: {
     height: 1,
