@@ -462,8 +462,13 @@ pub async fn rescan_peer(
 pub async fn list_peer_files(
     state: State<'_, CliState>,
     peer_addr: String,
+    // A folder inside the peer's sandbox, `a/b`; none for the top.
+    path: Option<String>,
 ) -> Result<Vec<FileEntry>, String> {
-    let url = format!("https://{peer_addr}/api/sandbox/files");
+    let mut url = format!("https://{peer_addr}/api/sandbox/files");
+    if let Some(path) = path.filter(|p| !p.is_empty()) {
+        url.push_str(&format!("?path={}", urlencoding::encode(&path)));
+    }
 
     let (ts, sig) = crate::pairing::sign_request(&state.identity_key, &state.device_id);
     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());

@@ -83,15 +83,17 @@ export async function revealInSandbox(fileName: string): Promise<void> {
 
 // ── File operations ────────────────────────────────────────────────
 
-export async function listPeerFiles(peerAddr: string): Promise<FileEntry[]> {
-  return await invoke("list_peer_files", { peerAddr });
+/** A folder of a peer's sandbox: `folder` is `a/b`, or empty for the top. */
+export async function listPeerFiles(peerAddr: string, folder = ""): Promise<FileEntry[]> {
+  return await invoke("list_peer_files", { peerAddr, path: folder || null });
 }
 
 /** Queue a download from a peer's sandbox; resolves to the transfer id. */
-export async function pullFile(peer: PeerInfo, file: FileEntry): Promise<string> {
+export async function pullFile(peer: PeerInfo, file: FileEntry, folder = ""): Promise<string> {
   return await invoke("pull_file", {
     peerAddr: peer.addr,
-    remotePath: file.name,
+    // A file in one of the peer's folders lands at the top of ours.
+    remotePath: folder ? `${folder}/${file.name}` : file.name,
     localFilename: file.name,
     // Lets the backend rule out a duplicate by size before asking the peer.
     remoteSize: file.size > 0 ? file.size : null,

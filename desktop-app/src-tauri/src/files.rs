@@ -223,13 +223,22 @@ fn sibling_path(requested: &str, file_name: &str) -> String {
 // File-list handler (for remote peers)
 // ---------------------------------------------------------------------------
 
-/// List the contents of our sandbox root (public endpoint for remote peers).
+#[derive(serde::Deserialize)]
+pub struct ListQuery {
+    /// A folder inside the sandbox, `a/b`. Absent or empty: the top.
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// List a folder of our sandbox (public endpoint for remote peers).
 ///
 /// This handler is mounted at `GET /api/sandbox/files` and requires the
-/// same pairing‑auth as any other route.
+/// same pairing‑auth as any other route. `?path=a/b` lists a subfolder,
+/// through the same checks as every other path a peer sends.
 pub async fn list_files_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<ListQuery>,
 ) -> Result<Json<Vec<ListFileItem>>, StatusCode> {
     // ---- 0. Authorize ----------------------------------------------------
     crate::pairing::check_request(&state.auth, &headers)
@@ -240,9 +249,14 @@ pub async fn list_files_handler(
         std::path::PathBuf::from(&settings.sandbox_path)
     };
 
-    // ---- 1. Scan the sandbox root ----------------------------------------
+    let folder = match query.path.as_deref().filter(|p| !p.is_empty()) {
+        None => sandbox_root.clone(),
+        Some(path) => crate::sandbox::verify_sandboxed_path(&sandbox_root, path).map_err(|_| StatusCode::BAD_REQUEST)?,
+    };
+
+    // ---- 1. Scan the folder ---------------------------------------------
     let mut entries = Vec::new();
-    let mut dir = tokio_fs::read_dir(&sandbox_root)
+    let mut dir = tokio_fs::read_dir(&folder)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
@@ -368,6 +382,43 @@ mod tests {
 
         let app = build_raw_router(make_state(&dir));
         (dir, app)
+    }
+
+    async fn list(app: axum::Router, query: &str) -> (axum::http::StatusCode, Vec<String>) {
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+        let req = axum::http::Request::builder()
+            .uri(format!("/api/sandbox/files{query}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        let status = res.status();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let names = serde_json::from_slice::<Vec<serde_json::Value>>(&bytes)
+            .map(|items| items.iter().map(|i| i["name"].as_str().unwrap_or("").to_string()).collect())
+            .unwrap_or_default();
+        (status, names)
+    }
+
+    #[tokio::test]
+    async fn a_subfolder_can_be_listed() {
+        let (_dir, app) = setup_with_file("photos/2026/beach.jpg", b"jpg");
+        let (status, names) = list(app.clone(), "").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(names, vec!["photos"]);
+
+        let (status, names) = list(app, "?path=photos%2F2026").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(names, vec!["beach.jpg"]);
+    }
+
+    #[tokio::test]
+    async fn listing_cannot_leave_the_sandbox() {
+        let (_dir, app) = setup_with_file("notes.txt", b"x");
+        for bad in ["?path=..", "?path=..%2F..", "?path=%2Fetc", "?path=C%3A%5CWindows"] {
+            let (status, _) = list(app.clone(), bad).await;
+            assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{bad}");
+        }
     }
 
     fn empty_router() -> (TempDir, axum::Router) {

@@ -26,6 +26,8 @@ interface FileListPanelProps {
   onSelect?: (name: string) => void;
   /** Open with the default app: double-click or Enter. */
   onOpen?: (name: string) => void;
+  /** Go into a folder: click or Enter. Without it, folders are inert. */
+  onOpenFolder?: (name: string) => void;
   selectedName?: string | null;
 }
 
@@ -42,6 +44,7 @@ export default function FileListPanel({
   onDownload,
   onSelect,
   onOpen,
+  onOpenFolder,
   selectedName = null,
 }: FileListPanelProps) {
   const [sort, setSort] = useState<SortState>(loadSort);
@@ -87,16 +90,17 @@ export default function FileListPanel({
           return (
             <div
               key={file.name}
-              onClick={() => onSelect?.(file.name)}
+              onClick={() => (file.is_directory && onOpenFolder ? onOpenFolder(file.name) : onSelect?.(file.name))}
               onDoubleClick={() => !file.is_directory && onOpen?.(file.name)}
               onKeyDown={(e) => {
+                if (e.key === "Enter" && file.is_directory) onOpenFolder?.(file.name);
                 if (e.key === "Enter" && !file.is_directory) onOpen?.(file.name);
                 if (e.key === " ") {
                   e.preventDefault();
                   onSelect?.(file.name);
                 }
               }}
-              tabIndex={onSelect || onOpen ? 0 : undefined}
+              tabIndex={onSelect || onOpen || (file.is_directory && onOpenFolder) ? 0 : undefined}
               role={onSelect ? "option" : undefined}
               aria-selected={onSelect ? file.name === selectedName : undefined}
               className={`flex w-full items-center gap-3 border-b border-border px-5 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-action ${

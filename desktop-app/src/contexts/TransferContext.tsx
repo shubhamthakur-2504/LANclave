@@ -14,7 +14,8 @@ interface TransferProgressEvent {
 
 interface TransferContextState {
   transfers: Transfer[];
-  startDownload: (peer: PeerInfo, file: FileEntry) => Promise<void>;
+  /** `folder`: where the file is in the peer's sandbox, `a/b`; empty for the top. */
+  startDownload: (peer: PeerInfo, file: FileEntry, folder?: string) => Promise<void>;
   startUpload: (peer: PeerInfo, localRelativePath: string, fileName: string) => Promise<void>;
   cancelTransfer: (id: string) => Promise<void>;
   /** Stop a download, keeping what arrived; a waiting one leaves the queue. */
@@ -172,7 +173,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const startDownload = useCallback(
-    (peer: PeerInfo, file: FileEntry) => attempt(() => api.pullFile(peer, file), peer.device_name),
+    (peer: PeerInfo, file: FileEntry, folder = "") => attempt(() => api.pullFile(peer, file, folder), peer.device_name),
     [attempt],
   );
 

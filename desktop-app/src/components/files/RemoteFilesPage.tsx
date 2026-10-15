@@ -15,6 +15,8 @@ interface RemoteFilesPageProps {
 
 export default function RemoteFilesPage({ peer, isDropping = false, onBack, onFileDownloaded }: RemoteFilesPageProps) {
   const [files, setFiles] = useState<FileEntry[]>([]);
+  /** Where we are in the peer's sandbox: `a/b`, or empty for the top. */
+  const [folder, setFolder] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
@@ -28,7 +30,7 @@ export default function RemoteFilesPage({ peer, isDropping = false, onBack, onFi
       try {
         setLoading(true);
         setError(null);
-        const fetched = await api.listPeerFiles(peer.addr);
+        const fetched = await api.listPeerFiles(peer.addr, folder);
         if (active) setFiles(fetched);
       } catch (err) {
         if (active) setError(String(err));
@@ -38,7 +40,7 @@ export default function RemoteFilesPage({ peer, isDropping = false, onBack, onFi
     };
     fetchFiles();
     return () => { active = false; };
-  }, [peer.addr]);
+  }, [peer.addr, folder]);
 
   const handleDownload = async (name: string) => {
     const file = files.find(f => f.name === name);
@@ -47,7 +49,7 @@ export default function RemoteFilesPage({ peer, isDropping = false, onBack, onFi
     setDownloadingName(name); // just for brief UI feedback
     setError(null);
     try {
-      await startDownload(peer, file);
+      await startDownload(peer, file, folder);
       onFileDownloaded(); // this just refreshes local sandbox view
     } catch (err) {
       setError(`Failed to start download: ${err}`);
@@ -57,6 +59,8 @@ export default function RemoteFilesPage({ peer, isDropping = false, onBack, onFi
   };
 
   const who = peer.device_name || `${peer.device_id.slice(0, 10)}...`;
+  const crumbs = folder ? folder.split("/") : [];
+  const openFolder = (name: string) => setFolder(folder ? `${folder}/${name}` : name);
 
   return (
     <div className={`flex h-full flex-col ${isDropping ? "ring-2 ring-inset ring-action" : ""}`}>
@@ -72,13 +76,29 @@ export default function RemoteFilesPage({ peer, isDropping = false, onBack, onFi
           <h2 className="truncate text-lg font-semibold text-content">
             Browsing {who}
           </h2>
-          <p className="truncate text-xs text-content-muted">{peer.addr}</p>
+          {/* Where in its sandbox we are; each step is a way back up. */}
+          <nav className="flex min-w-0 items-center gap-1 truncate text-xs text-content-muted" aria-label="Folder">
+            <button onClick={() => setFolder("")} className="shrink-0 hover:text-content hover:underline">
+              Sandbox
+            </button>
+            {crumbs.map((name, i) => (
+              <span key={i} className="flex min-w-0 items-center gap-1">
+                <span aria-hidden="true">/</span>
+                <button
+                  onClick={() => setFolder(crumbs.slice(0, i + 1).join("/"))}
+                  className="truncate hover:text-content hover:underline"
+                >
+                  {name}
+                </button>
+              </span>
+            ))}
+          </nav>
         </div>
         <button
           onClick={() => {
             setLoading(true);
             setError(null);
-            api.listPeerFiles(peer.addr).then(setFiles).catch((err) => setError(String(err))).finally(() => setLoading(false));
+            api.listPeerFiles(peer.addr, folder).then(setFiles).catch((err) => setError(String(err))).finally(() => setLoading(false));
           }}
           className="shrink-0 flex h-8 items-center gap-2 rounded-lg border border-border-strong bg-surface-active px-3 text-xs font-medium text-content transition-colors hover:bg-border-strong"
         >
@@ -107,13 +127,14 @@ export default function RemoteFilesPage({ peer, isDropping = false, onBack, onFi
           </div>
         ) : files.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-content-faint">
-            No files found on remote device.
+            {folder ? "This folder is empty." : "No files found on remote device."}
           </div>
         ) : (
           <FileListPanel
             files={files}
             downloadingName={downloadingName}
             onDownload={handleDownload}
+            onOpenFolder={openFolder}
           />
         )}
       </div>
