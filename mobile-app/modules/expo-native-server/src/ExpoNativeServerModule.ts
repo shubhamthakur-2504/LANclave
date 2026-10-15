@@ -47,6 +47,11 @@ type NativeServerEvents = {
   onOffersChanged: (event: { json: string }) => void;
   /** A new incoming offer; `json` is the offer. */
   onOfferReceived: (event: { json: string }) => void;
+  /**
+   * Screen sharing moved on: asking (the laptop's user is deciding),
+   * connecting, sharing, declined, failed (with `message`), ended.
+   */
+  onMirrorState: (event: { state: string; peerId: string | null; peerName: string | null; message: string | null }) => void;
   /** A message arrived, was delivered, or a thread changed. */
   onMessagesChanged: () => void;
   /** How far the receiver has pulled a file of an offer we sent. */
@@ -170,6 +175,13 @@ declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
   messagesContact(peerId: string, peerAddr: string, waitingThere: number): void;
   /** Copy, marked sensitive so Android's clipboard preview hides it. */
   copyText(text: string): void;
+  /**
+   * Ask Android to allow screen capture, then ask the laptop to show it.
+   * `false` if the user declined Android's prompt.
+   */
+  shareScreen(peerId: string, peerAddr: string, peerName: string | null): Promise<boolean>;
+  stopScreenShare(): void;
+  screenShareState(): string;
   /** Refuse every future pairing request from this device. */
   blockDevice(deviceId: string, deviceName: string | null): void;
   /** `true` when it was blocked. */

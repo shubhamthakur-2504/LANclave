@@ -5,6 +5,9 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.util.concurrent.Executors
 
+/** Request code for Android's screen-capture prompt. */
+private const val SCREEN_CAPTURE_REQUEST = 8377
+
 class ExpoNativeServerModule : Module() {
   private var server: NativeServer? = null
 
@@ -23,6 +26,10 @@ class ExpoNativeServerModule : Module() {
   /** The subnet sweep: many short probes, most of them to addresses nobody is at. */
   private val probes = Executors.newFixedThreadPool(64)
 
+  /** A screen share waiting on Android's own capture prompt. */
+  private class ShareRequest(val peerId: String, val peerAddr: String, val peerName: String?, val promise: Promise)
+  private var pendingShare: ShareRequest? = null
+
   override fun definition() = ModuleDefinition {
     Name("ExpoNativeServer")
 
@@ -34,6 +41,7 @@ class ExpoNativeServerModule : Module() {
       "onOfferReceived",
       "onOfferProgress",
       "onMessagesChanged",
+      "onMirrorState",
     )
 
     OnCreate {
@@ -238,6 +246,40 @@ class ExpoNativeServerModule : Module() {
       }
       clipboard.setPrimaryClip(clip)
     }
+
+    // ---- Showing the screen on a laptop -----------------------------------
+
+    /**
+     * Ask Android for permission to capture the screen, then ask the laptop
+     * at `peerAddr` to show it. Resolves `false` if the user said no to
+     * Android's prompt; progress after that arrives as `onMirrorState`.
+     */
+    AsyncFunction("shareScreen") { peerId: String, peerAddr: String, peerName: String?, promise: Promise ->
+      val activity = appContext.currentActivity ?: throw Exception("LANclave is not on screen")
+      val projection = activity.getSystemService(android.media.projection.MediaProjectionManager::class.java)
+      pendingShare?.promise?.resolve(false)
+      pendingShare = ShareRequest(peerId, peerAddr, peerName, promise)
+      activity.runOnUiThread {
+        activity.startActivityForResult(projection.createScreenCaptureIntent(), SCREEN_CAPTURE_REQUEST)
+      }
+    }
+
+    OnActivityResult { _, payload ->
+      if (payload.requestCode != SCREEN_CAPTURE_REQUEST) return@OnActivityResult
+      val request = pendingShare ?: return@OnActivityResult
+      pendingShare = null
+      val data = payload.data
+      val context = appContext.reactContext
+      if (payload.resultCode == android.app.Activity.RESULT_OK && data != null && context != null) {
+        Mirror.start(context, data, request.peerId, request.peerAddr, request.peerName)
+        request.promise.resolve(true)
+      } else {
+        request.promise.resolve(false)
+      }
+    }
+
+    Function("stopScreenShare") { Mirror.stop() }
+    Function("screenShareState") { Mirror.state }
 
     // ---- Blocked devices --------------------------------------------------
 

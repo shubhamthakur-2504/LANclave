@@ -2,6 +2,8 @@
   <!-- Transfers run in a foreground service only while active (P4). -->
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+  <!-- Showing the screen on a paired laptop, only while sharing (Mirror.kt). -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <uses-permission android:name="android.permission.WAKE_LOCK" />
 
@@ -10,5 +12,9 @@
       android:name="expo.modules.nativeserver.TransferService"
       android:exported="false"
       android:foregroundServiceType="dataSync" />
+    <service
+      android:name="expo.modules.nativeserver.MirrorService"
+      android:exported="false"
+      android:foregroundServiceType="mediaProjection" />
   </application>
 </manifest>

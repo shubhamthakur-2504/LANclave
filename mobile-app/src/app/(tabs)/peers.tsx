@@ -26,6 +26,7 @@ import {
 import { offerFiles, readAutoAccept, setAutoAccept } from "@/contexts/OffersContext";
 import { unpairPeer } from "@/services/pairing";
 import { useThreadSummaries } from "@/hooks/use-messages";
+import { shareScreenWith, stopScreenShare, useScreenShare } from "@/hooks/use-screen-share";
 import {
   getPeerPresence,
   PeerPresence,
@@ -44,6 +45,8 @@ const LOCAL_REFRESH_MS = 5_000;
 export default function PairedPeersScreen() {
   const router = useRouter();
   const threads = useThreadSummaries();
+  const screenShare = useScreenShare();
+  const sharing = screenShare.state !== "idle";
   const unreadFor = (peerId: string) => threads.find((t) => t.peerId === peerId)?.unread ?? 0;
   const [peersWithStatus, setPeersWithStatus] = useState<PairedPeerStatus[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -231,6 +234,27 @@ export default function PairedPeersScreen() {
           </Text>
         </View>
 
+        {/* While the screen is shown on a laptop, say so and offer Stop. */}
+        {sharing && (
+          <View style={styles.mirrorBanner}>
+            <Text style={styles.mirrorBannerText} numberOfLines={2}>
+              {screenShare.state === "sharing"
+                ? `Showing your screen on ${screenShare.peerName ?? "a laptop"}`
+                : screenShare.state === "asking"
+                  ? `Waiting for ${screenShare.peerName ?? "the laptop"} to accept…`
+                  : "Connecting…"}
+            </Text>
+            <Pressable
+              onPress={stopScreenShare}
+              style={({ pressed }) => [styles.mirrorStop, pressed && styles.btnPressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Stop showing your screen"
+            >
+              <Text style={styles.mirrorStopText}>Stop</Text>
+            </Pressable>
+          </View>
+        )}
+
         {shares.length > 0 && (
           <View style={styles.shareBanner}>
             <Icon name="send" size={18} color={C.action} />
@@ -382,6 +406,18 @@ export default function PairedPeersScreen() {
                       ? "It rejected the pairing or unpaired this phone."
                       : "Device is offline or unreachable on local network"}
                   </Text>
+                )}
+                {/* Online only: the laptop shows the screen live. */}
+                {item.isOnline && !item.untrusted && (
+                  <Pressable
+                    style={({ pressed }) => [styles.chatBtn, pressed && styles.btnPressed, sharing && styles.btnDisabled]}
+                    onPress={() => shareScreenWith(item)}
+                    disabled={sharing}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Show your screen on ${item.name}`}
+                  >
+                    <Text style={styles.chatBtnText}>Show screen</Text>
+                  </Pressable>
                 )}
                 {/* Offline too: a message waits for the device to come back. */}
                 {!item.untrusted && (
@@ -594,6 +630,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   chatBtnText: { fontSize: 13, fontWeight: "700", color: C.content },
+  mirrorBanner: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.ok,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  mirrorBannerText: { flex: 1, fontSize: 13, color: C.content },
+  mirrorStop: { borderRadius: 8, borderWidth: 1, borderColor: C.borderStrong, paddingHorizontal: 12, paddingVertical: 6 },
+  mirrorStopText: { fontSize: 13, fontWeight: "700", color: C.danger },
   unread: {
     minWidth: 18,
     height: 18,
