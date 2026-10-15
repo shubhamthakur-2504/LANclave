@@ -67,6 +67,10 @@ fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWi
 /// The close button hides instead of quitting; the page is released later
 /// if the window stays hidden.
 pub fn on_window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
+    // A mirror window going away ends its sharing session.
+    if let WindowEvent::Destroyed = event {
+        crate::mirror::window_destroyed(window.label());
+    }
     if let WindowEvent::CloseRequested { api, .. } = event {
         if window.label() == MAIN_WINDOW {
             api.prevent_close();

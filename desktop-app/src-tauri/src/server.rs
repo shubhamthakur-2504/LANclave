@@ -358,6 +358,9 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
             "/api/pairing/cancel",
             axum::routing::post(pairing_cancel_handler),
         )
+        .route("/api/mirror/sessions", axum::routing::post(crate::mirror::request_session))
+        .route("/api/mirror/sessions/{id}/offer", axum::routing::post(crate::mirror::post_offer))
+        .route("/api/mirror/sessions/{id}/stop", axum::routing::post(crate::mirror::stop_session))
         .route("/api/messages", axum::routing::post(crate::messages::receive_message))
         .route("/api/messages/pending", axum::routing::get(crate::messages::pending_messages))
         .route("/api/messages/ack", axum::routing::post(crate::messages::ack_messages))

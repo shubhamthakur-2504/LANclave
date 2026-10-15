@@ -8,6 +8,7 @@ mod fs_util;
 mod hash_cache;
 mod history;
 mod messages;
+mod mirror;
 mod offers;
 mod open_file;
 mod pairing;
@@ -135,6 +136,7 @@ pub fn run() {
             history.set_app_handle(app.handle().clone());
             offers.set_app_handle(app.handle().clone());
             messages::store().set_app_handle(app.handle().clone());
+            mirror::hub().set_app_handle(app.handle().clone());
             transfers.set_app_handle(app.handle().clone());
             // Downloads that were running or waiting when the app closed
             // pick up where their partial files stop.
@@ -203,6 +205,11 @@ pub fn run() {
             messages::mark_thread_read,
             messages::clear_thread,
             messages::send_message,
+            mirror::mirror_info,
+            mirror::mirror_decide,
+            mirror::mirror_take_offer,
+            mirror::mirror_answer,
+            mirror::mirror_close,
             commands::get_device_id,
             commands::get_settings,
             commands::update_settings,

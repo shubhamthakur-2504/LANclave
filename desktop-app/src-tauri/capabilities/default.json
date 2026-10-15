@@ -1,12 +1,18 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main"],
+  "description": "Capability for the main window and the phone-mirror windows",
+  "windows": [
+    "main",
+    "mirror-*"
+  ],
   "permissions": [
     "core:default",
     "opener:default",
     "dialog:allow-ask",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-set-size",
+    "core:window:allow-close"
   ]
 }
