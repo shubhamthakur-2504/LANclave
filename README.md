@@ -43,12 +43,19 @@ Any pair works: phone and desktop, two desktops, or two phones.
 
 **Send and fetch**
 
-- Browse a paired device's sandbox and download what you want, without anyone
-  on the other side pressing Send.
+- Browse a paired device's sandbox, folders included, and download what you
+  want, without anyone on the other side pressing Send.
 - Or send files to a device: it shows what is being offered and its owner
   accepts or declines. A trusted device can be set to always accept.
 - On the desktop, drop files onto a device to send them. On the phone, use
   Share from any other app and pick LANclave.
+
+**Show a phone's screen on the laptop**
+
+- Show screen on the phone asks the laptop, whose user accepts in a window
+  of its own. That window is what you pick in a video call's "share a
+  window", which phones cannot do themselves. View-only, and either side can
+  stop it.
 
 **Messages**
 
@@ -117,8 +124,8 @@ range requests and verifies it when it is complete.
   with its server on. The server starts with the app and can be switched off.
   With the app closed, the phone is not reachable.
 - Android 13 or later. There is no iPhone version.
-- Only the top level of the sandbox is listed; subfolders cannot be browsed
-  yet.
+- Screen sharing is view-only, has no sound, and protected screens (banking,
+  some payment and code screens) show black.
 
 ## Repository layout
 
@@ -131,7 +138,8 @@ branding/      Logo masters and the script that generates every icon
 
 ## Coming next
 
-Subfolder browsing, and mirroring a phone's screen in a desktop window.
+Measuring and tuning transfer speed, browsing folders in your own sandbox
+from inside the app, and sound for screen sharing.
 
 ## Author
 
