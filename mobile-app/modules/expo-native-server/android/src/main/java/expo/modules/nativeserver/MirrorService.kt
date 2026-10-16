@@ -12,9 +12,11 @@ import android.os.IBinder
 
 /**
  * The foreground service Android requires while the screen is captured
- * (type `mediaProjection`). Runs only while sharing: shows "Sharing your
- * screen with …" with a Stop button, and hands back to [Mirror] once it is
- * in the foreground, which is when capture is allowed to begin.
+ * (type `mediaProjection`). Started the moment the user allows capture,
+ * while LANclave is still in front (Android 12+ refuses a later start from
+ * the background), and runs until sharing ends: shows who is being asked,
+ * then "Sharing your screen with …", with a Stop button. Tells [Mirror]
+ * once it is in the foreground, which is when capture may begin.
  */
 class MirrorService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -31,9 +33,15 @@ class MirrorService : Service() {
                 setShowBadge(false)
             },
         )
-        startForeground(NOTIFICATION_ID, build(this), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        try {
+            startForeground(NOTIFICATION_ID, build(this), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } catch (e: Exception) {
+            stopSelf()
+            Mirror.serviceFailed()
+            return START_NOT_STICKY
+        }
         running = this
-        Mirror.beginCapture(this)
+        Mirror.serviceStarted()
         return START_NOT_STICKY
     }
 
@@ -60,6 +68,16 @@ class MirrorService : Service() {
             }
         }
 
+        /** Sharing moved on: update the notification to say so. */
+        fun refresh() {
+            val service = running ?: return
+            try {
+                service.getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, build(service))
+            } catch (_: Exception) {
+                // the notification is a courtesy; sharing goes on without it
+            }
+        }
+
         private fun build(ctx: Context): Notification {
             val stop = PendingIntent.getService(
                 ctx, 1, Intent(ctx, MirrorService::class.java).setAction(ACTION_STOP),
@@ -70,8 +88,16 @@ class MirrorService : Service() {
             }
             return Notification.Builder(ctx, CHANNEL)
                 .setSmallIcon(ctx.applicationInfo.icon)
-                .setContentTitle("Sharing your screen")
-                .setContentText("with ${Mirror.peerNameForNotification()}")
+                .apply {
+                    val laptop = Mirror.peerNameForNotification()
+                    if (Mirror.state == "asking") {
+                        setContentTitle("Asking to share your screen")
+                        setContentText("Waiting for $laptop to accept")
+                    } else {
+                        setContentTitle("Sharing your screen")
+                        setContentText("with $laptop")
+                    }
+                }
                 .setOngoing(true)
                 .addAction(Notification.Action.Builder(null, "Stop", stop).build())
                 .apply { if (open != null) setContentIntent(open) }

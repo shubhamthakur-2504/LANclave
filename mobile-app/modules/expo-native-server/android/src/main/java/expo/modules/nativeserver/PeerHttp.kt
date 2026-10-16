@@ -53,7 +53,9 @@ object PeerHttp {
 
     /**
      * One whole request, for the calls JS used to make with `fetch`, which
-     * cannot check a certificate like ours. Never throws.
+     * cannot check a certificate like ours. Never throws. [onOpen] gets the
+     * connection before anything is sent, for a caller that may need to cut
+     * it off from another thread (`disconnect()`).
      */
     fun request(
         addr: String,
@@ -63,9 +65,11 @@ object PeerHttp {
         trust: Tls.Trust,
         signed: Boolean,
         timeoutMs: Int,
+        onOpen: ((HttpURLConnection) -> Unit)? = null,
     ): Reply = try {
         val headers = if (body != null) mapOf("Content-Type" to "application/json") else emptyMap()
         val conn = open(addr, path, method, headers, trust, signed, timeoutMs)
+        onOpen?.invoke(conn)
         try {
             if (body != null) {
                 val bytes = body.toByteArray(Charsets.UTF_8)
