@@ -6,6 +6,9 @@ import { Pin, PinOff, X } from "lucide-react";
 
 type Stage = "asking" | "connecting" | "showing" | "ended";
 
+/** How long a dropped connection may take to come back before sharing ends. */
+const RECONNECT_GRACE_MS = 5000;
+
 interface MirrorInfo {
   peer_id: string;
   peer_name: string;
@@ -38,6 +41,7 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const sizedRef = useRef(false);
+  const graceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const name = info?.peer_name ?? "A paired device";
 
@@ -55,10 +59,13 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
       unlisten.then((u) => u());
       window.removeEventListener("beforeunload", leaving);
       pcRef.current?.close();
+      if (graceRef.current) clearTimeout(graceRef.current);
     };
   }, [sessionId]);
 
   const end = (why?: string) => {
+    if (graceRef.current) clearTimeout(graceRef.current);
+    graceRef.current = null;
     pcRef.current?.close();
     pcRef.current = null;
     setStage("ended");
@@ -67,7 +74,10 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
 
   const accept = async () => {
     setStage("connecting");
-    await invoke("mirror_decide", { id: sessionId, accept: true });
+    if (!(await invoke<boolean>("mirror_decide", { id: sessionId, accept: true }))) {
+      end(`${name} stopped asking.`);
+      return;
+    }
     try {
       const offer = await invoke<string>("mirror_take_offer", { id: sessionId });
       // No STUN or TURN: both devices are on the same network.
@@ -78,8 +88,20 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
         setStage("showing");
       });
       pc.addEventListener("connectionstatechange", () => {
-        if (pc.connectionState === "failed") end("The connection to the phone was lost.");
-        if (pc.connectionState === "closed" || pc.connectionState === "disconnected") end("Sharing ended.");
+        const state = pc.connectionState;
+        if (state === "failed") end("The connection to the phone was lost.");
+        if (state === "closed") end("Sharing ended.");
+        // A Wi-Fi blip passes; give it a moment before calling it over.
+        if (state === "disconnected" && !graceRef.current) {
+          graceRef.current = setTimeout(() => {
+            graceRef.current = null;
+            if (pc.connectionState === "disconnected") end("The connection to the phone was lost.");
+          }, RECONNECT_GRACE_MS);
+        }
+        if (state === "connected" && graceRef.current) {
+          clearTimeout(graceRef.current);
+          graceRef.current = null;
+        }
       });
       await pc.setRemoteDescription({ type: "offer", sdp: offer });
       await pc.setLocalDescription(await pc.createAnswer());
