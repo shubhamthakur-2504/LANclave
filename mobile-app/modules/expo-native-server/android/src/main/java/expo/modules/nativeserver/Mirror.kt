@@ -150,10 +150,24 @@ object Mirror {
                 408 -> finish(current, "declined", "Nobody answered on ${peerName ?: "the laptop"}.")
                 404 -> finish(current, "failed", "$name cannot show screens.")
                 409 -> finish(current, "failed", "$name is still showing an earlier request from this phone. Answer it there first.")
-                429 -> finish(current, "failed", "$name is not taking requests right now. Try again in a few seconds.")
+                429 -> {
+                    // Declined recently: it says how long to wait, and the wait grows.
+                    val wait = try { JSONObject(reply.body).optLong("retry_after_secs") } catch (_: Exception) { 0L }
+                    finish(
+                        current, "declined",
+                        if (wait > 0) "$name declined recently. You can ask again in ${waitPhrase(wait)}."
+                        else "$name is not taking requests right now. Try again in a few seconds.",
+                    )
+                }
                 else -> finish(current, "failed", "Could not reach ${peerName ?: "the laptop"}.")
             }
         }
+    }
+
+    /** "40 seconds", "2 minutes", "30 minutes". */
+    fun waitPhrase(secs: Long): String = when {
+        secs < 60 -> "$secs second${if (secs == 1L) "" else "s"}"
+        else -> ((secs + 59) / 60).let { "$it minute${if (it == 1L) "" else "s"}" }
     }
 
     /** From [MirrorService], now in the foreground. */

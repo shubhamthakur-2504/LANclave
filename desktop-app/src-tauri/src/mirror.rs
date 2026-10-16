@@ -16,6 +16,7 @@
 
 use axum::extract::{Path as UrlPath, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -31,8 +32,17 @@ const DECISION_TIMEOUT: Duration = Duration::from_secs(60);
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(20);
 /// Prompts open at once, from all phones together. Each phone gets one.
 const MAX_PROMPTS: usize = 3;
-/// After a decline, how long before the same phone may ask again.
-const DECLINE_COOLDOWN: Duration = Duration::from_secs(10);
+/// How long a phone must wait to ask again after its 1st, 2nd, ... decline in
+/// a row; the last repeats. Gentle at first, since a paired phone declined
+/// once was likely a mis-tap or bad timing, and firm for one that keeps on.
+const DECLINE_COOLDOWNS: [Duration; 4] = [
+    Duration::from_secs(10),
+    Duration::from_secs(60),
+    Duration::from_secs(5 * 60),
+    Duration::from_secs(30 * 60),
+];
+/// Quiet this long after a cooldown ends, and earlier declines are forgiven.
+const FORGIVE_AFTER: Duration = Duration::from_secs(60 * 60);
 
 /// Window labels are `mirror-<session id>`.
 pub const WINDOW_PREFIX: &str = "mirror-";
@@ -58,11 +68,43 @@ struct Session {
     answer: Option<oneshot::Sender<String>>,
 }
 
+/// A phone's recent declines.
+#[derive(Clone, Copy)]
+struct Declines {
+    count: usize,
+    until: Instant,
+}
+
+/// Why a phone may not ask right now.
+#[derive(Debug, PartialEq)]
+enum Refused {
+    /// Its earlier prompt is still open.
+    AlreadyAsking,
+    /// Too many prompts are open, from all phones.
+    TooMany,
+    /// Declined recently; may ask again after this long.
+    CoolingDown(Duration),
+}
+
+impl IntoResponse for Refused {
+    fn into_response(self) -> Response {
+        match self {
+            Refused::AlreadyAsking => StatusCode::CONFLICT.into_response(),
+            Refused::TooMany => StatusCode::TOO_MANY_REQUESTS.into_response(),
+            Refused::CoolingDown(wait) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({ "retry_after_secs": wait.as_secs().max(1) })),
+            )
+                .into_response(),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct MirrorHub {
     sessions: Mutex<HashMap<String, Session>>,
-    /// When each phone was last declined, for [DECLINE_COOLDOWN].
-    declined: Mutex<HashMap<String, Instant>>,
+    /// Each phone's recent declines, for [DECLINE_COOLDOWNS].
+    declined: Mutex<HashMap<String, Declines>>,
     app: Mutex<Option<tauri::AppHandle>>,
 }
 
@@ -85,17 +127,17 @@ impl MirrorHub {
     /// on. Refused while that phone already has a prompt open, just after
     /// it was declined, or when too many prompts are open: a paired phone
     /// cannot bury the desktop in windows.
-    fn open(&self, peer_id: &str, peer_name: &str) -> Result<(String, oneshot::Receiver<bool>), StatusCode> {
-        if self.declined.lock().unwrap().get(peer_id).is_some_and(|at| at.elapsed() < DECLINE_COOLDOWN) {
-            return Err(StatusCode::TOO_MANY_REQUESTS);
+    fn open(&self, peer_id: &str, peer_name: &str) -> Result<(String, oneshot::Receiver<bool>), Refused> {
+        if let Some(wait) = self.cooling_down(peer_id, Instant::now()) {
+            return Err(Refused::CoolingDown(wait));
         }
         let mut sessions = self.sessions.lock().unwrap();
         let asking = || sessions.values().filter(|s| s.decide.is_some());
         if asking().any(|s| s.peer_id == peer_id) {
-            return Err(StatusCode::CONFLICT);
+            return Err(Refused::AlreadyAsking);
         }
         if asking().count() >= MAX_PROMPTS {
-            return Err(StatusCode::TOO_MANY_REQUESTS);
+            return Err(Refused::TooMany);
         }
         let id = uuid::Uuid::new_v4().simple().to_string();
         let (tx, rx) = oneshot::channel();
@@ -109,6 +151,28 @@ impl MirrorHub {
             },
         );
         Ok((id, rx))
+    }
+
+    /// How long `peer_id` must still wait after being declined, if at all.
+    fn cooling_down(&self, peer_id: &str, now: Instant) -> Option<Duration> {
+        let mut declined = self.declined.lock().unwrap();
+        let d = *declined.get(peer_id)?;
+        if now >= d.until + FORGIVE_AFTER {
+            declined.remove(peer_id);
+            return None;
+        }
+        (d.until > now).then(|| d.until - now)
+    }
+
+    /// The user declined `peer_id`: it waits longer each time in a row.
+    fn record_decline(&self, peer_id: &str, now: Instant) {
+        let mut declined = self.declined.lock().unwrap();
+        let count = match declined.get(peer_id) {
+            Some(d) if now < d.until + FORGIVE_AFTER => d.count + 1,
+            _ => 1,
+        };
+        let wait = DECLINE_COOLDOWNS[(count - 1).min(DECLINE_COOLDOWNS.len() - 1)];
+        declined.insert(peer_id.to_string(), Declines { count, until: now + wait });
     }
 
     /// Sessions `peer_id` had before `current`. The phone shares with one
@@ -191,14 +255,16 @@ fn caller(state: &AppState, headers: &HeaderMap) -> Result<String, StatusCode> {
 
 /// `POST /api/mirror/sessions` -- a paired phone asks to show its screen.
 /// Held until the user answers: 200 with the session id, 403 declined, 408
-/// no answer.
+/// no answer. Refused at once with 409 while its earlier prompt is open,
+/// and 429 when declined recently (with `retry_after_secs`) or when too many
+/// prompts are open.
 pub async fn request_session(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let peer_id = caller(&state, &headers)?;
+) -> Result<Json<serde_json::Value>, Response> {
+    let peer_id = caller(&state, &headers).map_err(IntoResponse::into_response)?;
     let peer_name = state.peer_name(&peer_id).unwrap_or_else(|| "A paired device".into());
-    let (id, decision) = hub().open(&peer_id, &peer_name)?;
+    let (id, decision) = hub().open(&peer_id, &peer_name).map_err(IntoResponse::into_response)?;
     for old in hub().earlier(&peer_id, &id) {
         hub().end(&old);
         tell_window(&old, "mirror-ended");
@@ -211,13 +277,15 @@ pub async fn request_session(
     match tokio::time::timeout(DECISION_TIMEOUT, decision).await {
         Ok(Ok(true)) => {
             prompt.answered = true;
+            // Accepted: whatever went before is forgiven.
+            hub().declined.lock().unwrap().remove(&peer_id);
             Ok(Json(serde_json::json!({ "session_id": id })))
         }
         Ok(_) => {
-            hub().declined.lock().unwrap().insert(peer_id, Instant::now());
-            Err(StatusCode::FORBIDDEN)
+            hub().record_decline(&peer_id, Instant::now());
+            Err(StatusCode::FORBIDDEN.into_response())
         }
-        Err(_) => Err(StatusCode::REQUEST_TIMEOUT),
+        Err(_) => Err(StatusCode::REQUEST_TIMEOUT.into_response()),
     }
 }
 
@@ -396,7 +464,7 @@ mod tests {
     fn a_phone_gets_one_prompt_at_a_time() {
         let hub = MirrorHub::default();
         let (id, _decision) = hub.open("phone", "Galaxy A14").unwrap();
-        assert_eq!(hub.open("phone", "Galaxy A14").unwrap_err(), StatusCode::CONFLICT);
+        assert_eq!(hub.open("phone", "Galaxy A14").unwrap_err(), Refused::AlreadyAsking);
         hub.end(&id);
         assert!(hub.open("phone", "Galaxy A14").is_ok());
     }
@@ -408,19 +476,47 @@ mod tests {
         for n in 0..MAX_PROMPTS {
             waiting.push(hub.open(&format!("phone-{n}"), "Galaxy A14").unwrap());
         }
-        assert_eq!(hub.open("one-more", "Galaxy A14").unwrap_err(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(hub.open("one-more", "Galaxy A14").unwrap_err(), Refused::TooMany);
         // An accepted session is no longer a prompt.
         assert!(hub.decide(&waiting[0].0, true));
         assert!(hub.open("one-more", "Galaxy A14").is_ok());
     }
 
     #[test]
-    fn a_declined_phone_waits_before_asking_again() {
+    fn a_phone_declined_again_and_again_waits_longer_each_time() {
         let hub = MirrorHub::default();
-        hub.declined.lock().unwrap().insert("phone".into(), Instant::now());
-        assert_eq!(hub.open("phone", "Galaxy A14").unwrap_err(), StatusCode::TOO_MANY_REQUESTS);
-        hub.declined.lock().unwrap().insert("phone".into(), Instant::now() - DECLINE_COOLDOWN);
-        assert!(hub.open("phone", "Galaxy A14").is_ok());
+        let mut now = Instant::now();
+        for wait in DECLINE_COOLDOWNS {
+            hub.record_decline("phone", now);
+            assert_eq!(hub.cooling_down("phone", now), Some(wait));
+            now += wait;
+            assert_eq!(hub.cooling_down("phone", now), None);
+        }
+        // The longest wait repeats.
+        hub.record_decline("phone", now);
+        assert_eq!(hub.cooling_down("phone", now), Some(DECLINE_COOLDOWNS[3]));
+    }
+
+    #[test]
+    fn a_declined_phone_is_told_how_long_to_wait() {
+        let hub = MirrorHub::default();
+        hub.record_decline("phone", Instant::now());
+        match hub.open("phone", "Galaxy A14").unwrap_err() {
+            Refused::CoolingDown(wait) => assert!(wait <= DECLINE_COOLDOWNS[0] && wait.as_secs() >= 9),
+            other => panic!("expected a cooldown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn declines_are_forgiven_after_a_quiet_hour() {
+        let hub = MirrorHub::default();
+        let now = Instant::now();
+        hub.record_decline("phone", now);
+        hub.record_decline("phone", now + DECLINE_COOLDOWNS[0]);
+        let later = now + DECLINE_COOLDOWNS[0] + DECLINE_COOLDOWNS[1] + FORGIVE_AFTER;
+        assert_eq!(hub.cooling_down("phone", later), None);
+        hub.record_decline("phone", later);
+        assert_eq!(hub.cooling_down("phone", later), Some(DECLINE_COOLDOWNS[0]));
     }
 
     #[test]
