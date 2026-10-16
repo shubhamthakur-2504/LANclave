@@ -11,6 +11,19 @@ private const val SCREEN_CAPTURE_REQUEST = 8377
 class ExpoNativeServerModule : Module() {
   private var server: NativeServer? = null
 
+  companion object {
+    /**
+     * The server holding the port, whichever instance of this module
+     * started it. Process-wide, because there is only one port.
+     */
+    @Volatile private var listening: NativeServer? = null
+
+    private fun stopListening(server: NativeServer) {
+      server.stop()
+      if (listening === server) listening = null
+    }
+  }
+
   /** The newest pairing request, until JS shows it. */
   @Volatile private var pendingRequest: Map<String, Any?>? = null
 
@@ -47,6 +60,15 @@ class ExpoNativeServerModule : Module() {
     OnCreate {
       // Native transfers and offers talk to JS through here.
       Events.sink = { name, body -> sendEvent(name, body) }
+    }
+
+    // A JS reload replaces this module with a new instance. Its server must
+    // go with it: left running, it holds the port, so the new instance can
+    // never listen, and it reports to a JS runtime that no longer exists.
+    OnDestroy {
+      server?.let { stopListening(it) }
+      server = null
+      currentConfig = null
     }
 
     /**
@@ -126,7 +148,9 @@ class ExpoNativeServerModule : Module() {
           return@Function true
         }
 
-        existing?.stop()
+        existing?.let { stopListening(it) }
+        // One an earlier instance of this module left running (see OnDestroy).
+        listening?.let { stopListening(it) }
         val context = appContext.reactContext ?: throw Exception("React context is null")
         val next = NativeServer(context, port, deviceId, deviceName, sandboxPath, pairedDevices.toList()) { cancelledId ->
           // Queued as well as announced: the stored paired list lives in JS,
@@ -154,6 +178,7 @@ class ExpoNativeServerModule : Module() {
         Offers.configure(context, sandboxPath, deviceName)
         TransferEngine.configure(context, sandboxPath)
         server = next
+        listening = next
         currentConfig = config
         LocalNetwork.holdMulticast(context)
         true
@@ -415,7 +440,7 @@ class ExpoNativeServerModule : Module() {
     }
 
     Function("stopServer") {
-      server?.stop()
+      server?.let { stopListening(it) }
       server = null
       currentConfig = null
       LocalNetwork.releaseMulticast()
