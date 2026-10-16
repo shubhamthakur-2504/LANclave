@@ -158,13 +158,20 @@ export default function PeerChatScreen() {
         )}
       </View>
 
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      {/* Padding on Android too: the app draws edge to edge, so Android no
+          longer shrinks the window for the keyboard and the composer would
+          sit behind it. */}
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <FlatList
           ref={listRef}
           data={messages}
           keyExtractor={(m) => m.id}
           contentContainerStyle={styles.list}
+          // Copy and links work with the keyboard up, without closing it.
+          keyboardShouldPersistTaps="handled"
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+          // The keyboard shrinks the list: keep the latest message in view.
+          onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
           ListEmptyComponent={
             <Text style={styles.empty}>Send a link, a code or a note. Only {name} can read it.</Text>
           }
