@@ -37,6 +37,14 @@ const DECLINE_COOLDOWN: Duration = Duration::from_secs(10);
 /// Window labels are `mirror-<session id>`.
 pub const WINDOW_PREFIX: &str = "mirror-";
 
+/// WebView2 arguments; must match `additionalBrowserArgs` in
+/// `tauri.conf.json` exactly, or this window cannot open beside the main
+/// one (they share one WebView2 environment). The first three are wry's
+/// defaults. The last makes WebRTC offer this machine's real addresses
+/// instead of random `.local` names, which the phone cannot resolve: a phone
+/// that is itself the hotspot otherwise has no way to reach the window.
+const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,WebRtcHideLocalIpsWithMdns";
+
 #[derive(Default)]
 struct Session {
     peer_id: String,
@@ -146,6 +154,7 @@ fn open_window(id: &str, peer_name: &str) {
         .title(format!("LANclave — {peer_name}"))
         .inner_size(440.0, 860.0)
         .min_inner_size(240.0, 320.0)
+        .additional_browser_args(BROWSER_ARGS)
         .focused(true)
         .build();
 }
@@ -424,5 +433,11 @@ mod tests {
         drop(Prompt { id: &id, answered: true });
         assert!(mirror_info(id.clone()).is_some());
         hub().end(&id);
+    }
+
+    #[test]
+    fn the_window_opens_with_the_same_webview_arguments_as_the_main_one() {
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["app"]["windows"][0]["additionalBrowserArgs"], BROWSER_ARGS);
     }
 }

@@ -8,6 +8,12 @@ type Stage = "asking" | "connecting" | "showing" | "ended";
 
 /** How long a dropped connection may take to come back before sharing ends. */
 const RECONNECT_GRACE_MS = 5000;
+/** Connected this long with no picture: say so instead of a blank window. */
+const FIRST_FRAME_MS = 10000;
+
+/** The candidate lines of an SDP, for the console when a connection fails. */
+const candidates = (sdp: string | undefined) =>
+  (sdp ?? "").split(/\r?\n/).filter((l) => l.startsWith("a=candidate"));
 
 interface MirrorInfo {
   peer_id: string;
@@ -37,6 +43,8 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
   const [info, setInfo] = useState<MirrorInfo | null>(null);
   const [stage, setStage] = useState<Stage>("asking");
   const [problem, setProblem] = useState<string | null>(null);
+  /** What "connecting" is waiting on, in words. */
+  const [detail, setDetail] = useState<string | null>(null);
   const [onTop, setOnTop] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -83,12 +91,25 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
       // No STUN or TURN: both devices are on the same network.
       const pc = new RTCPeerConnection({ iceServers: [] });
       pcRef.current = pc;
+      // The track arrives with the offer, long before any picture: the
+      // window becomes the viewer on the first frame (`onLoadedMetadata`).
       pc.addEventListener("track", (event) => {
         if (videoRef.current) videoRef.current.srcObject = event.streams[0] ?? new MediaStream([event.track]);
-        setStage("showing");
       });
       pc.addEventListener("connectionstatechange", () => {
         const state = pc.connectionState;
+        if (state === "connecting") setDetail(`Connecting to ${name}…`);
+        if (state === "connected") {
+          setDetail(`Connected. Waiting for the first picture from ${name}…`);
+          setTimeout(() => {
+            if (pcRef.current === pc && !videoRef.current?.videoWidth) {
+              setDetail(`Connected, but no picture is arriving from ${name}. Stop and share again from the phone.`);
+            }
+          }, FIRST_FRAME_MS);
+        }
+        if (state === "failed") {
+          console.warn("[mirror] could not connect; phone offered", candidates(offer), "this window answered", candidates(pc.localDescription?.sdp));
+        }
         if (state === "failed") end("The connection to the phone was lost.");
         if (state === "closed") end("Sharing ended.");
         // A Wi-Fi blip passes; give it a moment before calling it over.
@@ -103,6 +124,7 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
           graceRef.current = null;
         }
       });
+      setDetail(`Connecting to ${name}…`);
       await pc.setRemoteDescription({ type: "offer", sdp: offer });
       await pc.setLocalDescription(await pc.createAnswer());
       await gatheringDone(pc);
@@ -125,6 +147,7 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
   // Fit the window to the phone's shape once, when the first frame says it.
   const fitWindow = () => {
     const video = videoRef.current;
+    if (video?.videoWidth) setStage((stage) => (stage === "connecting" ? "showing" : stage));
     if (!video || sizedRef.current || !video.videoWidth) return;
     sizedRef.current = true;
     const height = Math.min(900, Math.round(window.screen.availHeight * 0.85));
@@ -164,7 +187,9 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
           playsInline
           muted
           onLoadedMetadata={fitWindow}
-          className={`h-full w-full object-contain ${stage === "showing" ? "" : "hidden"}`}
+          // Laid out (not display:none) while connecting, so it decodes
+          // and reports the first frame behind the overlay.
+          className={`h-full w-full object-contain ${stage === "showing" ? "" : "opacity-0"}`}
         />
 
         {stage !== "showing" && (
@@ -193,7 +218,7 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
                 </div>
               </>
             )}
-            {stage === "connecting" && <p className="text-sm text-content-muted">Waiting for {name}…</p>}
+            {stage === "connecting" && <p className="text-sm text-content-muted">{detail ?? `Waiting for ${name}…`}</p>}
             {stage === "ended" && (
               <>
                 <p className="text-base font-semibold">{problem ?? "Sharing ended."}</p>
