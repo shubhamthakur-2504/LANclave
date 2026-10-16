@@ -165,8 +165,13 @@ export function isServerRunning(): boolean {
   return serverDesiredOn;
 }
 
+/**
+ * Hand the paired list to native code. Done whether or not the server is on:
+ * outgoing TLS (browsing, messages, screen sharing) trusts only these
+ * devices, and runs with the server off too.
+ */
 export async function updateNativeServerPairedDevices(): Promise<void> {
-  if (Platform.OS === 'android' && serverDesiredOn) {
+  if (Platform.OS === 'android') {
     const peers = await getPairedPeers();
     const pairedDevices = peers.map(p => p.id);
     ExpoNativeServerModule.updatePairedDevices(pairedDevices);
