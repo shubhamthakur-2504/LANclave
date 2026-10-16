@@ -267,12 +267,28 @@ pub fn on_contact(peer_id: &str, addr: &str, waiting_there: u64, device_id: &str
     }
     let (peer_id, addr, device_id, key) = (peer_id.to_string(), addr.to_string(), device_id.to_string(), key.clone());
     tauri::async_runtime::spawn(async move {
-        if waiting_there > 0 {
-            fetch_waiting(&peer_id, &addr, &device_id, &key).await;
-        }
-        deliver(&peer_id, &addr, &device_id, &key).await;
-        store().release(&peer_id);
+        // Released however the run ends, so a peer that stops answering
+        // mid-reply cannot hold its messages up until the app restarts.
+        let _claim = Claim(&peer_id);
+        let _ = tokio::time::timeout(RUN_LIMIT, async {
+            if waiting_there > 0 {
+                fetch_waiting(&peer_id, &addr, &device_id, &key).await;
+            }
+            deliver(&peer_id, &addr, &device_id, &key).await;
+        })
+        .await;
     });
+}
+
+/// The longest one delivery-and-fetch run may take; the next contact retries.
+const RUN_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+struct Claim<'a>(&'a str);
+
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        store().release(self.0);
+    }
 }
 
 /// Push each waiting message; one that is refused or unreachable stays
@@ -281,6 +297,9 @@ async fn deliver(peer_id: &str, addr: &str, device_id: &str, key: &SigningKey) {
     for message in store().waiting_for(peer_id) {
         match crate::client::transport::post_json(addr, "/api/messages", &message, device_id, key).await {
             Ok(status) if status.is_success() => store().mark_delivered(peer_id, &[message.id]),
+            // Refused for what it is, not for where we are: the rest must
+            // not wait behind it.
+            Ok(StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE) => continue,
             _ => break,
         }
     }
