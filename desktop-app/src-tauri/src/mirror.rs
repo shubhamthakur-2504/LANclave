@@ -20,7 +20,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{oneshot, Notify};
 
 use crate::server::AppState;
@@ -29,6 +29,10 @@ use crate::server::AppState;
 const DECISION_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the window has to produce an answer once it has the offer.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(20);
+/// Prompts open at once, from all phones together. Each phone gets one.
+const MAX_PROMPTS: usize = 3;
+/// After a decline, how long before the same phone may ask again.
+const DECLINE_COOLDOWN: Duration = Duration::from_secs(10);
 
 /// Window labels are `mirror-<session id>`.
 pub const WINDOW_PREFIX: &str = "mirror-";
@@ -49,6 +53,8 @@ struct Session {
 #[derive(Default)]
 pub struct MirrorHub {
     sessions: Mutex<HashMap<String, Session>>,
+    /// When each phone was last declined, for [DECLINE_COOLDOWN].
+    declined: Mutex<HashMap<String, Instant>>,
     app: Mutex<Option<tauri::AppHandle>>,
 }
 
@@ -67,11 +73,25 @@ impl MirrorHub {
         self.app.lock().unwrap().clone()
     }
 
-    /// A new session for `peer_id`, and the channel its decision arrives on.
-    fn open(&self, peer_id: &str, peer_name: &str) -> (String, oneshot::Receiver<bool>) {
+    /// A new session for `peer_id`, and the channel its decision arrives
+    /// on. Refused while that phone already has a prompt open, just after
+    /// it was declined, or when too many prompts are open: a paired phone
+    /// cannot bury the desktop in windows.
+    fn open(&self, peer_id: &str, peer_name: &str) -> Result<(String, oneshot::Receiver<bool>), StatusCode> {
+        if self.declined.lock().unwrap().get(peer_id).is_some_and(|at| at.elapsed() < DECLINE_COOLDOWN) {
+            return Err(StatusCode::TOO_MANY_REQUESTS);
+        }
+        let mut sessions = self.sessions.lock().unwrap();
+        let asking = || sessions.values().filter(|s| s.decide.is_some());
+        if asking().any(|s| s.peer_id == peer_id) {
+            return Err(StatusCode::CONFLICT);
+        }
+        if asking().count() >= MAX_PROMPTS {
+            return Err(StatusCode::TOO_MANY_REQUESTS);
+        }
         let id = uuid::Uuid::new_v4().simple().to_string();
         let (tx, rx) = oneshot::channel();
-        self.sessions.lock().unwrap().insert(
+        sessions.insert(
             id.clone(),
             Session {
                 peer_id: peer_id.into(),
@@ -80,7 +100,14 @@ impl MirrorHub {
                 ..Default::default()
             },
         );
-        (id, rx)
+        Ok((id, rx))
+    }
+
+    /// Sessions `peer_id` had before `current`. The phone shares with one
+    /// laptop at a time, so a new request means those are over.
+    fn earlier(&self, peer_id: &str, current: &str) -> Vec<String> {
+        let sessions = self.sessions.lock().unwrap();
+        sessions.iter().filter(|(id, s)| s.peer_id == peer_id && *id != current).map(|(id, _)| id.clone()).collect()
     }
 
     /// The user answered the prompt. `false` when there was nothing to answer.
@@ -162,20 +189,41 @@ pub async fn request_session(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let peer_id = caller(&state, &headers)?;
     let peer_name = state.peer_name(&peer_id).unwrap_or_else(|| "A paired device".into());
-    let (id, decision) = hub().open(&peer_id, &peer_name);
+    let (id, decision) = hub().open(&peer_id, &peer_name)?;
+    for old in hub().earlier(&peer_id, &id) {
+        hub().end(&old);
+        tell_window(&old, "mirror-ended");
+    }
+    // Ends the session and closes its prompt however this returns, including
+    // when the phone gives up and the request is dropped mid-wait.
+    let mut prompt = Prompt { id: &id, answered: false };
     open_window(&id, &peer_name);
 
     match tokio::time::timeout(DECISION_TIMEOUT, decision).await {
-        Ok(Ok(true)) => Ok(Json(serde_json::json!({ "session_id": id }))),
+        Ok(Ok(true)) => {
+            prompt.answered = true;
+            Ok(Json(serde_json::json!({ "session_id": id })))
+        }
         Ok(_) => {
-            hub().end(&id);
-            close_window(&id);
+            hub().declined.lock().unwrap().insert(peer_id, Instant::now());
             Err(StatusCode::FORBIDDEN)
         }
-        Err(_) => {
-            hub().end(&id);
-            close_window(&id);
-            Err(StatusCode::REQUEST_TIMEOUT)
+        Err(_) => Err(StatusCode::REQUEST_TIMEOUT),
+    }
+}
+
+/// A prompt the phone is waiting on. Unless it was accepted, the session
+/// and its window go when this does.
+struct Prompt<'a> {
+    id: &'a str,
+    answered: bool,
+}
+
+impl Drop for Prompt<'_> {
+    fn drop(&mut self) {
+        if !self.answered {
+            hub().end(self.id);
+            close_window(self.id);
         }
     }
 }
@@ -292,7 +340,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_accepted_request_gets_the_windows_answer_to_its_offer() {
-        let (id, decision) = hub().open("phone", "Galaxy A14");
+        let (id, decision) = hub().open("phone-a", "Galaxy A14").unwrap();
         assert!(hub().decide(&id, true));
         assert!(decision.await.unwrap());
 
@@ -321,7 +369,7 @@ mod tests {
 
     #[tokio::test]
     async fn closing_the_window_before_answering_declines() {
-        let (id, decision) = hub().open("phone", "Galaxy A14");
+        let (id, decision) = hub().open("phone-b", "Galaxy A14").unwrap();
         window_destroyed(&format!("{WINDOW_PREFIX}{id}"));
         assert!(!decision.await.unwrap());
         assert!(mirror_info(id).is_none());
@@ -329,9 +377,52 @@ mod tests {
 
     #[test]
     fn a_session_can_only_be_answered_once() {
-        let (id, _decision) = hub().open("phone", "Galaxy A14");
-        assert!(hub().decide(&id, false));
-        assert!(!hub().decide(&id, true));
+        let hub = MirrorHub::default();
+        let (id, _decision) = hub.open("phone", "Galaxy A14").unwrap();
+        assert!(hub.decide(&id, false));
+        assert!(!hub.decide(&id, true));
+    }
+
+    #[test]
+    fn a_phone_gets_one_prompt_at_a_time() {
+        let hub = MirrorHub::default();
+        let (id, _decision) = hub.open("phone", "Galaxy A14").unwrap();
+        assert_eq!(hub.open("phone", "Galaxy A14").unwrap_err(), StatusCode::CONFLICT);
+        hub.end(&id);
+        assert!(hub.open("phone", "Galaxy A14").is_ok());
+    }
+
+    #[test]
+    fn only_a_few_prompts_are_open_at_once() {
+        let hub = MirrorHub::default();
+        let mut waiting = Vec::new();
+        for n in 0..MAX_PROMPTS {
+            waiting.push(hub.open(&format!("phone-{n}"), "Galaxy A14").unwrap());
+        }
+        assert_eq!(hub.open("one-more", "Galaxy A14").unwrap_err(), StatusCode::TOO_MANY_REQUESTS);
+        // An accepted session is no longer a prompt.
+        assert!(hub.decide(&waiting[0].0, true));
+        assert!(hub.open("one-more", "Galaxy A14").is_ok());
+    }
+
+    #[test]
+    fn a_declined_phone_waits_before_asking_again() {
+        let hub = MirrorHub::default();
+        hub.declined.lock().unwrap().insert("phone".into(), Instant::now());
+        assert_eq!(hub.open("phone", "Galaxy A14").unwrap_err(), StatusCode::TOO_MANY_REQUESTS);
+        hub.declined.lock().unwrap().insert("phone".into(), Instant::now() - DECLINE_COOLDOWN);
+        assert!(hub.open("phone", "Galaxy A14").is_ok());
+    }
+
+    #[test]
+    fn a_prompt_nobody_waits_for_any_more_is_closed() {
+        let (id, _decision) = hub().open("phone-f", "Galaxy A14").unwrap();
+        drop(Prompt { id: &id, answered: false });
+        assert!(mirror_info(id).is_none());
+
+        let (id, _decision) = hub().open("phone-f", "Galaxy A14").unwrap();
+        drop(Prompt { id: &id, answered: true });
+        assert!(mirror_info(id.clone()).is_some());
         hub().end(&id);
     }
 }
