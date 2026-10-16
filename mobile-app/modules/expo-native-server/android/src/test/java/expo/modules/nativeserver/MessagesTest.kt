@@ -41,6 +41,16 @@ class MessagesTest {
     }
 
     @Test
+    fun aHeavilyEscapedMessageWithinTheLimitIsTaken() {
+        // Each control character travels as six (`\u0001`): the body is
+        // far over the limit, the text is not.
+        val text = "\u0001".repeat(Messages.MAX_TEXT_BYTES - 10)
+        val body = org.json.JSONObject().put("id", "a").put("text", text).put("sent_at", 1).toString()
+        assertTrue(body.length > Messages.MAX_TEXT_BYTES * 5)
+        assertEquals(200, Messages.handleReceive("laptop", body).first)
+    }
+
+    @Test
     fun theCallerFetchesWhatWaitsAndAcknowledgesIt() {
         val sent = Messages.queueOutgoing("laptop", "see you at 5")
         assertTrue(Messages.pendingJson("laptop").contains("see you at 5"))

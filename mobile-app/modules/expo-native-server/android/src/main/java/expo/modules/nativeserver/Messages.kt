@@ -200,8 +200,13 @@ object Messages {
     private fun deliver(peerId: String, addr: String) {
         for (message in waitingFor(peerId)) {
             val body = JSONObject().put("id", message.id).put("text", message.text).put("sent_at", message.sentAt)
-            if (PeerHttp.postJson(addr, "/api/messages", body) !in 200..299) break
-            markDelivered(peerId, listOf(message.id))
+            when (PeerHttp.postJson(addr, "/api/messages", body)) {
+                in 200..299 -> markDelivered(peerId, listOf(message.id))
+                // Refused for what it is, not for where we are: the rest
+                // must not wait behind it.
+                400, 413 -> continue
+                else -> break
+            }
         }
     }
 
@@ -228,7 +233,9 @@ object Messages {
 
     /** `POST /api/messages`: a paired device sends us a message. */
     fun handleReceive(peerId: String, body: String): Pair<Int, String> {
-        if (body.length > MAX_TEXT_BYTES * 2) return 413 to "too large"
+        // Escaping can make a valid message's body up to six times its text
+        // (a control character is sent as six); the text itself is measured below.
+        if (body.length > MAX_TEXT_BYTES * 6 + 4096) return 413 to "too large"
         val o = try { JSONObject(body) } catch (_: Exception) { return 400 to "bad body" }
         val id = o.optString("id")
         val text = o.optString("text")
