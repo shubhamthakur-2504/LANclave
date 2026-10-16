@@ -80,6 +80,9 @@ pub struct MessageStore {
     app: Mutex<Option<tauri::AppHandle>>,
     /// Peers a delivery or fetch is running for, so heartbeats do not stack.
     busy: Mutex<HashSet<String>>,
+    /// Held while writing `messages.json`, so writes land in change order
+    /// without holding up readers of `threads`.
+    writing: Mutex<()>,
 }
 
 impl MessageStore {
@@ -96,9 +99,8 @@ impl MessageStore {
         *self.app.lock().unwrap() = Some(app);
     }
 
-    fn save(&self, threads: &HashMap<String, Vec<Message>>) {
+    fn write(&self, text: String) {
         let Some(path) = &self.path else { return };
-        let Ok(text) = serde_json::to_string(threads) else { return };
         let tmp = path.with_extension("json.tmp");
         if std::fs::write(&tmp, text).is_ok() {
             let _ = std::fs::rename(&tmp, path);
@@ -107,7 +109,7 @@ impl MessageStore {
 
     /// Change the threads, save, and tell the page.
     fn change<T>(&self, f: impl FnOnce(&mut HashMap<String, Vec<Message>>) -> T) -> T {
-        let result = {
+        let (result, pending) = {
             let mut threads = self.threads.lock().unwrap();
             let result = f(&mut threads);
             for thread in threads.values_mut() {
@@ -116,9 +118,14 @@ impl MessageStore {
                     thread.drain(..excess);
                 }
             }
-            self.save(&threads);
-            result
+            let text = self.path.as_ref().and_then(|_| serde_json::to_string(&*threads).ok());
+            // Taken before `threads` is let go, so the next change's write
+            // queues behind this one.
+            (result, text.map(|text| (self.writing.lock().unwrap(), text)))
         };
+        if let Some((_writing, text)) = pending {
+            self.write(text);
+        }
         if let Some(app) = self.app.lock().unwrap().as_ref() {
             use tauri::Emitter;
             let _ = app.emit("messages-changed", ());
@@ -147,22 +154,31 @@ impl MessageStore {
 
     /// A message from `peer_id`. `true` when it is new (not a retry).
     pub fn receive(&self, peer_id: &str, wire: WireMessage) -> bool {
+        self.receive_all(peer_id, vec![wire]) == 1
+    }
+
+    /// Messages from `peer_id`, saved once. How many were new.
+    pub fn receive_all(&self, peer_id: &str, wires: Vec<WireMessage>) -> usize {
         self.change(|threads| {
             let thread = threads.entry(peer_id.to_string()).or_default();
-            if thread.iter().any(|m| m.id == wire.id) {
-                return false;
+            let mut new = 0;
+            for wire in wires {
+                if thread.iter().any(|m| m.id == wire.id) {
+                    continue;
+                }
+                thread.push(Message {
+                    id: wire.id,
+                    text: wire.text,
+                    sent_at: wire.sent_at,
+                    state: MessageState::Received,
+                    read: false,
+                });
+                new += 1;
             }
-            thread.push(Message {
-                id: wire.id,
-                text: wire.text,
-                sent_at: wire.sent_at,
-                state: MessageState::Received,
-                read: false,
-            });
             // By the sender's clock, which may differ from ours; keep the
             // order they were written in.
             thread.sort_by_key(|m| m.sent_at);
-            true
+            new
         })
     }
 
@@ -316,12 +332,8 @@ async fn fetch_waiting(peer_id: &str, addr: &str, device_id: &str, key: &Signing
     }
     let Ok(messages) = res.json::<Vec<WireMessage>>().await else { return };
     let ids: Vec<String> = messages.iter().map(|m| m.id.clone()).collect();
-    let mut new = 0;
-    for message in messages {
-        if message.text.len() <= MAX_TEXT_BYTES && store().receive(peer_id, message) {
-            new += 1;
-        }
-    }
+    let fit = messages.into_iter().filter(|m| m.text.len() <= MAX_TEXT_BYTES).collect();
+    let new = store().receive_all(peer_id, fit);
     if !ids.is_empty() {
         let _ = crate::client::transport::post_json(addr, "/api/messages/ack", &serde_json::json!({ "ids": ids }), device_id, key)
             .await;
