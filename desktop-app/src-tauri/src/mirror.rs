@@ -26,6 +26,20 @@ use tokio::sync::{oneshot, Notify};
 
 use crate::server::AppState;
 
+/// A step of session `id`, to the console, to pin down where sharing goes wrong.
+fn log(id: &str, line: impl std::fmt::Display) {
+    eprintln!("[lanclave/mirror {}] {line}", id.get(..8).unwrap_or(id));
+}
+
+/// The candidate lines of an SDP, one per line, indented.
+fn log_candidates(id: &str, whose: &str, sdp: &str) {
+    let found: Vec<&str> = sdp.lines().map(str::trim).filter(|l| l.starts_with("a=candidate")).collect();
+    log(id, format!("{whose} has {} candidate(s)", found.len()));
+    for line in found {
+        log(id, format!("  {line}"));
+    }
+}
+
 /// How long the user has to answer the prompt; the phone gives up too.
 const DECISION_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the window has to produce an answer once it has the offer.
@@ -264,8 +278,13 @@ pub async fn request_session(
 ) -> Result<Json<serde_json::Value>, Response> {
     let peer_id = caller(&state, &headers).map_err(IntoResponse::into_response)?;
     let peer_name = state.peer_name(&peer_id).unwrap_or_else(|| "A paired device".into());
-    let (id, decision) = hub().open(&peer_id, &peer_name).map_err(IntoResponse::into_response)?;
+    let (id, decision) = hub().open(&peer_id, &peer_name).map_err(|refused| {
+        eprintln!("[lanclave/mirror] {peer_name} asked to share its screen; refused: {refused:?}");
+        refused.into_response()
+    })?;
+    log(&id, format!("{peer_name} asks to share its screen"));
     for old in hub().earlier(&peer_id, &id) {
+        log(&old, "ended: the same phone asked again");
         hub().end(&old);
         tell_window(&old, "mirror-ended");
     }
@@ -276,16 +295,21 @@ pub async fn request_session(
 
     match tokio::time::timeout(DECISION_TIMEOUT, decision).await {
         Ok(Ok(true)) => {
+            log(&id, "accepted; waiting for the phone's offer");
             prompt.answered = true;
             // Accepted: whatever went before is forgiven.
             hub().declined.lock().unwrap().remove(&peer_id);
             Ok(Json(serde_json::json!({ "session_id": id })))
         }
-        Ok(_) => {
+        Ok(answer) => {
+            log(&id, if answer.is_ok() { "declined" } else { "ended before an answer" });
             hub().record_decline(&peer_id, Instant::now());
             Err(StatusCode::FORBIDDEN.into_response())
         }
-        Err(_) => Err(StatusCode::REQUEST_TIMEOUT.into_response()),
+        Err(_) => {
+            log(&id, "nobody answered in time");
+            Err(StatusCode::REQUEST_TIMEOUT.into_response())
+        }
     }
 }
 
@@ -319,10 +343,15 @@ pub async fn post_offer(
     Json(offer): Json<Sdp>,
 ) -> Result<Json<Sdp>, StatusCode> {
     let peer_id = caller(&state, &headers)?;
+    log_candidates(&id, "phone's offer", &offer.sdp);
     let answer = {
         let mut sessions = hub().sessions.lock().unwrap();
-        let session = sessions.get_mut(&id).filter(|s| s.peer_id == peer_id).ok_or(StatusCode::NOT_FOUND)?;
+        let session = sessions.get_mut(&id).filter(|s| s.peer_id == peer_id).ok_or_else(|| {
+            log(&id, "offer for a session that is gone");
+            StatusCode::NOT_FOUND
+        })?;
         if !session.accepted {
+            log(&id, "offer before the user accepted");
             return Err(StatusCode::FORBIDDEN);
         }
         let (tx, rx) = oneshot::channel();
@@ -332,8 +361,18 @@ pub async fn post_offer(
         rx
     };
     match tokio::time::timeout(ANSWER_TIMEOUT, answer).await {
-        Ok(Ok(sdp)) => Ok(Json(Sdp { sdp })),
-        _ => Err(StatusCode::GATEWAY_TIMEOUT),
+        Ok(Ok(sdp)) => {
+            log_candidates(&id, "window's answer", &sdp);
+            Ok(Json(Sdp { sdp }))
+        }
+        Ok(Err(_)) => {
+            log(&id, "the window went before answering");
+            Err(StatusCode::GATEWAY_TIMEOUT)
+        }
+        Err(_) => {
+            log(&id, format!("the window did not answer within {} s", ANSWER_TIMEOUT.as_secs()));
+            Err(StatusCode::GATEWAY_TIMEOUT)
+        }
     }
 }
 
@@ -345,6 +384,7 @@ pub async fn stop_session(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let peer_id = caller(&state, &headers)?;
     if hub().owner(&id).as_deref() == Some(peer_id.as_str()) {
+        log(&id, "the phone stopped sharing");
         hub().end(&id);
         tell_window(&id, "mirror-ended");
     }
@@ -370,7 +410,15 @@ pub fn mirror_info(id: String) -> Option<MirrorInfo> {
 
 #[tauri::command]
 pub fn mirror_decide(id: String, accept: bool) -> bool {
-    hub().decide(&id, accept)
+    let taken = hub().decide(&id, accept);
+    log(&id, format!("the user chose {}{}", if accept { "show it" } else { "decline" }, if taken { "" } else { ", but the phone had stopped asking" }));
+    taken
+}
+
+/// A step the window took, for the same console as the rest.
+#[tauri::command]
+pub fn mirror_log(id: String, line: String) {
+    log(&id, format!("window: {line}"));
 }
 
 /// The phone's offer, once it arrives.
@@ -408,6 +456,7 @@ pub fn mirror_answer(id: String, sdp: String) -> bool {
 /// The window is going: decline if still asking, end if showing.
 #[tauri::command]
 pub fn mirror_close(id: String) {
+    log(&id, "the window closed");
     hub().end(&id);
 }
 

@@ -3,20 +3,26 @@ package expo.modules.nativeserver
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjection
+import android.util.Log
 import org.json.JSONObject
+import org.webrtc.CandidatePairChangeEvent
+import org.webrtc.CapturerObserver
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.IceCandidate
+import org.webrtc.IceCandidateErrorEvent
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RTCStats
 import org.webrtc.RtpTransceiver
 import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
+import org.webrtc.VideoFrame
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 import java.net.HttpURLConnection
@@ -61,6 +67,10 @@ object Mirror {
     private const val FPS = 30
     /** How long a dropped connection may take to come back before sharing ends. */
     private const val RECONNECT_GRACE_MS = 5_000L
+    private const val TAG = "LANclave/mirror"
+    /** Connection counters are logged this often, this many times per share. */
+    private const val STATS_EVERY_S = 5L
+    private const val STATS_TIMES = 12
 
     private val worker = Executors.newSingleThreadScheduledExecutor()
     private val requests = Executors.newCachedThreadPool()
@@ -84,6 +94,9 @@ object Mirror {
     private var serviceUp = false
     private var accepted = false
     private var grace: ScheduledFuture<*>? = null
+    private var ticker: ScheduledFuture<*>? = null
+    /** Frames the screen capture produced this share, from its own thread. */
+    private val captured = AtomicInteger()
 
     private var egl: EglBase? = null
     private var factory: PeerConnectionFactory? = null
@@ -93,7 +106,30 @@ object Mirror {
     private var track: VideoTrack? = null
     private var pc: PeerConnection? = null
 
+    /** A step of sharing, to logcat and to Metro (`onMirrorLog`), to pin down where it goes wrong. */
+    private fun log(line: String) {
+        Log.i(TAG, line)
+        Events.emit("onMirrorLog", mapOf("line" to line))
+    }
+
+    private fun candidates(sdp: String?): List<String> =
+        sdp.orEmpty().lines().map { it.trim() }.filter { it.startsWith("a=candidate") }
+
+    private fun logCandidates(whose: String, sdp: String?) {
+        val found = candidates(sdp)
+        log("$whose has ${found.size} candidate(s)")
+        found.forEach { log("  $it") }
+    }
+
+    private fun statusText(status: Int): String = when (status) {
+        PeerHttp.UNREACHABLE -> "unreachable"
+        PeerHttp.TIMED_OUT -> "timed out"
+        PeerHttp.REFUSED_CERTIFICATE -> "certificate refused"
+        else -> "HTTP $status"
+    }
+
     private fun report(next: String, message: String? = null) {
+        log("state $next${message?.let { ": $it" } ?: ""}")
         state = next
         Events.emit("onMirrorState", mapOf("state" to next, "peerId" to peerId, "peerName" to peerName, "message" to message))
         MirrorService.refresh()
@@ -106,8 +142,9 @@ object Mirror {
      * start; it waits in "asking" until the laptop's user says yes.
      */
     fun start(context: Context, consentData: Intent, peerId: String, peerAddr: String, peerName: String?) {
-        if (state != "idle") return
+        if (state != "idle") return log("start ignored: already $state")
         val current = run.incrementAndGet()
+        log("start #$current: asking ${peerName ?: peerId} at $peerAddr")
         this.peerId = peerId
         this.peerName = peerName
         worker.execute {
@@ -119,6 +156,7 @@ object Mirror {
         try {
             MirrorService.start(context)
         } catch (e: Exception) {
+            log("capture service did not start: $e")
             worker.execute { finish(current, "failed", "Android did not let screen sharing start.") }
             return
         }
@@ -126,13 +164,16 @@ object Mirror {
     }
 
     private fun ask(current: Int, addr: String) {
+        val began = System.currentTimeMillis()
         val reply = send(addr, "/api/mirror/sessions", "{}", ASK_TIMEOUT_MS)
         val session = if (reply.status == 200) {
             try { JSONObject(reply.body).getString("session_id") } catch (_: Exception) { null }
         } else null
+        log("ask #$current: ${statusText(reply.status)} after ${System.currentTimeMillis() - began} ms, body ${reply.body.take(200)}")
         val name = peerName ?: "The laptop"
         worker.execute {
             if (run.get() != current) {
+                log("ask #$current: answer ignored, sharing was stopped meanwhile")
                 // Stopped while the laptop was deciding, and it said yes.
                 if (session != null) tellLaptopStopped(addr, session)
                 return@execute
@@ -174,30 +215,41 @@ object Mirror {
     fun serviceStarted() {
         worker.execute {
             // Stopped before the service got going: it has nothing to do.
-            if (state == "idle") return@execute MirrorService.stop()
+            if (state == "idle") {
+                log("capture service up, but sharing already stopped")
+                return@execute MirrorService.stop()
+            }
+            log("capture service in the foreground")
             serviceUp = true
             maybeConnect(run.get())
         }
     }
 
     /** From [MirrorService]: Android refused to put it in the foreground. */
-    fun serviceFailed() {
+    fun serviceFailed(error: Exception? = null) {
+        log("capture service refused the foreground: $error")
         worker.execute { finish(run.get(), "failed", "Android did not let screen sharing start.") }
     }
 
     /** Capture begins once the laptop said yes and the service is in the foreground. */
     private fun maybeConnect(current: Int) {
-        if (!serviceUp || !accepted || pc != null || run.get() != current) return
-        val context = appContext ?: return
+        if (!serviceUp || !accepted || pc != null || run.get() != current) {
+            log("connect #$current waits: service up=$serviceUp, accepted=$accepted, connection=${pc != null}, run=${run.get()}")
+            return
+        }
+        val context = appContext ?: return log("connect #$current: no context")
         val data = consent ?: return finish(current, "failed", "Screen capture was not allowed.")
         try {
             connect(current, context, data)
         } catch (e: Exception) {
+            Log.e(TAG, "connect #$current threw", e)
+            log("connect #$current threw: $e")
             finish(current, "failed", "Could not start sharing: ${e.message}")
         }
     }
 
     private fun connect(current: Int, context: Context, data: Intent) {
+        log("connect #$current: begin")
         if (factory == null) {
             PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions())
             egl = EglBase.create()
@@ -206,18 +258,21 @@ object Mirror {
                 .setVideoEncoderFactory(DefaultVideoEncoderFactory(egl!!.eglBaseContext, true, true))
                 .setVideoDecoderFactory(DefaultVideoDecoderFactory(egl!!.eglBaseContext))
                 .createPeerConnectionFactory()
+            log("WebRTC ready")
         }
         val factory = factory!!
         val couldNot = "Could not start sharing."
 
         val metrics = context.resources.displayMetrics
         val (width, height) = MirrorSize.fit(metrics.widthPixels, metrics.heightPixels)
+        log("screen ${metrics.widthPixels}x${metrics.heightPixels}, capturing ${width}x$height at $FPS fps")
 
         val capturer = ScreenCapturerAndroid(data, object : MediaProjection.Callback() {
             // The user revoked it from the system UI, or the screen locked
             // for good. Not when teardown stopped it: that run is over.
             override fun onStop() {
-                if (run.get() == current) stop()
+                log("Android stopped the screen capture (run #$current, now #${run.get()})")
+                if (run.get() == current) stop("Android stopped the screen capture")
             }
         })
         val helper = SurfaceTextureHelper.create("lanclave-mirror", egl!!.eglBaseContext)
@@ -225,7 +280,23 @@ object Mirror {
         this.capturer = capturer
         this.helper = helper
         this.source = source
-        capturer.initialize(helper, context, source.capturerObserver)
+        captured.set(0)
+        val feed = source.capturerObserver
+        // Counts frames on the way through: no frames means capture, not the network.
+        capturer.initialize(helper, context, object : CapturerObserver {
+            override fun onCapturerStarted(success: Boolean) {
+                log("capture started: $success")
+                feed.onCapturerStarted(success)
+            }
+            override fun onCapturerStopped() {
+                log("capture stopped after ${captured.get()} frames")
+                feed.onCapturerStopped()
+            }
+            override fun onFrameCaptured(frame: VideoFrame) {
+                if (captured.incrementAndGet() == 1) log("first frame captured: ${frame.rotatedWidth}x${frame.rotatedHeight}")
+                feed.onFrameCaptured(frame)
+            }
+        })
         capturer.startCapture(width, height, FPS)
         val track = factory.createVideoTrack("screen", source)
         this.track = track
@@ -237,41 +308,61 @@ object Mirror {
         }
         val pc = factory.createPeerConnection(config, object : PeerConnection.Observer {
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
+                log("ICE gathering $state")
                 if (state == PeerConnection.IceGatheringState.COMPLETE) gathered.countDown()
             }
             override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
+                log("connection $state")
                 worker.execute { connectionChanged(current, state) }
             }
-            override fun onSignalingChange(state: PeerConnection.SignalingState) {}
-            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {}
-            override fun onIceConnectionReceivingChange(receiving: Boolean) {}
-            override fun onIceCandidate(candidate: IceCandidate) {}
+            override fun onSignalingChange(state: PeerConnection.SignalingState) { log("signaling $state") }
+            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) { log("ICE connection $state") }
+            override fun onIceConnectionReceivingChange(receiving: Boolean) { log("ICE receiving $receiving") }
+            override fun onIceCandidate(candidate: IceCandidate) { log("gathered ${candidate.sdp}") }
+            override fun onIceCandidateError(event: IceCandidateErrorEvent) {
+                log("candidate error ${event.errorCode} ${event.errorText} at ${event.address}:${event.port} ${event.url}")
+            }
+            override fun onSelectedCandidatePairChanged(event: CandidatePairChangeEvent) {
+                log("using ${event.local.sdp} -> ${event.remote.sdp} (${event.reason})")
+            }
             override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) {}
             override fun onAddStream(stream: MediaStream) {}
             override fun onRemoveStream(stream: MediaStream) {}
             override fun onDataChannel(channel: org.webrtc.DataChannel) {}
             override fun onRenegotiationNeeded() {}
-        }) ?: return finish(current, "failed", couldNot)
+        }) ?: return finish(current, "failed", couldNot).also { log("createPeerConnection returned null") }
         this.pc = pc
         pc.addTransceiver(track, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY, listOf("screen")))
+        var ticks = 0
+        ticker = worker.scheduleAtFixedRate({
+            if (run.get() == current && ++ticks <= STATS_TIMES) this.pc?.let { logStats(it, "${ticks * STATS_EVERY_S} s, ${captured.get()} frames captured") }
+        }, STATS_EVERY_S, STATS_EVERY_S, TimeUnit.SECONDS)
 
-        val offer = awaitSdp { observer -> pc.createOffer(observer, MediaConstraints()) }
+        val offer = awaitSdp("create offer") { observer -> pc.createOffer(observer, MediaConstraints()) }
             ?: return finish(current, "failed", couldNot)
-        awaitSet { observer -> pc.setLocalDescription(observer, offer) } ?: return finish(current, "failed", couldNot)
+        awaitSet("set offer") { observer -> pc.setLocalDescription(observer, offer) } ?: return finish(current, "failed", couldNot)
         // On a LAN every address is known within a moment: send them all at once.
-        gathered.await(3, TimeUnit.SECONDS)
-        if (run.get() != current) return
+        if (!gathered.await(3, TimeUnit.SECONDS)) log("ICE gathering not done after 3 s; sending what there is")
+        if (run.get() != current) return log("connect #$current: stopped while gathering")
 
         val local = pc.localDescription?.description ?: return finish(current, "failed", couldNot)
+        logCandidates("offer", local)
+        val began = System.currentTimeMillis()
         val reply = send(
             peerAddr ?: return finish(current, "failed", "No laptop to share with."),
             "/api/mirror/sessions/$sessionId/offer", JSONObject().put("sdp", local).toString(), 25_000,
         )
-        if (run.get() != current) return
+        log("offer sent: ${statusText(reply.status)} after ${System.currentTimeMillis() - began} ms")
+        if (run.get() != current) return log("connect #$current: stopped while the laptop answered")
         val answer = try { JSONObject(reply.body).getString("sdp") } catch (_: Exception) { null }
-        if (reply.status != 200 || answer == null) return finish(current, "failed", "The laptop did not start showing the screen.")
-        awaitSet { observer -> pc.setRemoteDescription(observer, SessionDescription(SessionDescription.Type.ANSWER, answer)) }
+        if (reply.status != 200 || answer == null) {
+            log("no usable answer, body ${reply.body.take(200)}")
+            return finish(current, "failed", "The laptop did not start showing the screen.")
+        }
+        logCandidates("answer", answer)
+        awaitSet("set answer") { observer -> pc.setRemoteDescription(observer, SessionDescription(SessionDescription.Type.ANSWER, answer)) }
             ?: return finish(current, "failed", "The laptop's answer could not be used.")
+        log("connect #$current: answer applied, connecting")
     }
 
     private fun connectionChanged(current: Int, next: PeerConnection.PeerConnectionState) {
@@ -280,13 +371,18 @@ object Mirror {
             PeerConnection.PeerConnectionState.CONNECTED -> {
                 grace?.cancel(false)
                 grace = null
+                pc?.let { logStats(it, "connected") }
                 report("sharing")
             }
-            PeerConnection.PeerConnectionState.FAILED -> finish(current, "failed", "The connection to the laptop was lost.")
+            PeerConnection.PeerConnectionState.FAILED -> {
+                pc?.let { logStats(it, "failed") }
+                finish(current, "failed", "The connection to the laptop was lost.")
+            }
             PeerConnection.PeerConnectionState.CLOSED -> finish(current, "ended")
             // Closing the window there looks like this too; a Wi-Fi blip
             // passes within the grace period.
             PeerConnection.PeerConnectionState.DISCONNECTED -> if (grace == null) {
+                pc?.let { logStats(it, "disconnected") }
                 grace = worker.schedule({
                     grace = null
                     if (run.get() == current && pc?.connectionState() == PeerConnection.PeerConnectionState.DISCONNECTED) {
@@ -298,10 +394,43 @@ object Mirror {
         }
     }
 
+    /** What the connection is doing, from WebRTC's own counters. Worker only. */
+    private fun logStats(pc: PeerConnection, why: String) {
+        val done = CountDownLatch(1)
+        var lines = emptyList<String>()
+        pc.getStats { report ->
+            lines = statsLines(report.statsMap.values)
+            done.countDown()
+        }
+        if (!done.await(1, TimeUnit.SECONDS)) return log("stats ($why): none in time")
+        log("stats ($why):")
+        if (lines.isEmpty()) log("  nothing yet")
+        lines.forEach { log("  $it") }
+    }
+
+    private fun statsLines(stats: Collection<RTCStats>): List<String> {
+        val byId = stats.associateBy { it.id }
+        fun candidate(id: Any?): String = byId[id as? String]?.members?.let {
+            "${it["address"] ?: it["ip"]}:${it["port"]} ${it["candidateType"]}/${it["protocol"]}"
+        } ?: "?"
+        return stats.mapNotNull { s ->
+            val m = s.members
+            when (s.type) {
+                "candidate-pair" -> "pair ${m["state"]}${if (m["nominated"] == true) " nominated" else ""}: " +
+                    "${candidate(m["localCandidateId"])} -> ${candidate(m["remoteCandidateId"])}, " +
+                    "sent ${m["bytesSent"]} B, received ${m["bytesReceived"]} B, checks ${m["requestsSent"]}/${m["responsesReceived"]}"
+                "outbound-rtp" -> "video out: ${m["framesEncoded"]} encoded, ${m["framesSent"]} sent, ${m["bytesSent"]} B, " +
+                    "${m["frameWidth"]}x${m["frameHeight"]}, encoder ${m["encoderImplementation"]}, limited by ${m["qualityLimitationReason"]}"
+                else -> null
+            }
+        }
+    }
+
     /** Stop sharing, from any thread; tells the laptop. Takes effect at once. */
-    fun stop() {
+    fun stop(why: String = "asked to") {
         if (state == "idle") return
         val ended = run.incrementAndGet()
+        log("stop #${ended - 1}: $why")
         // A prompt still up on the laptop closes when its request goes.
         inFlight?.disconnect()
         report("ended")
@@ -334,7 +463,8 @@ object Mirror {
 
     private fun tellLaptopStopped(addr: String, session: String) {
         requests.execute {
-            PeerHttp.request(addr, "POST", "/api/mirror/sessions/$session/stop", "{}", Tls.Trust.PAIRED, true, 5_000)
+            val reply = PeerHttp.request(addr, "POST", "/api/mirror/sessions/$session/stop", "{}", Tls.Trust.PAIRED, true, 5_000)
+            log("told the laptop sharing stopped: ${statusText(reply.status)}")
         }
     }
 
@@ -353,6 +483,8 @@ object Mirror {
     private fun release() {
         grace?.cancel(false)
         grace = null
+        ticker?.cancel(false)
+        ticker = null
         try { capturer?.stopCapture() } catch (_: Exception) {}
         capturer?.dispose()
         pc?.dispose()
@@ -368,29 +500,33 @@ object Mirror {
 
     // ---- Waiting on WebRTC's callbacks from the worker thread ------------
 
-    private fun awaitSdp(call: (SdpObserver) -> Unit): SessionDescription? {
+    private fun awaitSdp(step: String, call: (SdpObserver) -> Unit): SessionDescription? {
         val done = CountDownLatch(1)
         var result: SessionDescription? = null
+        var failure: String? = null
         call(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription) { result = sdp; done.countDown() }
-            override fun onCreateFailure(error: String?) { done.countDown() }
+            override fun onCreateFailure(error: String?) { failure = error; done.countDown() }
             override fun onSetSuccess() {}
             override fun onSetFailure(error: String?) {}
         })
-        done.await(10, TimeUnit.SECONDS)
+        if (!done.await(10, TimeUnit.SECONDS)) log("$step: no reply in 10 s")
+        else if (result == null) log("$step failed: $failure")
         return result
     }
 
-    private fun awaitSet(call: (SdpObserver) -> Unit): Unit? {
+    private fun awaitSet(step: String, call: (SdpObserver) -> Unit): Unit? {
         val done = CountDownLatch(1)
         var ok = false
+        var failure: String? = null
         call(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription) {}
             override fun onCreateFailure(error: String?) {}
             override fun onSetSuccess() { ok = true; done.countDown() }
-            override fun onSetFailure(error: String?) { done.countDown() }
+            override fun onSetFailure(error: String?) { failure = error; done.countDown() }
         })
-        done.await(10, TimeUnit.SECONDS)
+        if (!done.await(10, TimeUnit.SECONDS)) log("$step: no reply in 10 s")
+        else if (!ok) log("$step failed: $failure")
         return if (ok) Unit else null
     }
 }

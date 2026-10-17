@@ -52,6 +52,8 @@ type NativeServerEvents = {
    * connecting, sharing, declined, failed (with `message`), ended.
    */
   onMirrorState: (event: { state: string; peerId: string | null; peerName: string | null; message: string | null }) => void;
+  /** A step of screen sharing, for the console. */
+  onMirrorLog: (event: { line: string }) => void;
   /** A message arrived, was delivered, or a thread changed. */
   onMessagesChanged: () => void;
   /** How far the receiver has pulled a file of an offer we sent. */

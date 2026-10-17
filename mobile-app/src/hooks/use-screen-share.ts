@@ -16,6 +16,16 @@ export interface ScreenShare {
   peerName: string | null;
 }
 
+// Every step of sharing, from `Mirror.kt`, in the Metro console as [mirror].
+// Once per app, not per screen that shows the share.
+if (Platform.OS === "android") {
+  try {
+    ExpoNativeServerModule.addListener("onMirrorLog", ({ line }) => console.log(`[mirror] ${line}`));
+  } catch {
+    // older native build
+  }
+}
+
 function current(): ScreenShare {
   if (Platform.OS !== "android") return { state: "idle", peerId: null, peerName: null };
   try {

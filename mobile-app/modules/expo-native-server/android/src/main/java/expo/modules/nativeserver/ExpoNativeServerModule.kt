@@ -55,6 +55,7 @@ class ExpoNativeServerModule : Module() {
       "onOfferProgress",
       "onMessagesChanged",
       "onMirrorState",
+      "onMirrorLog",
     )
 
     OnCreate {

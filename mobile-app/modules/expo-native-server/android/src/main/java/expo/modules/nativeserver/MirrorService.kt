@@ -23,7 +23,7 @@ class MirrorService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            Mirror.stop()
+            Mirror.stop("Stop pressed in the notification")
             return START_NOT_STICKY
         }
         val nm = getSystemService(NotificationManager::class.java)
@@ -37,7 +37,7 @@ class MirrorService : Service() {
             startForeground(NOTIFICATION_ID, build(this), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } catch (e: Exception) {
             stopSelf()
-            Mirror.serviceFailed()
+            Mirror.serviceFailed(e)
             return START_NOT_STICKY
         }
         running = this

@@ -11,24 +11,66 @@ const RECONNECT_GRACE_MS = 5000;
 /** Connected this long with no picture: say so instead of a blank window. */
 const FIRST_FRAME_MS = 10000;
 
-/** The candidate lines of an SDP, for the console when a connection fails. */
-const candidates = (sdp: string | undefined) =>
-  (sdp ?? "").split(/\r?\n/).filter((l) => l.startsWith("a=candidate"));
+/** Connection counters are logged this often, this many times per share. */
+const STATS_EVERY_MS = 5000;
+const STATS_TIMES = 12;
+
+/** A step of session `id`, to the `tauri dev` console (through Rust) and to devtools. */
+function log(id: string, line: string) {
+  console.log(`[mirror] ${line}`);
+  invoke("mirror_log", { id, line }).catch(() => {});
+}
+
+type Stat = Record<string, unknown>;
+
+/** What the connection is doing, from WebRTC's own counters. */
+async function logStats(id: string, pc: RTCPeerConnection, why: string) {
+  let report: RTCStatsReport;
+  try {
+    report = await pc.getStats();
+  } catch {
+    return;
+  }
+  const byId = new Map<string, Stat>();
+  report.forEach((s: Stat) => byId.set(s.id as string, s));
+  const candidate = (ref: unknown) => {
+    const c = byId.get(ref as string);
+    return c ? `${c.address ?? c.ip}:${c.port} ${c.candidateType}/${c.protocol}` : "?";
+  };
+  const lines: string[] = [];
+  report.forEach((s: Stat) => {
+    if (s.type === "candidate-pair") {
+      lines.push(
+        `pair ${s.state}${s.nominated ? " nominated" : ""}: ${candidate(s.localCandidateId)} -> ${candidate(s.remoteCandidateId)}, ` +
+          `sent ${s.bytesSent} B, received ${s.bytesReceived} B, checks ${s.requestsSent}/${s.responsesReceived}`,
+      );
+    }
+    if (s.type === "inbound-rtp" && s.kind === "video") {
+      lines.push(
+        `video in: ${s.framesReceived} received, ${s.framesDecoded} decoded, ${s.bytesReceived} B, ` +
+          `${s.frameWidth}x${s.frameHeight}, decoder ${s.decoderImplementation}`,
+      );
+    }
+  });
+  log(id, `stats (${why}):`);
+  if (lines.length === 0) log(id, "  nothing yet");
+  lines.forEach((l) => log(id, `  ${l}`));
+}
 
 interface MirrorInfo {
   peer_id: string;
   peer_name: string;
 }
 
-/** Resolve once ICE gathering is done, or after `ms`: on a LAN it is quick. */
-function gatheringDone(pc: RTCPeerConnection, ms = 3000): Promise<void> {
-  if (pc.iceGatheringState === "complete") return Promise.resolve();
+/** Resolve once ICE gathering is done (true), or after `ms` (false): on a LAN it is quick. */
+function gatheringDone(pc: RTCPeerConnection, ms = 3000): Promise<boolean> {
+  if (pc.iceGatheringState === "complete") return Promise.resolve(true);
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
+    const timer = setTimeout(() => resolve(false), ms);
     pc.addEventListener("icegatheringstatechange", () => {
       if (pc.iceGatheringState === "complete") {
         clearTimeout(timer);
-        resolve();
+        resolve(true);
       }
     });
   });
@@ -50,6 +92,7 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const sizedRef = useRef(false);
   const graceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const name = info?.peer_name ?? "A paired device";
 
@@ -68,12 +111,16 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
       window.removeEventListener("beforeunload", leaving);
       pcRef.current?.close();
       if (graceRef.current) clearTimeout(graceRef.current);
+      if (tickerRef.current) clearInterval(tickerRef.current);
     };
   }, [sessionId]);
 
   const end = (why?: string) => {
+    if (why) log(sessionId, `ended: ${why}`);
     if (graceRef.current) clearTimeout(graceRef.current);
     graceRef.current = null;
+    if (tickerRef.current) clearInterval(tickerRef.current);
+    tickerRef.current = null;
     pcRef.current?.close();
     pcRef.current = null;
     setStage("ended");
@@ -86,30 +133,51 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
       end(`${name} stopped asking.`);
       return;
     }
+    const id = sessionId;
     try {
-      const offer = await invoke<string>("mirror_take_offer", { id: sessionId });
+      log(id, "waiting for the phone's offer");
+      const offer = await invoke<string>("mirror_take_offer", { id });
+      log(id, `offer received (${offer.length} bytes)`);
       // No STUN or TURN: both devices are on the same network.
       const pc = new RTCPeerConnection({ iceServers: [] });
       pcRef.current = pc;
+      let ticks = 0;
+      tickerRef.current = setInterval(() => {
+        if (++ticks > STATS_TIMES && tickerRef.current) clearInterval(tickerRef.current);
+        else logStats(id, pc, `${(ticks * STATS_EVERY_MS) / 1000} s`);
+      }, STATS_EVERY_MS);
+      pc.addEventListener("signalingstatechange", () => log(id, `signaling ${pc.signalingState}`));
+      pc.addEventListener("icegatheringstatechange", () => log(id, `ICE gathering ${pc.iceGatheringState}`));
+      pc.addEventListener("iceconnectionstatechange", () => log(id, `ICE connection ${pc.iceConnectionState}`));
+      pc.addEventListener("icecandidate", (event) => {
+        if (event.candidate) log(id, `gathered ${event.candidate.candidate}`);
+      });
+      pc.addEventListener("icecandidateerror", (event) => {
+        const e = event as RTCPeerConnectionIceErrorEvent;
+        log(id, `candidate error ${e.errorCode} ${e.errorText} at ${e.address}:${e.port} ${e.url}`);
+      });
       // The track arrives with the offer, long before any picture: the
       // window becomes the viewer on the first frame (`onLoadedMetadata`).
       pc.addEventListener("track", (event) => {
+        log(id, `track arrived: ${event.track.kind}, ${event.streams.length} stream(s)`);
         if (videoRef.current) videoRef.current.srcObject = event.streams[0] ?? new MediaStream([event.track]);
       });
       pc.addEventListener("connectionstatechange", () => {
         const state = pc.connectionState;
+        log(id, `connection ${state}`);
         if (state === "connecting") setDetail(`Connecting to ${name}…`);
         if (state === "connected") {
+          logStats(id, pc, "connected");
           setDetail(`Connected. Waiting for the first picture from ${name}…`);
           setTimeout(() => {
             if (pcRef.current === pc && !videoRef.current?.videoWidth) {
+              log(id, `connected ${FIRST_FRAME_MS / 1000} s ago and still no picture`);
+              logStats(id, pc, "no picture");
               setDetail(`Connected, but no picture is arriving from ${name}. Stop and share again from the phone.`);
             }
           }, FIRST_FRAME_MS);
         }
-        if (state === "failed") {
-          console.warn("[mirror] could not connect; phone offered", candidates(offer), "this window answered", candidates(pc.localDescription?.sdp));
-        }
+        if (state === "failed" || state === "disconnected") logStats(id, pc, state);
         if (state === "failed") end("The connection to the phone was lost.");
         if (state === "closed") end("Sharing ended.");
         // A Wi-Fi blip passes; give it a moment before calling it over.
@@ -126,10 +194,14 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
       });
       setDetail(`Connecting to ${name}…`);
       await pc.setRemoteDescription({ type: "offer", sdp: offer });
+      log(id, "offer applied");
       await pc.setLocalDescription(await pc.createAnswer());
-      await gatheringDone(pc);
-      await invoke("mirror_answer", { id: sessionId, sdp: pc.localDescription?.sdp ?? "" });
+      log(id, "answer created");
+      if (!(await gatheringDone(pc))) log(id, "ICE gathering not done after 3 s; answering with what there is");
+      const handed = await invoke<boolean>("mirror_answer", { id, sdp: pc.localDescription?.sdp ?? "" });
+      log(id, handed ? "answer handed to the phone" : "answer not taken: the phone had stopped waiting");
     } catch (e) {
+      log(id, `setup threw: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`);
       end(typeof e === "string" ? e : "Could not start showing the screen.");
     }
   };
@@ -147,6 +219,7 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
   // Fit the window to the phone's shape once, when the first frame says it.
   const fitWindow = () => {
     const video = videoRef.current;
+    log(sessionId, `video metadata: ${video?.videoWidth}x${video?.videoHeight}`);
     if (video?.videoWidth) setStage((stage) => (stage === "connecting" ? "showing" : stage));
     if (!video || sizedRef.current || !video.videoWidth) return;
     sizedRef.current = true;
@@ -187,6 +260,8 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
           playsInline
           muted
           onLoadedMetadata={fitWindow}
+          onPlaying={() => log(sessionId, "video playing")}
+          onError={() => log(sessionId, `video error: ${videoRef.current?.error?.message ?? "unknown"}`)}
           // Laid out (not display:none) while connecting, so it decodes
           // and reports the first frame behind the overlay.
           className={`h-full w-full object-contain ${stage === "showing" ? "" : "opacity-0"}`}

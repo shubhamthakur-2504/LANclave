@@ -210,6 +210,7 @@ pub fn run() {
             mirror::mirror_take_offer,
             mirror::mirror_answer,
             mirror::mirror_close,
+            mirror::mirror_log,
             commands::get_device_id,
             commands::get_settings,
             commands::update_settings,
