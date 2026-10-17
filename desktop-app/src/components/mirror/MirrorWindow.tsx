@@ -42,13 +42,17 @@ async function logStats(id: string, pc: RTCPeerConnection, why: string) {
     if (s.type === "candidate-pair") {
       lines.push(
         `pair ${s.state}${s.nominated ? " nominated" : ""}: ${candidate(s.localCandidateId)} -> ${candidate(s.remoteCandidateId)}, ` +
-          `sent ${s.bytesSent} B, received ${s.bytesReceived} B, checks ${s.requestsSent}/${s.responsesReceived}`,
+          `sent ${s.bytesSent} B, received ${s.bytesReceived} B, checks ${s.requestsSent}/${s.responsesReceived}, ` +
+          `rtt ${s.currentRoundTripTime} s`,
       );
     }
     if (s.type === "inbound-rtp" && s.kind === "video") {
+      const emitted = Number(s.jitterBufferEmittedCount) || 0;
+      const buffered = emitted ? Math.round((Number(s.jitterBufferDelay) / emitted) * 1000) : "?";
       lines.push(
-        `video in: ${s.framesReceived} received, ${s.framesDecoded} decoded, ${s.bytesReceived} B, ` +
-          `${s.frameWidth}x${s.frameHeight}, decoder ${s.decoderImplementation}`,
+        `video in: ${byId.get(s.codecId as string)?.mimeType}, ${s.framesReceived} received, ${s.framesDecoded} decoded, ` +
+          `${s.framesDropped} dropped, ${s.framesPerSecond} fps, ${s.bytesReceived} B, ${s.frameWidth}x${s.frameHeight}, ` +
+          `decoder ${s.decoderImplementation}, buffered ${buffered} ms on average, ${s.packetsLost} packets lost`,
       );
     }
   });
@@ -160,6 +164,11 @@ export default function MirrorWindow({ sessionId }: { sessionId: string }) {
       // window becomes the viewer on the first frame (`onLoadedMetadata`).
       pc.addEventListener("track", (event) => {
         log(id, `track arrived: ${event.track.kind}, ${event.streams.length} stream(s)`);
+        // Show each frame as it arrives: a LAN barely jitters, and what the
+        // phone does should appear here at once, not after a cushion.
+        const receiver = event.receiver as RTCRtpReceiver & { jitterBufferTarget?: number; playoutDelayHint?: number };
+        receiver.jitterBufferTarget = 0;
+        receiver.playoutDelayHint = 0;
         if (videoRef.current) videoRef.current.srcObject = event.streams[0] ?? new MediaStream([event.track]);
       });
       pc.addEventListener("connectionstatechange", () => {

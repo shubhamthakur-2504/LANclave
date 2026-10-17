@@ -10,13 +10,17 @@ import org.webrtc.CapturerObserver
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
+import org.webrtc.HardwareVideoEncoderFactory
 import org.webrtc.IceCandidate
 import org.webrtc.IceCandidateErrorEvent
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
+import org.webrtc.MediaStreamTrack
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RTCStats
+import org.webrtc.RtpParameters
+import org.webrtc.RtpSender
 import org.webrtc.RtpTransceiver
 import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SdpObserver
@@ -42,6 +46,50 @@ object MirrorSize {
         // Encoders want even dimensions.
         fun even(n: Double) = (n.toInt() / 2) * 2
         return even(width * scale) to even(height * scale)
+    }
+}
+
+/** Picture quality on a LAN, where there is bandwidth to spare. */
+object MirrorTuning {
+    const val START_KBPS = 4_000
+    const val MIN_KBPS = 1_000
+    const val MAX_KBPS = 10_000
+    /** Hardware codecs, best first: H.264 is decoded in hardware on the laptop too. */
+    private val HARDWARE_ORDER = listOf("H264", "VP8", "VP9", "AV1")
+
+    /**
+     * `codecs` with the ones this phone encodes in hardware first, H.264
+     * ahead. WebRTC's default is VP8, often software on phones: hotter,
+     * slower and blurrier. The rest keep their order.
+     */
+    fun <T> hardwareFirst(codecs: List<T>, name: (T) -> String, hardware: Set<String>): List<T> =
+        codecs.sortedBy { codec ->
+            val n = name(codec)
+            if (n in hardware && n in HARDWARE_ORDER) HARDWARE_ORDER.indexOf(n) else HARDWARE_ORDER.size
+        }
+
+    /**
+     * The laptop's answer with WebRTC's bitrate hints on each video codec.
+     * Without them sending starts near 300 kbps and takes seconds to climb:
+     * a blurry start on a network that could carry far more from the first frame.
+     */
+    fun withBitrates(sdp: String): String {
+        val nl = if ("\r\n" in sdp) "\r\n" else "\n"
+        val lines = sdp.split(nl)
+        val hint = "x-google-start-bitrate=$START_KBPS;x-google-min-bitrate=$MIN_KBPS;x-google-max-bitrate=$MAX_KBPS"
+        val rtpmap = Regex("""^a=rtpmap:(\d+) (H264|VP8|VP9|AV1)/""")
+        val fmtp = Regex("""^a=fmtp:(\d+) """)
+        val video = lines.mapNotNull { rtpmap.find(it)?.groupValues?.get(1) }.toSet()
+        val described = lines.mapNotNull { fmtp.find(it)?.groupValues?.get(1) }.toSet()
+        val out = mutableListOf<String>()
+        for (line in lines) {
+            val pt = fmtp.find(line)?.groupValues?.get(1)
+            out += if (pt != null && pt in video && "x-google-start-bitrate" !in line) "$line;$hint" else line
+            val mapped = rtpmap.find(line)?.groupValues?.get(1)
+            // VP8 usually has no fmtp line of its own: give it one.
+            if (mapped != null && mapped !in described) out += "a=fmtp:$mapped $hint"
+        }
+        return out.joinToString(nl)
     }
 }
 
@@ -358,7 +406,8 @@ object Mirror {
             override fun onRenegotiationNeeded() {}
         }) ?: return finish(current, "failed", couldNot).also { log("createPeerConnection returned null") }
         this.pc = pc
-        pc.addTransceiver(track, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY, listOf("screen")))
+        val transceiver = pc.addTransceiver(track, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY, listOf("screen")))
+        preferHardwareCodecs(transceiver, factory)
         var ticks = 0
         ticker = worker.scheduleAtFixedRate({
             if (run.get() == current && ++ticks <= STATS_TIMES) this.pc?.let { logStats(it, "${ticks * STATS_EVERY_S} s, ${captured.get()} frames captured") }
@@ -386,9 +435,35 @@ object Mirror {
             return finish(current, "failed", "The laptop did not start showing the screen.")
         }
         logCandidates("answer", answer)
-        awaitSet("set answer") { observer -> pc.setRemoteDescription(observer, SessionDescription(SessionDescription.Type.ANSWER, answer)) }
+        val tuned = MirrorTuning.withBitrates(answer)
+        awaitSet("set answer") { observer -> pc.setRemoteDescription(observer, SessionDescription(SessionDescription.Type.ANSWER, tuned)) }
             ?: return finish(current, "failed", "The laptop's answer could not be used.")
+        tune(transceiver.sender)
         log("connect #$current: answer applied, connecting")
+    }
+
+    private fun preferHardwareCodecs(transceiver: RtpTransceiver, factory: PeerConnectionFactory) {
+        try {
+            val hardware = HardwareVideoEncoderFactory(egl!!.eglBaseContext, true, true).supportedCodecs.map { it.name }.toSet()
+            val codecs = factory.getRtpSenderCapabilities(MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO).codecs
+            val ordered = MirrorTuning.hardwareFirst(codecs, { it.name }, hardware)
+            transceiver.setCodecPreferences(ordered)
+            log("hardware encoders: ${hardware.joinToString().ifEmpty { "none" }}; offering ${ordered.map { it.name }.distinct().joinToString()}")
+        } catch (e: Exception) {
+            log("codec preference not set: $e")
+        }
+    }
+
+    /** Sharp text over smoothness, and a bitrate a LAN can carry. */
+    private fun tune(sender: RtpSender) {
+        val params = sender.parameters
+        params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+        params.encodings.forEach {
+            it.minBitrateBps = MirrorTuning.MIN_KBPS * 1000
+            it.maxBitrateBps = MirrorTuning.MAX_KBPS * 1000
+            it.maxFramerate = FPS
+        }
+        log("sender tuned: ${sender.setParameters(params)}")
     }
 
     private fun connectionChanged(current: Int, next: PeerConnection.PeerConnectionState) {
@@ -444,9 +519,12 @@ object Mirror {
             when (s.type) {
                 "candidate-pair" -> "pair ${m["state"]}${if (m["nominated"] == true) " nominated" else ""}: " +
                     "${candidate(m["localCandidateId"])} -> ${candidate(m["remoteCandidateId"])}, " +
-                    "sent ${m["bytesSent"]} B, received ${m["bytesReceived"]} B, checks ${m["requestsSent"]}/${m["responsesReceived"]}"
-                "outbound-rtp" -> "video out: ${m["framesEncoded"]} encoded, ${m["framesSent"]} sent, ${m["bytesSent"]} B, " +
-                    "${m["frameWidth"]}x${m["frameHeight"]}, encoder ${m["encoderImplementation"]}, limited by ${m["qualityLimitationReason"]}"
+                    "sent ${m["bytesSent"]} B, received ${m["bytesReceived"]} B, checks ${m["requestsSent"]}/${m["responsesReceived"]}, " +
+                    "rtt ${m["currentRoundTripTime"]} s, available ${m["availableOutgoingBitrate"]} bps"
+                "outbound-rtp" -> "video out: ${byId[m["codecId"] as? String]?.members?.get("mimeType")}, " +
+                    "${m["framesEncoded"]} encoded, ${m["framesSent"]} sent, ${m["framesPerSecond"]} fps, ${m["bytesSent"]} B, " +
+                    "target ${m["targetBitrate"]} bps, ${m["frameWidth"]}x${m["frameHeight"]}, " +
+                    "encoder ${m["encoderImplementation"]}, limited by ${m["qualityLimitationReason"]}"
                 else -> null
             }
         }
