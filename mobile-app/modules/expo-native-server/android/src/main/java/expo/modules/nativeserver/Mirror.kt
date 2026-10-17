@@ -26,6 +26,7 @@ import org.webrtc.VideoFrame
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 import java.net.HttpURLConnection
+import java.net.NetworkInterface
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
@@ -68,8 +69,6 @@ object Mirror {
     /** How long a dropped connection may take to come back before sharing ends. */
     private const val RECONNECT_GRACE_MS = 5_000L
     private const val TAG = "LANclave/mirror"
-    /** Offer candidates on every interface, the phone's own hotspot included. */
-    private const val HOTSPOT_FIELD_TRIAL = "WebRTC-AndroidNetworkMonitor-IsAdapterAvailable/Disabled/"
     /** Connection counters are logged this often, this many times per share. */
     private const val STATS_EVERY_S = 5L
     private const val STATS_TIMES = 12
@@ -250,20 +249,37 @@ object Mirror {
         }
     }
 
+    /** This phone's interfaces and addresses: what WebRTC can offer. */
+    private fun logInterfaces() {
+        try {
+            NetworkInterface.getNetworkInterfaces()?.toList().orEmpty().filter { it.isUp && !it.isLoopback }.forEach { nif ->
+                log("interface ${nif.name}: ${nif.inetAddresses.toList().joinToString { it.hostAddress ?: "?" }}")
+            }
+        } catch (e: Exception) {
+            log("interfaces unreadable: $e")
+        }
+    }
+
     private fun connect(current: Int, context: Context, data: Intent) {
         log("connect #$current: begin")
+        logInterfaces()
         if (factory == null) {
-            PeerConnectionFactory.initialize(
-                PeerConnectionFactory.InitializationOptions.builder(context)
-                    // WebRTC skips interfaces Android's ConnectivityManager does
-                    // not list, and this phone's own hotspot is one: without
-                    // this, a phone sharing to a laptop on its hotspot offers
-                    // only its mobile-data addresses, which the laptop cannot reach.
-                    .setFieldTrials(HOTSPOT_FIELD_TRIAL)
-                    .createInitializationOptions(),
-            )
+            PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions())
             egl = EglBase.create()
+            val options = PeerConnectionFactory.Options().apply {
+                // WebRTC's Android network monitor only offers interfaces
+                // ConnectivityManager lists, and binds each socket to one.
+                // This phone's own hotspot is not listed, so a laptop on it
+                // was offered only mobile-data addresses, and the phone's
+                // checks left over mobile data. Without the monitor every
+                // interface is offered and the system routes, as it does
+                // for the rest of the app's traffic to the laptop.
+                disableNetworkMonitor = true
+                // The laptop is on the same network: never mobile data.
+                networkIgnoreMask = PeerConnectionFactory.Options.ADAPTER_TYPE_CELLULAR
+            }
             factory = PeerConnectionFactory.builder()
+                .setOptions(options)
                 // Hardware encoders where the phone has them: cooler and faster.
                 .setVideoEncoderFactory(DefaultVideoEncoderFactory(egl!!.eglBaseContext, true, true))
                 .setVideoDecoderFactory(DefaultVideoDecoderFactory(egl!!.eglBaseContext))
