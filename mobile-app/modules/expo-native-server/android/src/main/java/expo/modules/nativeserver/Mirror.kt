@@ -68,6 +68,8 @@ object Mirror {
     /** How long a dropped connection may take to come back before sharing ends. */
     private const val RECONNECT_GRACE_MS = 5_000L
     private const val TAG = "LANclave/mirror"
+    /** Offer candidates on every interface, the phone's own hotspot included. */
+    private const val HOTSPOT_FIELD_TRIAL = "WebRTC-AndroidNetworkMonitor-IsAdapterAvailable/Disabled/"
     /** Connection counters are logged this often, this many times per share. */
     private const val STATS_EVERY_S = 5L
     private const val STATS_TIMES = 12
@@ -251,7 +253,15 @@ object Mirror {
     private fun connect(current: Int, context: Context, data: Intent) {
         log("connect #$current: begin")
         if (factory == null) {
-            PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions())
+            PeerConnectionFactory.initialize(
+                PeerConnectionFactory.InitializationOptions.builder(context)
+                    // WebRTC skips interfaces Android's ConnectivityManager does
+                    // not list, and this phone's own hotspot is one: without
+                    // this, a phone sharing to a laptop on its hotspot offers
+                    // only its mobile-data addresses, which the laptop cannot reach.
+                    .setFieldTrials(HOTSPOT_FIELD_TRIAL)
+                    .createInitializationOptions(),
+            )
             egl = EglBase.create()
             factory = PeerConnectionFactory.builder()
                 // Hardware encoders where the phone has them: cooler and faster.
