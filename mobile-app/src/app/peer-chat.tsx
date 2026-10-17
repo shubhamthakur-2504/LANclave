@@ -186,11 +186,13 @@ export default function PeerChatScreen() {
                 >
                   <MessageText text={item.text} mine={mine} />
                   <View style={styles.meta}>
-                    <Text style={styles.metaText}>{time(item.sentAtMs)}</Text>
-                    {item.state === "waiting" && <Text style={styles.waiting}>Waiting for device</Text>}
-                    {item.state === "delivered" && <Text style={styles.metaText}>Delivered</Text>}
+                    <Text style={[styles.metaText, mine && styles.metaMine]}>{time(item.sentAtMs)}</Text>
+                    {item.state === "waiting" && (
+                      <Text style={[styles.waiting, mine && styles.waitingMine]}>Waiting for device</Text>
+                    )}
+                    {item.state === "delivered" && <Text style={[styles.metaText, mine && styles.metaMine]}>Delivered</Text>}
                     <Pressable onPress={() => copy(item)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Copy message">
-                      <Text style={styles.copy}>{copied === item.id ? "Copied" : "Copy"}</Text>
+                      <Text style={[styles.copy, mine && styles.copyMine]}>{copied === item.id ? "Copied" : "Copy"}</Text>
                     </Pressable>
                   </View>
                 </Pressable>
@@ -254,6 +256,10 @@ const styles = StyleSheet.create({
   metaText: { fontSize: 10, color: C.contentFaint },
   waiting: { fontSize: 10, color: C.warn },
   copy: { fontSize: 10, fontWeight: "700", color: C.contentMuted },
+  // On the action fill the muted greys and amber vanish: its own text colour.
+  metaMine: { color: C.onAction, opacity: 0.75 },
+  waitingMine: { color: C.onAction, fontWeight: "700" },
+  copyMine: { color: C.onAction },
   composer: {
     flexDirection: "row",
     alignItems: "flex-end",
