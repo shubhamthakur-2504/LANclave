@@ -191,6 +191,27 @@ declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
   listBlocked(): { deviceId: string; deviceName: string | null; blockedAtMs: number }[];
   /** `/health` of each `ip:port` at once; the bodies of those that answered. */
   probeHealth(addrs: string[], timeoutMs: number): Promise<Record<string, string>>;
+
+  // Developer tools (dev builds only)
+  devStatus(): DevStatus;
+  /** Start log capture and keep the app reachable. Call while on screen. */
+  devEnable(): DevStatus;
+  devDisable(): DevStatus;
+  devOpenInstallSettings(): void;
+}
+
+/** What the developer tools can do right now. */
+export interface DevStatus {
+  enabled: boolean;
+  capturing: boolean;
+  /** READ_LOGS granted over adb; without it only LANclave's own lines show. */
+  readLogsGranted: boolean;
+  /** A line from another app arrived: Android allowed full log access. */
+  seesOtherApps: boolean;
+  lines: number;
+  /** "Install unknown apps" is allowed for LANclave. */
+  canInstall: boolean;
+  packageName: string;
 }
 
 export default requireNativeModule<ExpoNativeServerModule>('ExpoNativeServer');

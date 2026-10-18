@@ -1,5 +1,6 @@
 mod client;
 mod dedupe;
+mod devtools;
 mod commands;
 mod discovery;
 mod file_ops;
@@ -151,6 +152,8 @@ pub fn run() {
                 hello_ctx.announce_hello().await;
             });
             ctx.clone().spawn_heartbeat();
+            // Dev builds: logs and installs for a paired phone, from a terminal here.
+            devtools::spawn(ctx.clone());
 
             app.manage(ctx);
             Ok(())

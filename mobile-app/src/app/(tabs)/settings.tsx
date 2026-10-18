@@ -9,7 +9,9 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  ScrollView,
 } from "react-native";
+import { DevToolsSection } from "@/components/DevToolsSection";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StorageAccessFramework } from "expo-file-system/legacy";
 import { C } from "@/constants/colors";
@@ -146,7 +148,7 @@ export default function SettingsScreen() {
         <View style={styles.divider} />
 
         {/* Content */}
-        <View style={styles.content}>
+        <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.section}>
             <Text style={styles.label}>Display Name</Text>
             <Text style={styles.hint}>This name will be shown to other devices on the network.</Text>
@@ -259,7 +261,9 @@ export default function SettingsScreen() {
               </View>
             </View>
           )}
-        </View>
+
+          <DevToolsSection />
+        </ScrollView>
       </SafeAreaView>
     </View>
   );

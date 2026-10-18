@@ -158,6 +158,8 @@ class NativeServer(
                     // Authenticated above: the header is a verified paired device.
                     return Offers.handle(session, session.headers["x-lanclave-device-id"]!!)
                 }
+                // Dev builds only (DevTools.kt).
+                uri.startsWith("/api/dev/") -> return DevTools.handle(context, session)
                 uri == "/api/presence/hello" && method == Method.POST -> {
                     return handlePresenceHello(session)
                 }

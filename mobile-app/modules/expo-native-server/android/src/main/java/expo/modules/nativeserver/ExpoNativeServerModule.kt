@@ -61,6 +61,35 @@ class ExpoNativeServerModule : Module() {
     OnCreate {
       // Native transfers and offers talk to JS through here.
       Events.sink = { name, body -> sendEvent(name, body) }
+      // Dev builds: tools left on resume with the app, which is on screen
+      // now, so Android can ask for log access.
+      appContext.reactContext?.let { if (DevTools.isEnabled(it)) runCatching { DevTools.enable(it) } }
+    }
+
+    // ---- Developer tools (dev builds only, DevTools.kt) -------------------
+
+    Function("devStatus") {
+      val context = appContext.reactContext ?: throw Exception("React context is null")
+      DevTools.status(context)
+    }
+    Function("devEnable") {
+      val context = appContext.reactContext ?: throw Exception("React context is null")
+      DevTools.enable(context)
+      DevTools.status(context)
+    }
+    Function("devDisable") {
+      val context = appContext.reactContext ?: throw Exception("React context is null")
+      DevTools.disable(context)
+      DevTools.status(context)
+    }
+    /** Android's "Install unknown apps" page for LANclave. */
+    Function("devOpenInstallSettings") {
+      val ctx = appContext.currentActivity ?: appContext.reactContext ?: throw Exception("React context is null")
+      val intent = android.content.Intent(
+        android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+        android.net.Uri.parse("package:${ctx.packageName}"),
+      ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+      ctx.startActivity(intent)
     }
 
     // A JS reload replaces this module with a new instance. Its server must
