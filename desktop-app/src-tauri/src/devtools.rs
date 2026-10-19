@@ -43,6 +43,7 @@ pub fn spawn(ctx: PresenceContext) {
             .route("/", get(help))
             .route("/logs", get(logs))
             .route("/install", axum::routing::put(install).post(install))
+            .route("/launch", axum::routing::post(launch))
             .with_state(ctx);
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], DEV_PORT));
         match tokio::net::TcpListener::bind(addr).await {
@@ -232,6 +233,12 @@ Logs (Ctrl+C to stop; reconnects by itself if the phone drops off):
 Install a build (Android asks to confirm the first install of an app):
   curl.exe -T android\app\build\outputs\apk\debug\app-debug.apk http://localhost:{port}/install
 
+Open an app (scheme + port: an Expo dev client, connected to Metro here):
+  curl.exe -X POST "http://localhost:{port}/launch?pkg=com.example.app"
+  curl.exe -X POST "http://localhost:{port}/launch?pkg=com.example.app&scheme=exp%2Bmy-slug&port=8081"
+
+Build, install, open and follow logs in one go: tools\lanclave-run.cmd in the LANclave repo.
+
 In PowerShell type curl.exe, not curl: plain curl there is a different command.
 "#,
         port = DEV_PORT
@@ -300,8 +307,11 @@ async fn follow(ctx: PresenceContext, phone: Phone, q: HashMap<String, String>, 
         return;
     }
 
-    let mut capture: Option<String> = None;
-    let mut after: Option<u64> = None;
+    // `capture` + `after` from the caller (the run script, right after a
+    // launch): start at that line instead of showing a tail.
+    let mut capture: Option<String> = q.get("capture").filter(|c| !c.is_empty()).cloned();
+    let mut after: Option<u64> = capture.as_ref().and(q.get("after").and_then(|a| a.parse().ok()));
+    let mut connected_before = false;
     // Say a problem once, not on every retry.
     let mut last_problem = String::new();
 
@@ -309,7 +319,7 @@ async fn follow(ctx: PresenceContext, phone: Phone, q: HashMap<String, String>, 
         if tx.is_closed() {
             return;
         }
-        let problem = match connect_once(&ctx, &phone, &base, &first_tail, &mut capture, &mut after, color, raw, &tx).await {
+        let problem = match connect_once(&ctx, &phone, &base, &first_tail, &mut capture, &mut after, &mut connected_before, color, raw, &tx).await {
             Flow::TerminalGone => return,
             Flow::Fatal(msg) => {
                 let _ = tx.send(note(color, &msg)).await;
@@ -341,6 +351,7 @@ async fn connect_once(
     first_tail: &str,
     capture: &mut Option<String>,
     after: &mut Option<u64>,
+    connected_before: &mut bool,
     color: bool,
     raw: bool,
     tx: &mpsc::Sender<Bytes>,
@@ -386,12 +397,13 @@ async fn connect_once(
         if tx.send(note(color, "capture restarted on the phone")).await.is_err() {
             return Flow::TerminalGone;
         }
-    } else if capture.is_some() {
+    } else if *connected_before {
         if tx.send(note(color, "reconnected")).await.is_err() {
             return Flow::TerminalGone;
         }
     }
     *capture = this_capture;
+    *connected_before = true;
     if reply.headers().get("x-lanclave-sees-all").and_then(|v| v.to_str().ok()) == Some("false") {
         let _ = tx
             .send(note(color, "only LANclave's own lines so far: allow log access on the phone (Settings > Developer tools)"))
@@ -525,6 +537,78 @@ async fn install(State(ctx): State<PresenceContext>, Query(q): Query<HashMap<Str
             format!("Install failed on {}: {}\n", phone.name, field("message")),
         ),
     }
+}
+
+// ---------------------------------------------------------------------------
+// POST /launch
+// ---------------------------------------------------------------------------
+
+/// Open an app on the phone; with `scheme` and `port`, an Expo dev client
+/// connected to Metro on this computer. The reply's headers say where its
+/// logs start, for `/logs?capture=..&after=..`.
+async fn launch(
+    State(ctx): State<PresenceContext>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = local_caller(&headers) {
+        return r;
+    }
+    let Some(pkg) = q.get("pkg").filter(|p| !p.is_empty()) else {
+        return text(StatusCode::BAD_REQUEST, "Which app? Add ?pkg=com.example.app\n");
+    };
+    let phone = match pick_phone(&ctx, q.get("phone").map(String::as_str)) {
+        Ok(p) => p,
+        Err(e) => return text(StatusCode::NOT_FOUND, format!("{e}\n")),
+    };
+    let Some(addr) = addr_of(&ctx, &phone.id) else {
+        return text(StatusCode::BAD_GATEWAY, format!("Don't know where {} is yet. Is LANclave open on it?\n", phone.name));
+    };
+
+    let mut path = format!("/api/dev/launch?pkg={}", urlencoding::encode(pkg));
+    for key in ["scheme", "port"] {
+        if let Some(v) = q.get(key).filter(|v| !v.is_empty()) {
+            path.push_str(&format!("&{key}={}", urlencoding::encode(v)));
+        }
+    }
+    let reply = match signed(&ctx, reqwest::Method::POST, &addr, &path)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return text(StatusCode::BAD_GATEWAY, format!("Could not reach {}: {e}\n", phone.name)),
+    };
+    let code = reply.status().as_u16();
+    if code == 404 && reply.headers().get(header::CONTENT_TYPE).is_some_and(|v| v != "application/json") {
+        return text(
+            StatusCode::NOT_IMPLEMENTED,
+            format!("{} runs a LANclave build without launching; install the newest dev build.\n", phone.name),
+        );
+    }
+    let result: serde_json::Value = reply.json().await.unwrap_or_default();
+    let field = |k: &str| result.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let (status, message) = match (code, field("status").as_str()) {
+        (200, "opened") => (StatusCode::OK, format!("Opened {pkg} on {}.\n", phone.name)),
+        (200, "notified") => (
+            StatusCode::OK,
+            format!(
+                "Tap the notification on {} to open {pkg}. To skip that next time, allow LANclave to display over other apps (Settings > Developer tools).\n",
+                phone.name
+            ),
+        ),
+        _ => (StatusCode::UNPROCESSABLE_ENTITY, format!("Could not open {pkg}: {}\n", field("message"))),
+    };
+    let mut response = text(status, message);
+    if let Some(seq) = result.get("seq").and_then(|v| v.as_u64()) {
+        if let Ok(v) = seq.to_string().parse() {
+            response.headers_mut().insert("x-lanclave-seq", v);
+        }
+    }
+    if let Ok(v) = field("capture").parse() {
+        response.headers_mut().insert("x-lanclave-capture", v);
+    }
+    response
 }
 
 #[cfg(test)]

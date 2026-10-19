@@ -198,6 +198,7 @@ declare class ExpoNativeServerModule extends NativeModule<NativeServerEvents> {
   devEnable(): DevStatus;
   devDisable(): DevStatus;
   devOpenInstallSettings(): void;
+  devOpenOverlaySettings(): void;
 }
 
 /** What the developer tools can do right now. */
@@ -211,6 +212,8 @@ export interface DevStatus {
   lines: number;
   /** "Install unknown apps" is allowed for LANclave. */
   canInstall: boolean;
+  /** "Display over other apps": LANclave can open an app from the background. */
+  canOpenApps: boolean;
   packageName: string;
 }
 

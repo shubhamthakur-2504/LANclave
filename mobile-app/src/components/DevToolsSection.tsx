@@ -104,6 +104,20 @@ export function DevToolsSection() {
                 : { label: "Open setting", onPress: () => ExpoNativeServerModule.devOpenInstallSettings() }
             }
           />
+          <Check
+            ok={status.canOpenApps}
+            title={status.canOpenApps ? "Can open apps after installing" : "Opening apps needs permission"}
+            detail={
+              status.canOpenApps
+                ? undefined
+                : "Allow LANclave to display over other apps, so it can open what your laptop just installed. Until then you get a notification to tap."
+            }
+            action={
+              status.canOpenApps
+                ? undefined
+                : { label: "Open setting", onPress: () => ExpoNativeServerModule.devOpenOverlaySettings() }
+            }
+          />
           <Text style={[styles.hint, { marginTop: 8 }]}>
             On the laptop, open http://localhost:{LAPTOP_PORT} for the commands.
           </Text>

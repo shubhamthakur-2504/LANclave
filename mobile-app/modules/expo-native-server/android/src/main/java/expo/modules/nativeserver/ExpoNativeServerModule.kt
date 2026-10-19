@@ -91,6 +91,15 @@ class ExpoNativeServerModule : Module() {
       ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
       ctx.startActivity(intent)
     }
+    /** Android's "Display over other apps" page for LANclave. */
+    Function("devOpenOverlaySettings") {
+      val ctx = appContext.currentActivity ?: appContext.reactContext ?: throw Exception("React context is null")
+      val intent = android.content.Intent(
+        android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+        android.net.Uri.parse("package:${ctx.packageName}"),
+      ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+      ctx.startActivity(intent)
+    }
 
     // A JS reload replaces this module with a new instance. Its server must
     // go with it: left running, it holds the port, so the new instance can

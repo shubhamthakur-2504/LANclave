@@ -126,22 +126,33 @@ object DevInstall {
         return if (message.isNullOrBlank()) base else "$base ($message)"
     }
 
-    private fun showPrompt(context: Context, confirm: Intent, sessionId: Int) {
+    private fun showPrompt(context: Context, confirm: Intent, sessionId: Int) =
+        notify(context, NOTIFICATION_ID, confirm, sessionId, "Install from your laptop", "Tap to review and install")
+
+    /** "Tap to open": Android kept LANclave from opening the app itself. */
+    fun showOpenPrompt(context: Context, open: Intent, pkg: String) {
+        val label = runCatching {
+            context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(pkg, 0)).toString()
+        }.getOrDefault(pkg)
+        notify(context, NOTIFICATION_ID + 1, open, 0, "Open $label", "Sent from your laptop. Tap to open")
+    }
+
+    private fun notify(context: Context, id: Int, target: Intent, requestCode: Int, title: String, text: String) {
         runCatching {
             val nm = context.getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Installs from your laptop", NotificationManager.IMPORTANCE_HIGH),
+                NotificationChannel(CHANNEL, "From your laptop", NotificationManager.IMPORTANCE_HIGH),
             )
             val tap = PendingIntent.getActivity(
-                context, sessionId, confirm,
+                context, requestCode, target,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             nm.notify(
-                NOTIFICATION_ID,
+                id,
                 Notification.Builder(context, CHANNEL)
                     .setSmallIcon(context.applicationInfo.icon)
-                    .setContentTitle("Install from your laptop")
-                    .setContentText("Tap to review and install")
+                    .setContentTitle(title)
+                    .setContentText(text)
                     .setContentIntent(tap)
                     .setAutoCancel(true)
                     .build(),

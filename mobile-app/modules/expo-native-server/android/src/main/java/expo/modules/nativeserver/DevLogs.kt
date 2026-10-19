@@ -50,6 +50,9 @@ object DevLogs {
 
     fun lineCount(): Int = synchronized(lock) { ring.size }
 
+    /** The newest line's number; a reader passing it as `after` sees only what follows. */
+    fun lastSeq(): Long = synchronized(lock) { nextSeq - 1 }
+
     fun hasReadLogs(context: Context): Boolean =
         context.checkSelfPermission(android.Manifest.permission.READ_LOGS) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
