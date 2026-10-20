@@ -84,6 +84,8 @@ object DevTools {
         )
         response.addHeader("X-Lanclave-Capture", DevLogs.captureId)
         response.addHeader("X-Lanclave-Sees-All", DevLogs.seesOtherApps.toString())
+        response.addHeader("X-Lanclave-Read-Logs", DevLogs.hasReadLogs(context).toString())
+        response.addHeader("X-Lanclave-Package", context.packageName)
         return response
     }
 

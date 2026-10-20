@@ -111,6 +111,9 @@ object DevLogs {
         }
     }
 
+    /** Compiled once: every log line goes through it. */
+    private val SPACES = Regex("\\s+")
+
     private class Parsed(val uid: Int, val level: Char, val tag: String, val pid: Int)
 
     /**
@@ -127,7 +130,7 @@ object DevLogs {
         val uidText = rest.substring(0, colon).trim()
         val uid = uidText.toIntOrNull() ?: -1
         rest = rest.substring(colon + 1).trimStart()
-        val parts = rest.split(Regex("\\s+"), limit = 4)
+        val parts = rest.split(SPACES, limit = 4)
         if (parts.size < 4) return none
         val pid = parts[0].toIntOrNull() ?: return none
         val level = parts[2].singleOrNull() ?: return none

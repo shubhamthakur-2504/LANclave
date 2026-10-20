@@ -56,6 +56,8 @@ fn install_cli() -> Result<(), String> {
     let write = |name: &str, body: &str| std::fs::write(dir.join(name), body).map_err(|e| e.to_string());
     write("lib\\lanclave-run.ps1", include_str!("../../../tools/lanclave-run.ps1"))?;
     write("lanclave-run.cmd", include_str!("../../../tools/lanclave-run.cmd"))?;
+    write("lib\\lanclave.ps1", include_str!("../../../tools/lanclave.ps1"))?;
+    write("lanclave.cmd", include_str!("../../../tools/lanclave.cmd"))?;
     // Where an earlier build put it.
     let _ = std::fs::remove_file(dir.join("lanclave-run.ps1"));
 
@@ -345,7 +347,8 @@ Open an app (scheme + port: an Expo dev client, connected to Metro here):
   curl.exe -X POST "http://localhost:{port}/launch?pkg=com.example.app&scheme=exp%2Bmy-slug&port=8081"
 
 Build, install, open and follow logs in one go, from your project folder:
-  lanclave-run
+  lanclave run
+Every command, short: lanclave help
 (LANclave puts it on your PATH; open a new terminal if it isn't found.)
 
 In PowerShell type curl.exe, not curl: plain curl there is a different command.
@@ -513,10 +516,27 @@ async fn connect_once(
     }
     *capture = this_capture;
     *connected_before = true;
-    if reply.headers().get("x-lanclave-sees-all").and_then(|v| v.to_str().ok()) == Some("false") {
-        let _ = tx
-            .send(note(color, "only LANclave's own lines so far: allow log access on the phone (Settings > Developer tools)"))
-            .await;
+    let header_is = |name: &str, value: &str| reply.headers().get(name).and_then(|v| v.to_str().ok()) == Some(value);
+    if header_is("x-lanclave-read-logs", "false") {
+        let pkg = reply
+            .headers()
+            .get("x-lanclave-package")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("tech.shubhamcodes.lanclave.mobile");
+        let msg = format!(
+            "only LANclave's own lines: other apps' logs need a one-time USB step. With the phone plugged in, run: adb shell pm grant {pkg} android.permission.READ_LOGS"
+        );
+        if tx.send(note(color, &msg)).await.is_err() {
+            return Flow::TerminalGone;
+        }
+    } else if header_is("x-lanclave-sees-all", "false") {
+        if tx
+            .send(note(color, "only LANclave's own lines so far: if the phone asks about log access, choose Allow (or restart capture in Settings > Developer tools)"))
+            .await
+            .is_err()
+        {
+            return Flow::TerminalGone;
+        }
     }
 
     let mut body = reply.bytes_stream();

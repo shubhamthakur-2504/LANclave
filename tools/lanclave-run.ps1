@@ -32,10 +32,15 @@ param(
   [switch]$NoMetro,
   [switch]$NoLogs,
   # Project folder; the current one by default.
-  [string]$Project = "."
+  [string]$Project = ".",
+  [switch]$Help
 )
 
 $ErrorActionPreference = "Stop"
+if ($Help) {
+  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "lanclave.ps1") help
+  exit 0
+}
 $lan = "http://localhost:8378"
 
 function Say([string]$msg) { Write-Host "-- $msg" -ForegroundColor Cyan }
