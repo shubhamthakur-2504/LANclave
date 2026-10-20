@@ -36,8 +36,76 @@ pub const DEV_PORT: u16 = 8378;
 /// sends an empty line every 10 s when nothing else is happening.
 const STALL: Duration = Duration::from_secs(30);
 
+/// Put `lanclave-run` on this user's PATH, so any terminal can run it.
+///
+/// The scripts go in `%LOCALAPPDATA%\LANclave\bin`, rewritten every start so
+/// they always match this build. The folder is added to the *user* PATH once
+/// (no admin rights). Terminals opened afterwards see it; ones already open,
+/// and VS Code's, need a restart.
+#[cfg(windows)]
+fn install_cli() -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
+    let dir = dirs_next::data_local_dir()
+        .ok_or("no local app data folder")?
+        .join("LANclave")
+        .join("bin");
+    // The script goes in lib\, off PATH: PowerShell would otherwise run the
+    // .ps1 directly, which Windows' default script policy blocks.
+    std::fs::create_dir_all(dir.join("lib")).map_err(|e| e.to_string())?;
+    let write = |name: &str, body: &str| std::fs::write(dir.join(name), body).map_err(|e| e.to_string());
+    write("lib\\lanclave-run.ps1", include_str!("../../../tools/lanclave-run.ps1"))?;
+    write("lanclave-run.cmd", include_str!("../../../tools/lanclave-run.cmd"))?;
+    // Where an earlier build put it.
+    let _ = std::fs::remove_file(dir.join("lanclave-run.ps1"));
+
+    let dir_text = dir.to_string_lossy().to_string();
+    let already = std::env::var("PATH")
+        .unwrap_or_default()
+        .split(';')
+        .any(|p| p.trim_end_matches('\\').eq_ignore_ascii_case(&dir_text));
+    if already {
+        return Ok(());
+    }
+
+    // Through the registry rather than [Environment]::SetEnvironmentVariable:
+    // that would expand the %VARIABLES% in the user's other PATH entries and
+    // save them as fixed text. The variable set last tells Windows (Explorer,
+    // new terminals) that the environment changed.
+    let script = format!(
+        r#"$dir = '{dir}'
+$key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+$path = [string]$key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+$kind = if ($key.GetValueNames() -contains 'Path') {{ $key.GetValueKind('Path') }} else {{ 'ExpandString' }}
+$parts = $path -split ';' | Where-Object {{ $_ -ne '' }}
+if (-not ($parts | Where-Object {{ $_.TrimEnd('\') -ieq $dir }})) {{
+  $key.SetValue('Path', (@($parts) + $dir) -join ';', $kind)
+}}
+$key.Close()
+[Environment]::SetEnvironmentVariable('LANCLAVE_TOOLS', $dir, 'User')"#,
+        dir = dir_text.replace('\'', "''")
+    );
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let status = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("powershell exited with {status}"))
+    }
+}
+
 /// Start the local developer server. Logs and carries on if the port is taken.
 pub fn spawn(ctx: PresenceContext) {
+    #[cfg(windows)]
+    tauri::async_runtime::spawn_blocking(|| {
+        if let Err(e) = install_cli() {
+            eprintln!("[lanclave] could not put lanclave-run on PATH: {e}");
+        }
+    });
     tauri::async_runtime::spawn(async move {
         let app = axum::Router::new()
             .route("/", get(help))
@@ -115,9 +183,10 @@ fn phones(ctx: &PresenceContext) -> Vec<Phone> {
     list
 }
 
-/// The phone `?phone=` names (part of its name, or the start of its id), or
-/// the only one online.
-fn pick_phone(ctx: &PresenceContext, wanted: Option<&str>) -> Result<Phone, String> {
+/// The phone `?phone=` names (part of its name, or the start of its id).
+/// Otherwise the only one online; with several online, the only one whose
+/// developer tools are on, so a phone running normal LANclave never counts.
+async fn pick_phone(ctx: &PresenceContext, wanted: Option<&str>) -> Result<Phone, String> {
     let all = phones(ctx);
     if let Some(q) = wanted.filter(|q| !q.is_empty()) {
         let q_lower = q.to_lowercase();
@@ -128,15 +197,53 @@ fn pick_phone(ctx: &PresenceContext, wanted: Option<&str>) -> Result<Phone, Stri
     }
     let online: Vec<Phone> = all.iter().filter(|p| p.online).cloned().collect();
     match online.len() {
-        1 => Ok(online[0].clone()),
-        0 if all.len() == 1 => Ok(all[0].clone()),
-        0 if all.is_empty() => Err("No phone is paired with this computer.".into()),
-        0 => Err("No paired phone is online. Is LANclave open on it?".into()),
+        1 => return Ok(online[0].clone()),
+        0 if all.len() == 1 => return Ok(all[0].clone()),
+        0 if all.is_empty() => return Err("No phone is paired with this computer.".into()),
+        0 => return Err("No paired phone is online. Is LANclave open on it?".into()),
+        _ => {}
+    }
+
+    let checks = online.iter().map(|p| dev_tools_on(ctx, p));
+    let on: Vec<Phone> = futures_util::future::join_all(checks)
+        .await
+        .into_iter()
+        .zip(online.iter())
+        .filter(|(is_on, _)| *is_on)
+        .map(|(_, p)| p.clone())
+        .collect();
+    let names = |list: &[Phone]| list.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ");
+    match on.len() {
+        1 => Ok(on[0].clone()),
+        0 => Err(format!(
+            "None of the online phones has developer tools on ({}). On yours: LANclave > Settings > Developer tools.",
+            names(&online)
+        )),
         _ => Err(format!(
-            "More than one phone is online. Add &phone=<name>: {}",
-            online.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+            "More than one phone has developer tools on: {}. Pick one with phone=<name> (lanclave-run -Phone <name>).",
+            names(&on)
         )),
     }
+}
+
+/// Whether a phone answers `/api/dev/status` with its tools on.
+async fn dev_tools_on(ctx: &PresenceContext, phone: &Phone) -> bool {
+    let Some(addr) = addr_of(ctx, &phone.id) else {
+        return false;
+    };
+    let Ok(reply) = signed(ctx, reqwest::Method::GET, &addr, "/api/dev/status")
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+    else {
+        return false;
+    };
+    reply
+        .json::<serde_json::Value>()
+        .await
+        .ok()
+        .and_then(|s| s.get("enabled").and_then(|v| v.as_bool()))
+        .unwrap_or(false)
 }
 
 fn addr_of(ctx: &PresenceContext, phone_id: &str) -> Option<String> {
@@ -237,7 +344,9 @@ Open an app (scheme + port: an Expo dev client, connected to Metro here):
   curl.exe -X POST "http://localhost:{port}/launch?pkg=com.example.app"
   curl.exe -X POST "http://localhost:{port}/launch?pkg=com.example.app&scheme=exp%2Bmy-slug&port=8081"
 
-Build, install, open and follow logs in one go: tools\lanclave-run.cmd in the LANclave repo.
+Build, install, open and follow logs in one go, from your project folder:
+  lanclave-run
+(LANclave puts it on your PATH; open a new terminal if it isn't found.)
 
 In PowerShell type curl.exe, not curl: plain curl there is a different command.
 "#,
@@ -258,7 +367,7 @@ async fn logs(
     if let Err(r) = local_caller(&headers) {
         return r;
     }
-    let phone = match pick_phone(&ctx, q.get("phone").map(String::as_str)) {
+    let phone = match pick_phone(&ctx, q.get("phone").map(String::as_str)).await {
         Ok(p) => p,
         Err(e) => return text(StatusCode::NOT_FOUND, format!("{e}\n")),
     };
@@ -489,7 +598,7 @@ async fn install(State(ctx): State<PresenceContext>, Query(q): Query<HashMap<Str
             "Send the APK as a file: curl.exe -T app-debug.apk http://localhost:8378/install\n",
         );
     };
-    let phone = match pick_phone(&ctx, q.get("phone").map(String::as_str)) {
+    let phone = match pick_phone(&ctx, q.get("phone").map(String::as_str)).await {
         Ok(p) => p,
         Err(e) => return text(StatusCode::NOT_FOUND, format!("{e}\n")),
     };
@@ -557,7 +666,7 @@ async fn launch(
     let Some(pkg) = q.get("pkg").filter(|p| !p.is_empty()) else {
         return text(StatusCode::BAD_REQUEST, "Which app? Add ?pkg=com.example.app\n");
     };
-    let phone = match pick_phone(&ctx, q.get("phone").map(String::as_str)) {
+    let phone = match pick_phone(&ctx, q.get("phone").map(String::as_str)).await {
         Ok(p) => p,
         Err(e) => return text(StatusCode::NOT_FOUND, format!("{e}\n")),
     };
