@@ -121,7 +121,8 @@ function MetroUp {
   } catch { return $false }
 }
 
-$useMetro = $isReactNative -and -not $NoMetro
+# Release builds carry their own JS bundle; only debug builds talk to Metro.
+$useMetro = $isReactNative -and -not $NoMetro -and ($Variant -match "debug")
 if ($useMetro -and -not (MetroUp)) {
   Say "starting Metro in a new window"
   if ($isExpo) {
